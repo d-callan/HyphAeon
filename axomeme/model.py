@@ -761,51 +761,6 @@ def decode_soft_ordinal_lrt(logits_lrt_ordinal):
     return physical_lrt, probs
 
 
-class PermutationInvariantPhyloPma(nn.Module):
-    """
-    100% Permutation-Invariant Set Transformer PMA Pooling:
-    K learned probe tokens query all taxa across the phylogenetic tree.
-    Aggregated via symmetric operators (Mean, Max, Std) across K probes.
-    Zero index-dependent weights, zero random seed instability, zero competing dispersion penalty.
-    """
-    def __init__(self, embed_dim=128, num_probes=8, num_heads=4, out_dim=256):
-        super().__init__()
-        self.num_probes = num_probes
-        self.embed_dim = embed_dim
-        self.probes = nn.Parameter(torch.randn(num_probes, embed_dim) / math.sqrt(embed_dim))
-        self.mha = nn.MultiheadAttention(embed_dim, num_heads=num_heads, batch_first=True)
-        
-        # Invariant aggregation: Mean (D) + Max (D) + Std (D) = 3 * D = 384d
-        self.fusion = nn.Sequential(
-            BlockLinear(3 * embed_dim, out_dim),
-            nn.GELU(),
-            nn.LayerNorm(out_dim)
-        )
-        
-    def forward(self, site_repr, padding_mask=None):
-        # site_repr: [batch_size, num_species, embed_dim]
-        # padding_mask: [batch_size, num_species]
-        B, N, D = site_repr.shape
-        
-        # 1. Multi-Head Probe Attention across species
-        queries = self.probes.unsqueeze(0).expand(B, -1, -1).contiguous()  # [B, K, D]
-        probe_out, _ = self.mha(
-            query=queries, 
-            key=site_repr, 
-            value=site_repr, 
-            key_padding_mask=padding_mask
-        )  # [B, K, D]
-        
-        # 2. Symmetric Permutation-Invariant Reduction across K probes
-        p_mean = probe_out.mean(dim=1)                                           # [B, D]
-        p_max, _ = probe_out.max(dim=1)                                          # [B, D]
-        p_std = torch.sqrt(torch.var(probe_out, dim=1, unbiased=False) + 1e-6)   # [B, D]
-        
-        # 3. Compact 384d Invariant Feature Summary
-        p_combined = torch.cat([p_mean, p_max, p_std], dim=-1)                  # [B, 3 * D]
-        return self.fusion(p_combined)                                           # [B, out_dim]
-
-
 class PhyloAxialTransformer(nn.Module):
     """
     Phylogenetic Axial Transformer with Learned [ROOT] Token:
