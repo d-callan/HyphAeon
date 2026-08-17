@@ -38,10 +38,18 @@ def predict_single(args):
     model.eval()
     
     print(f"[*] Parsing Alignment: {args.alignment}")
-    print(f"[*] Parsing Tree:      {args.tree}")
+    if args.tree:
+        print(f"[*] Parsing Tree:      {args.tree}")
+    else:
+        print(f"[*] Tree argument not provided; extracting tree from alignment...")
     
     t0 = time.time()
-    c, a, d, z, inv, taxa, L = load_alignment_and_tree(args.alignment, args.tree)
+    try:
+        c, a, d, z, inv, taxa, L = load_alignment_and_tree(args.alignment, args.tree)
+    except Exception as e:
+        print(f"\n[!] Error loading alignment and tree: {e}")
+        sys.exit(1)
+
     c, a, d, z = c.to(device), a.to(device), d.to(device), z.to(device)
     
     with torch.no_grad():
@@ -88,12 +96,14 @@ def predict_single(args):
         for i in range(L)
     ]
     
+    tree_meta = args.tree if args.tree else "embedded_in_alignment"
+    
     if args.output:
         ensure_parent_directory(args.output)
         with open(args.output, "w") as f:
             json.dump({
                 "alignment": args.alignment,
-                "tree": args.tree,
+                "tree": tree_meta,
                 "taxa_count": len(taxa),
                 "codon_count": L,
                 "runtime_sec": elapsed,
@@ -116,8 +126,8 @@ def main():
     
     # Predict parser
     pred_parser = subparsers.add_parser("predict", help="Run selection inference on a codon alignment and tree")
-    pred_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA alignment")
-    pred_parser.add_argument("-t", "--tree", required=True, help="Path to Newick phylogenetic tree")
+    pred_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
+    pred_parser.add_argument("-t", "--tree", required=False, default=None, help="Path to Newick/NEXUS phylogenetic tree (optional if tree is embedded in alignment)")
     pred_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS, help="Path to pretrained model checkpoint")
     pred_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     pred_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")

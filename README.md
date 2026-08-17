@@ -34,12 +34,20 @@ pip install -e .
 
 ### 1. Basic Site Selection Scan
 ```bash
+# Standard inference with separate alignment and tree
 axomeme predict \
   --alignment examples/Smc6.fasta \
   --tree examples/Smc6.nwk \
   --output results/Smc6_selection.json \
   --csv results/Smc6_selection.csv
+
+# Or run directly on alignments with embedded trees (NEXUS or FASTA), omitting --tree:
+axomeme predict \
+  --alignment alignment_with_tree.nex \
+  --output results/selection.json
 ```
+> [!NOTE]
+> When `--tree` is omitted, AxoMEME automatically extracts the embedded phylogenetic tree from the alignment file. If the tree contains uncalibrated topology or zero branch lengths, AxoMEME automatically estimates branch lengths via HyPhy (HKY85) or enforces strictly positive lower bounds ($10^{-4}$).
 
 ### 2. Output Preview
 ```

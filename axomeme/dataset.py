@@ -2,8 +2,19 @@
 axomeme/dataset.py
 ------------------
 Data preprocessing, tokenization, tree patristic distance calculation,
-classical 4D MDS embedding, and alignment parsing.
+classical 4D MDS embedding, alignment & tree parsing, embedded tree extraction,
+branch length validation, and HyPhy branch length estimation.
 """
+
+import os
+import sys
+import gzip
+import shutil
+import tempfile
+import subprocess
+import re
+from io import StringIO
+from typing import Optional, Tuple, Dict, List
 
 import numpy as np
 import scipy.stats as stats
@@ -44,11 +55,195 @@ def get_aa_token(codon: str) -> int:
     aa = CODON_TO_AA.get(codon.upper(), '-')
     return AA_MAP.get(aa, 20)
 
-def compute_fast_dist_matrix(tree, taxa):
+def parse_alignment_sequences(filepath: str) -> Dict[str, str]:
+    """
+    Parses FASTA or NEXUS format alignments (including compressed .gz files).
+    """
+    open_func = gzip.open if filepath.endswith('.gz') else open
+    with open_func(filepath, 'rt') as f:
+        full_text = f.read()
+
+    # FASTA format
+    if full_text.strip().startswith('>'):
+        fasta_lines = []
+        for line in full_text.splitlines():
+            l_strip = line.strip()
+            # Stop if encountering embedded tree or nexus commands at the end of the file
+            if l_strip.startswith('(') or l_strip.lower().startswith('tree ') or l_strip.lower().startswith('begin '):
+                break
+            fasta_lines.append(line)
+        clean_fasta = '\n'.join(fasta_lines)
+
+        seq_dict = {}
+        for record in SeqIO.parse(StringIO(clean_fasta), 'fasta'):
+            seq_dict[record.id.strip()] = str(record.seq).upper().strip()
+        return seq_dict
+
+    # NEXUS format parsing
+    taxlabels = []
+    tax_match = re.search(r'taxlabels\s+(.*?)\s*;', full_text, re.IGNORECASE | re.DOTALL)
+    if tax_match:
+        tokens = re.findall(r"'([^']+)'|\"([^\"]+)\"|(\S+)", tax_match.group(1))
+        for t in tokens:
+            name = t[0] or t[1] or t[2]
+            if name:
+                taxlabels.append(name.strip())
+
+    format_match = re.search(r'format\s+(.*?)\s*;', full_text, re.IGNORECASE | re.DOTALL)
+    is_nolabels = bool(format_match and 'nolabels' in format_match.group(1).lower())
+
+    matrix_match = re.search(r'matrix\s+(.*?)\s*;', full_text, re.IGNORECASE | re.DOTALL)
+    seq_dict = {}
+    if matrix_match:
+        matrix_lines = [l.strip() for l in matrix_match.group(1).splitlines() if l.strip()]
+        if is_nolabels and taxlabels:
+            for idx, line in enumerate(matrix_lines):
+                if idx < len(taxlabels):
+                    seq = line.replace(' ', '').replace('\t', '').upper()
+                    seq_dict[taxlabels[idx]] = seq
+        else:
+            for line in matrix_lines:
+                parts = line.split(None, 1)
+                if len(parts) == 2:
+                    name = parts[0].replace("'", "").replace('"', '').strip()
+                    seq = parts[1].replace(' ', '').replace('\t', '').strip().upper()
+                    if name in seq_dict:
+                        seq_dict[name] += seq
+                    else:
+                        seq_dict[name] = seq
+    else:
+        # Fallback for plain matrices without explicit block wrapper
+        for line in full_text.splitlines():
+            line_clean = line.strip()
+            parts = line_clean.split(None, 1)
+            if len(parts) == 2 and len(parts[1].replace(' ', '')) > 20:
+                name = parts[0].replace("'", "").replace('"', '').strip()
+                seq_dict[name] = parts[1].replace(' ', '').upper()
+
+    return seq_dict
+
+def extract_tree_from_string_or_file(source: str) -> Optional[Phylo.BaseTree.Tree]:
+    """
+    Parses a tree from a file path or raw string. Supports Newick, Nexus, and embedded trees.
+    """
+    if os.path.exists(source):
+        open_func = gzip.open if source.endswith('.gz') else open
+        with open_func(source, 'rt') as f:
+            content = f.read()
+    else:
+        content = source
+
+    # 1. Search for explicit Nexus / HyPhy TREE command
+    tree_match = re.search(r'tree\s+[^=]+=\s*(\([^;]+;)', content, re.IGNORECASE)
+    if tree_match:
+        raw_nwk = tree_match.group(1)
+        clean_nwk = re.sub(r'\{[^}]*\}', '', raw_nwk) # strip HyPhy comments like {Foreground}
+        clean_nwk = re.sub(r'\[[^\]]*\]', '', clean_nwk) # strip Nexus comments
+        try:
+            return Phylo.read(StringIO(clean_nwk), 'newick')
+        except Exception:
+            pass
+
+    # 2. Search for any standard Newick string starting with '(' and ending with ';'
+    for line in content.splitlines():
+        line_clean = line.strip()
+        if line_clean.startswith('(') and line_clean.endswith(';') and line_clean.count('(') >= 2:
+            clean_nwk = re.sub(r'\{[^}]*\}', '', line_clean)
+            clean_nwk = re.sub(r'\[[^\]]*\]', '', clean_nwk)
+            try:
+                return Phylo.read(StringIO(clean_nwk), 'newick')
+            except Exception:
+                pass
+
+    return None
+
+def has_nonzero_branch_lengths(tree: Phylo.BaseTree.Tree) -> bool:
+    """
+    Returns True if the tree contains valid, positive branch lengths across most branches.
+    """
+    branches = [c.branch_length for c in tree.find_clades() if c != tree.root]
+    if not branches:
+        return False
+    pos_branches = [b for b in branches if b is not None and b > 0.0]
+    return len(pos_branches) > 0 and (len(pos_branches) / len(branches) >= 0.5)
+
+def estimate_tree_branch_lengths_hyphy(seq_dict: Dict[str, str], tree_obj: Phylo.BaseTree.Tree) -> Optional[Phylo.BaseTree.Tree]:
+    """
+    Estimates tree branch lengths using HyPhy under the HKY85 model.
+    """
+    hyphy_path = shutil.which('hyphy')
+    if not hyphy_path:
+        return None
+
+    # Get clean topology string without branch lengths
+    out_stream = StringIO()
+    Phylo.write(tree_obj, out_stream, 'newick')
+    raw_tree_str = out_stream.getvalue().strip()
+    clean_tree_str = re.sub(r':[0-9.eE-]+', '', raw_tree_str)
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_fa = os.path.join(tmpdir, 'align.fa')
+            with open(temp_fa, 'w') as f:
+                for name, seq in seq_dict.items():
+                    f.write(f'>{name}\n{seq}\n')
+
+            temp_bf = os.path.join(tmpdir, 'est.bf')
+            bf_content = f'''
+DataSet ds = ReadDataFile("{temp_fa}");
+DataSetFilter df = CreateFilter(ds, 1);
+HarvestFrequencies(freqs, df, 1, 1, 1);
+global kappa = 1.0;
+HKY85RateMatrix = [
+    [*, kappa*t, t, kappa*t]
+    [kappa*t, *, kappa*t, t]
+    [t, kappa*t, *, kappa*t]
+    [kappa*t, t, kappa*t, *]
+];
+Model HKY85Model = (HKY85RateMatrix, freqs);
+UseModel(HKY85Model);
+Tree T = "{clean_tree_str}";
+LikelihoodFunction lf = (df, T);
+Optimize(res, lf);
+fprintf(stdout, Format(T, 0, 1));
+'''
+            with open(temp_bf, 'w') as f:
+                f.write(bf_content)
+
+            res = subprocess.run([hyphy_path, temp_bf], capture_output=True, text=True)
+            if res.returncode == 0 and res.stdout.strip():
+                start_idx = res.stdout.find('(')
+                end_idx = res.stdout.rfind(')')
+                if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                    est_tree_str = res.stdout[start_idx:end_idx+1]
+                    tree_res = Phylo.read(StringIO(est_tree_str), 'newick')
+                    return tree_res
+    except Exception as e:
+        print(f"[!] HyPhy branch length estimation encountered an issue: {e}")
+
+    return None
+
+def enforce_nonzero_branch_lengths(tree_obj: Phylo.BaseTree.Tree, min_len: float = 1e-4, default_missing: float = 1e-3) -> Phylo.BaseTree.Tree:
+    """
+    Ensures all clades in the tree (except root) have valid, strictly positive branch lengths.
+    """
+    for clade in tree_obj.find_clades():
+        if clade == tree_obj.root:
+            continue
+        if clade.branch_length is None:
+            clade.branch_length = default_missing
+        elif clade.branch_length < min_len:
+            clade.branch_length = min_len
+    return tree_obj
+
+def compute_fast_dist_matrix(tree: Phylo.BaseTree.Tree, taxa: List[str]) -> np.ndarray:
+    """
+    Computes all-pairs patristic distance matrix across taxa from phylogenetic tree.
+    """
     n = len(taxa)
     dist_mat = np.zeros((n, n), dtype=np.float32)
     taxa_set = set(taxa)
-    terminals = {t.name: t for t in tree.get_terminals() if t.name in taxa_set}
+    terminals = {t.name.strip("'\""): t for t in tree.get_terminals() if t.name and t.name.strip("'\"") in taxa_set}
     
     root = tree.root
     depths = {}
@@ -94,6 +289,9 @@ def compute_fast_dist_matrix(tree, taxa):
     return dist_mat
 
 def compute_mds_coordinates(dist_matrix: np.ndarray, n_components: int = 4) -> np.ndarray:
+    """
+    Classical Multidimensional Scaling (MDS) embedding into 4D continuous coordinate space.
+    """
     n = dist_matrix.shape[0]
     H = np.eye(n) - np.ones((n, n)) / n
     B = -0.5 * H.dot(dist_matrix ** 2).dot(H)
@@ -108,20 +306,75 @@ def compute_mds_coordinates(dist_matrix: np.ndarray, n_components: int = 4) -> n
         coords = np.hstack([coords, pad])
     return coords.astype(np.float32)
 
-def load_alignment_and_tree(fa_path: str, nwk_path: str):
+def load_alignment_and_tree(fa_path: str, nwk_path: Optional[str] = None):
     """
-    Parses FASTA alignment and Newick tree into PyTorch-ready input tensors.
+    Parses alignment (FASTA or NEXUS) and phylogenetic tree (from nwk_path or embedded in alignment).
+    Enforces non-zero branch lengths (estimating them via HyPhy if available and missing).
+    Returns PyTorch tensors (c, a, d, z), invariable mask, taxa list, and codon length L.
     """
-    tree_obj = Phylo.read(nwk_path, 'newick')
-    taxa = [term.name for term in tree_obj.get_terminals() if term.name]
+    # 1. Parse alignment sequences
+    seq_dict = parse_alignment_sequences(fa_path)
+    if not seq_dict:
+        raise ValueError(f"Could not parse any sequences from alignment file: '{fa_path}'")
+
+    # 2. Extract or load tree
+    tree_obj = None
+    tree_source_desc = ""
+    if nwk_path is not None:
+        tree_obj = extract_tree_from_string_or_file(nwk_path)
+        if tree_obj is None:
+            raise ValueError(f"Could not parse phylogenetic tree from specified path: '{nwk_path}'")
+        tree_source_desc = f"external file ({nwk_path})"
+    else:
+        # Attempt to find tree embedded in alignment
+        tree_obj = extract_tree_from_string_or_file(fa_path)
+        if tree_obj is None:
+            raise ValueError(
+                f"No tree specified (--tree), and no embedded phylogenetic tree found in alignment '{fa_path}'. "
+                f"Please provide a tree via -t / --tree."
+            )
+        tree_source_desc = f"embedded in alignment ({fa_path})"
+
+    # 3. Branch length validation / HyPhy estimation
+    if not has_nonzero_branch_lengths(tree_obj):
+        if shutil.which("hyphy"):
+            print(f"[*] Tree ({tree_source_desc}) has no branch lengths. Estimating via HyPhy (HKY85)...")
+            est_tree = estimate_tree_branch_lengths_hyphy(seq_dict, tree_obj)
+            if est_tree is not None and has_nonzero_branch_lengths(est_tree):
+                tree_obj = est_tree
+                print(f"[✓] HyPhy branch length estimation succeeded.")
+            else:
+                print(f"[!] HyPhy estimation unsuccessful; enforcing minimum positive branch lengths.")
+        else:
+            print(f"[*] Tree ({tree_source_desc}) lacks branch lengths (HyPhy not found); enforcing default positive branch lengths.")
+
+    # Guarantee all branch lengths strictly positive
+    enforce_nonzero_branch_lengths(tree_obj, min_len=1e-4)
+
+    # 4. Match taxa between tree and alignment
+    tree_taxa = [term.name.strip("'\"") for term in tree_obj.get_terminals() if term.name]
+    taxa = [t for t in tree_taxa if t in seq_dict]
+    if not taxa:
+        # Try matching with stripped names
+        seq_keys_clean = {k.strip("'\""): k for k in seq_dict.keys()}
+        taxa = [seq_keys_clean[t] for t in tree_taxa if t in seq_keys_clean]
+        if not taxa:
+            raise ValueError(
+                f"No matching taxa found between tree terminals ({tree_taxa[:5]}...) "
+                f"and alignment sequences ({list(seq_dict.keys())[:5]}...)."
+            )
+
+    # 5. Compute distance matrix & MDS embedding
     dist_mat = compute_fast_dist_matrix(tree_obj, taxa)
     mds_coords = compute_mds_coordinates(dist_mat, n_components=4)
-    
-    seq_dict = {rec.id: str(rec.seq).upper() for rec in SeqIO.parse(fa_path, 'fasta')}
+
+    # 6. Build codon & AA tensors
     n_taxa = len(taxa)
-    first_seq = list(seq_dict.values())[0]
+    first_seq = seq_dict[taxa[0]]
     L = len(first_seq) // 3
-    
+    if L == 0:
+        raise ValueError(f"Alignment sequence length {len(first_seq)} bp is less than 1 codon (3 bp).")
+
     c_all = np.zeros((L, n_taxa, 1), dtype=np.int64)
     a_all = np.zeros((L, n_taxa, 1), dtype=np.int64)
     for i, sp in enumerate(taxa):
@@ -130,17 +383,17 @@ def load_alignment_and_tree(fa_path: str, nwk_path: str):
             codon = seq[site*3 : (site+1)*3].upper()
             c_all[site, i, 0] = get_codon_token(codon)
             a_all[site, i, 0] = get_aa_token(codon)
-            
+
     is_aa_invariable = np.zeros(L, dtype=bool)
     for site in range(L):
         aa_col = a_all[site, :, 0]
         valid_aa = aa_col[aa_col < 20]
         if len(np.unique(valid_aa)) <= 1:
             is_aa_invariable[site] = True
-            
+
     c_tensor = torch.tensor(c_all, dtype=torch.long)
     a_tensor = torch.tensor(a_all, dtype=torch.long)
     d_tensor = torch.tensor(dist_mat, dtype=torch.float32).unsqueeze(0).repeat(L, 1, 1)
     z_tensor = torch.tensor(mds_coords, dtype=torch.float32).unsqueeze(0).repeat(L, 1, 1)
-    
+
     return c_tensor, a_tensor, d_tensor, z_tensor, is_aa_invariable, taxa, L
