@@ -14,10 +14,13 @@ class TestLoadAlignmentAndTreeFasta:
 
     def test_tensor_shapes(self, fasta_file, newick_file):
         c, a, d, z, inv, taxa, L = load_alignment_and_tree(fasta_file, newick_file)
-        assert c.shape == (L, 3, 1)
-        assert a.shape == (L, 3, 1)
-        assert d.shape == (L, 3, 3)
-        assert z.shape == (L, 3, 4)
+        n = len(taxa)
+        assert c.shape == (L, n, 1)
+        assert a.shape == (L, n, 1)
+        # d and z are broadcastable (1, N, N) / (1, N, 4) — the CLI expands
+        # them per site-chunk at inference time, avoiding L× memory.
+        assert d.shape == (1, n, n)
+        assert z.shape == (1, n, 4)
         assert inv.shape == (L,)
 
     def test_tensor_dtypes(self, fasta_file, newick_file):
@@ -84,6 +87,6 @@ class TestLoadAlignmentAndTreeFasta:
 
     def test_distance_matrix_consistency(self, fasta_file, newick_file):
         c, a, d, z, inv, taxa, L = load_alignment_and_tree(fasta_file, newick_file)
-        dist = d[0].numpy()
+        dist = d[0].numpy()  # d is (1, N, N), d[0] is the (N, N) matrix
         assert np.allclose(np.diag(dist), 0.0)
         assert np.allclose(dist, dist.T)

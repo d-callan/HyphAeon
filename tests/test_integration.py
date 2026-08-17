@@ -103,3 +103,32 @@ class TestExampleDatasets:
         assert "codon_count" in data
         assert "sites" in data
         assert len(data["sites"]) == data["codon_count"]
+
+
+def test_batch_size_one_produces_same_structure(examples_dir, dummy_weights, tmp_path):
+    """Site batching (chunked inference) must produce the same output structure
+    as the default path. Runs with --batch-size 1 (extreme chunking, one site
+    per forward pass) and checks the CSV is well-formed with the right row
+    count, columns, and finite values.
+    """
+    fa = os.path.join(examples_dir, "Smc6.fasta")
+    nwk = os.path.join(examples_dir, "Smc6.nwk")
+    expected = os.path.join(EXPECTED_DIR, "Smc6_results.csv")
+    out = str(tmp_path / "batched.csv")
+
+    cmd = [
+        sys.executable, "-m", "axomeme.cli", "predict",
+        "-a", fa, "-t", nwk, "-w", dummy_weights, "-c", out,
+        "--cpu", "--batch-size", "1",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    assert result.returncode == 0, f"CLI failed: {result.stderr}"
+
+    actual = pd.read_csv(out)
+    expected_df = pd.read_csv(expected)
+    assert list(actual.columns) == EXPECTED_COLUMNS
+    assert len(actual) == len(expected_df)
+    assert (actual["site"] == expected_df["site"]).all()
+    assert (actual["is_invariable"] == expected_df["is_invariable"]).all()
+    for col in ("axomeme_lrt", "p_value"):
+        assert np.isfinite(actual[col]).all(), f"{col} contains non-finite values"

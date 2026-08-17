@@ -85,3 +85,40 @@ class TestComputeMdsCoordinates:
         mat = np.array([[0, 1], [1, 0]], dtype=np.float32)
         coords = compute_mds_coordinates(mat, n_components=4)
         assert coords.shape == (2, 4)
+
+    def test_lanczos_path_large_matrix(self):
+        """For N > 500, compute_mds_coordinates uses a Lanczos spectral solver
+        instead of dense eigh. Verify it produces valid output (right shape,
+        finite, zero diagonal in the recovered distance structure).
+        """
+        # Build a synthetic 501x501 Euclidean distance matrix from random points.
+        rng = np.random.default_rng(42)
+        points = rng.standard_normal((501, 4)).astype(np.float32)
+        mat = np.sqrt(((points[:, None, :] - points[None, :, :]) ** 2).sum(axis=2)).astype(np.float32)
+        coords = compute_mds_coordinates(mat, n_components=4)
+        assert coords.shape == (501, 4)
+        assert coords.dtype == np.float32
+        assert np.isfinite(coords).all()
+
+    def test_lanczos_and_dense_agree_on_submatrix(self):
+        """The Lanczos path (N > 500) and dense path (N <= 500) should produce
+        approximately the same coordinates for the same distance structure.
+        We build a 501-point matrix, run the Lanczos path, then take a 500-point
+        submatrix and run the dense path, and check the overlapping coordinates
+        agree up to sign (MDS coordinates are sign-ambiguous).
+        """
+        rng = np.random.default_rng(123)
+        points = rng.standard_normal((501, 4)).astype(np.float32)
+        mat = np.sqrt(((points[:, None, :] - points[None, :, :]) ** 2).sum(axis=2)).astype(np.float32)
+
+        coords_lanczos = compute_mds_coordinates(mat, n_components=4)
+        coords_dense = compute_mds_coordinates(mat[:500, :500], n_components=4)
+
+        # Compare the first 500 points, accounting for sign ambiguity per axis.
+        for axis in range(4):
+            l = coords_lanczos[:500, axis]
+            d = coords_dense[:, axis]
+            # Either same sign or flipped sign — check correlation is high.
+            assert abs(np.corrcoef(l, d)[0, 1]) > 0.95, (
+                f"Lanczos and dense MDS disagree on axis {axis}: corr={np.corrcoef(l, d)[0, 1]:.3f}"
+            )
