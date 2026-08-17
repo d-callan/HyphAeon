@@ -34,6 +34,3 @@ packages = ["axomeme"]
 [project.urls]
 "Homepage" = "https://github.com/veg/axomeme"
 "Bug Tracker" = "https://github.com/veg/axomeme/issues"
-
-[tool.setuptools.packages.find]
-include = ["axomeme*"]
