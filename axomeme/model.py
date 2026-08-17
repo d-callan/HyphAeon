@@ -174,29 +174,6 @@ class PhyloRowAttention(nn.Module):
         return out
 
 
-class StableTransformerEncoderLayer(nn.Module):
-    def __init__(self, d_model, nhead, dim_feedforward, dropout=0.1):
-        super().__init__()
-        self.self_attn = StableAttention(d_model, nhead, dropout)
-        
-        self.linear1 = BlockLinear(d_model, dim_feedforward)
-        self.dropout = nn.Dropout(dropout)
-        self.linear2 = BlockLinear(dim_feedforward, d_model)
-        
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
-        
-    def forward(self, src):
-        attn_out = self.self_attn(src, src, src)
-        src = self.norm1(src + self.dropout1(attn_out))
-        
-        ff_out = self.linear2(self.dropout(F.relu(self.linear1(src))))
-        src = self.norm2(src + self.dropout2(ff_out))
-        return src
-
-
 # --- Fitch Codon Parsimony and Tree Topology Utilities ---
 CODON_TO_AA_DICT = {
     'TTT': 0, 'TTC': 0, 'TTA': 1, 'TTG': 1, 'TCT': 2, 'TCC': 2, 'TCA': 2, 'TCG': 2,
@@ -602,72 +579,6 @@ class SparseCodonEdgeEncoder(nn.Module):
         out_vec = F.layer_norm(self.pool_combine(combined), (self.embed_dim,))
         return torch.where(has_edges > 0, out_vec, torch.zeros_like(out_vec))
 
-
-
-# --- 17-Bin Ordinal Likelihood Partition & Soft-Bin Expectation Decoder ---
-BIN_EDGES_9 = [0.0, 0.2738, 1.8272, 3.1248, 4.4537, 5.7987, 7.5909, 12.1310, 16.6963, 21.2737, 100.0]
-BIN_EDGES_12 = [0.0, 0.2738, 0.7500, 1.2500, 1.8272, 2.4500, 3.1248, 4.4537, 5.7987, 7.5909, 12.1310, 16.6963, 21.2737, 100.0]
-BIN_EDGES_16 = [0.0, 0.2738, 0.7500, 1.2500, 1.8272, 2.4500, 3.1248, 4.4537, 5.7987, 7.5909, 12.1310, 16.6963, 22.0, 32.0, 50.0, 75.0, 100.0]
-BIN_EDGES = BIN_EDGES_16
-BIN_MEANS = torch.tensor([0.00, 0.51, 1.00, 1.54, 2.14, 2.79, 3.79, 5.13, 6.69, 9.86, 14.41, 18.98, 35.00])
-
-def sparsemax(logits, dim=-1):
-    """
-    TPU-friendly Sparsemax (Martins & Astudillo, ICML 2016).
-    Projects logits onto the probability simplex, truncating low-scoring tail values to EXACTLY 0.0.
-    Uses 100% static tensor shapes and ops to prevent PyTorch-XLA recompilation graph breaks.
-    """
-    input_sorted, _ = torch.sort(logits, descending=True, dim=dim)
-    cumsum = torch.cumsum(input_sorted, dim=dim)
-    
-    num_elements = logits.shape[dim]
-    k_range = torch.arange(1, num_elements + 1, device=logits.device, dtype=logits.dtype)
-    shape = [1] * logits.dim()
-    shape[dim] = -1
-    k_range = k_range.view(*shape)
-    
-    bound = 1.0 + k_range * input_sorted
-    is_greater = (bound > cumsum).float()
-    
-    k_max = torch.max(is_greater * k_range, dim=dim, keepdim=True)[0]
-    tau = (torch.gather(cumsum, dim, k_max.long() - 1) - 1.0) / k_max
-    
-    return torch.relu(logits - tau)
-
-
-def decode_soft_ordinal_lrt(logits_ordinal, bin_edges=None, temperature=1.0):
-    """
-    Rigorously decodes continuous LRT prediction from CORAL cumulative ordinal logits
-    using the Cumulative Survival Function Integral Theorem: E[Y] = int_0^inf P(Y > y) dy.
-    """
-    num_heads = logits_ordinal.shape[-1] if logits_ordinal.dim() > 1 else (logits_ordinal.shape[0] if logits_ordinal.dim() == 1 else 16)
-    if bin_edges is None:
-        if num_heads >= 15:
-            bin_edges = BIN_EDGES_16
-        elif num_heads >= 11:
-            bin_edges = BIN_EDGES_12
-        else:
-            bin_edges = BIN_EDGES_9
-        
-    device = logits_ordinal.device
-    edges = torch.tensor(bin_edges[:num_heads+1], device=device, dtype=logits_ordinal.dtype)
-    widths = (edges[1:] - edges[:-1]).to(device=device, dtype=logits_ordinal.dtype)
-    
-    # Cumulative probabilities P(LRT > threshold_k) for k in 0..num_heads-1
-    p_cum = torch.sigmoid(logits_ordinal / temperature)
-    
-    # E[LRT] = sum_k P(LRT > t_k) * delta_t_k
-    widths_view = widths.view(*([1] * (p_cum.dim() - 1)), -1)
-    y_continuous_lrt = torch.sum(p_cum * widths_view, dim=-1)
-    return y_continuous_lrt, p_cum
-
-
-# Fixed Empirical Prior Cutoffs b_k = logit(P(Y > T_k))
-EMPIRICAL_PRIOR_CUTOFFS = torch.tensor([
-    -1.7346, -2.1972, -2.5867, -2.9444, -3.3168, -3.6636,
-    -4.1846, -4.5951, -5.1100, -5.8061, -6.5008, -7.1301,
-    -7.8236, -8.5170, -9.2102, -9.9034
-])
 
 
 class RankConsistentCoralHead(nn.Module):
