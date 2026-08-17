@@ -291,9 +291,33 @@ def compute_fast_dist_matrix(tree: Phylo.BaseTree.Tree, taxa: List[str]) -> np.n
 def compute_mds_coordinates(dist_matrix: np.ndarray, n_components: int = 4) -> np.ndarray:
     """
     Classical Multidimensional Scaling (MDS) embedding into 4D continuous coordinate space.
+    Uses fast Truncated Lanczos spectral solver for N > 500, with dense eigh fallback.
     """
     n = dist_matrix.shape[0]
-    H = np.eye(n) - np.ones((n, n)) / n
+    if n > 500:
+        try:
+            import scipy.sparse.linalg as sla
+            D2 = dist_matrix ** 2
+            def matvec(v):
+                hv = v - np.mean(v)
+                dhv = D2.dot(hv)
+                return -0.5 * (dhv - np.mean(dhv))
+            from scipy.sparse.linalg import LinearOperator
+            B_op = LinearOperator((n, n), matvec=matvec, dtype=np.float32)
+            eigvals, eigvecs = sla.eigsh(B_op, k=n_components, which='LA', maxiter=300)
+            idx = np.argsort(eigvals)[::-1]
+            eigvals = eigvals[idx]
+            eigvecs = eigvecs[:, idx]
+            pos_eigvals = np.maximum(eigvals[:n_components], 0)
+            coords = eigvecs[:, :n_components] * np.sqrt(pos_eigvals)
+            if coords.shape[1] < n_components:
+                pad = np.zeros((n, n_components - coords.shape[1]))
+                coords = np.hstack([coords, pad])
+            return coords.astype(np.float32)
+        except Exception:
+            pass # Fallback to standard dense eigh
+
+    H = np.eye(n, dtype=np.float32) - (1.0 / n)
     B = -0.5 * H.dot(dist_matrix ** 2).dot(H)
     eigvals, eigvecs = np.linalg.eigh(B)
     idx = np.argsort(eigvals)[::-1]
@@ -393,7 +417,7 @@ def load_alignment_and_tree(fa_path: str, nwk_path: Optional[str] = None):
 
     c_tensor = torch.tensor(c_all, dtype=torch.long)
     a_tensor = torch.tensor(a_all, dtype=torch.long)
-    d_tensor = torch.tensor(dist_mat, dtype=torch.float32).unsqueeze(0).repeat(L, 1, 1)
-    z_tensor = torch.tensor(mds_coords, dtype=torch.float32).unsqueeze(0).repeat(L, 1, 1)
+    d_tensor = torch.tensor(dist_mat, dtype=torch.float32).unsqueeze(0)  # [1, N, N] broadcastable
+    z_tensor = torch.tensor(mds_coords, dtype=torch.float32).unsqueeze(0)  # [1, N, 4] broadcastable
 
     return c_tensor, a_tensor, d_tensor, z_tensor, is_aa_invariable, taxa, L

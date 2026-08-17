@@ -71,26 +71,18 @@ Codon    LRT Score    p-value      Status
 
 ## 📊 Benchmark Summary: HyPhy MEME vs. AxoMEME
 
-Taking **HyPhy MEME** ($p \le 0.10$ / asymptotic $\text{LRT} \ge 3.12$) as ground truth across **22 empirical literature datasets** (11,714 codons across up to 476 taxa):
+Taking **HyPhy MEME** ($p \le 0.10$ / asymptotic $\text{LRT} \ge 4.605$) as ground truth across **84 empirical datasets from 9 independent literature studies** (43,302 codons across up to 476 taxa):
 
-| Dataset / Gene | System / Biological Regime | Taxa ($N$) | Codons ($L$) | ROC-AUC | PR-AUC | PPV | FPR | Spearman $\rho$ | Runtime (HyPhy) | Runtime (AxoMEME) | Speedup |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **SARS-CoV-2 spike** | Coronavirus spike receptor | 180 | 1,284 | **0.976** | 0.433 | 20.6% | 2.13% | **0.972** | 859.0 s | **21.16 s** | **40.6×** |
-| **Nsmce2** | SMC5/6 ubiquitin ligase cofactor | 20 | 247 | **1.000** | **1.000** | **100.0%** | **0.00%** | **0.941** | 31.0 s | **0.20 s** | **158.4×** |
-| **Nsmce4a** | Primate kleisin subunit | 14 | 355 | **1.000** | — | **100.0%** | **0.00%** | **0.936** | 24.0 s | **0.21 s** | **115.8×** |
-| **Smc4** | SMC4 chromosome condensing | 18 | 1,288 | **0.987** | 0.169 | 0.0% | 0.08% | **0.930** | 92.0 s | **0.89 s** | **102.9×** |
-| **Smc5** | SMC5 conserved partner | 18 | 1,102 | **0.967** | 0.027 | 0.0% | **0.00%** | **0.914** | 79.0 s | **0.74 s** | **106.6×** |
-| **Smc2** | SMC2 condensin subunit | 17 | 1,197 | **0.991** | 0.293 | 0.0% | **0.00%** | **0.909** | 86.0 s | **0.80 s** | **107.9×** |
-| **Smc6** | Primate HBV restriction factor | 20 | 1,097 | **0.990** | **0.752** | **100.0%** | **0.00%** | **0.870** | 99.0 s | **0.82 s** | **120.5×** |
-| **Lysozyme** | Primate stomach lysozyme C | 19 | 130 | **1.000** | — | **100.0%** | **0.00%** | **0.860** | 21.0 s | **0.10 s** | **211.4×** |
-| **Nsmce3** | Primate SMC5/6 subunit | 20 | 304 | **0.974** | 0.111 | 0.0% | **0.00%** | **0.860** | 59.0 s | **0.23 s** | **258.1×** |
-| **Lysin** | Abalone sperm-egg recognition | 25 | 134 | **0.863** | **0.659** | **76.9%** | 3.06% | **0.799** | 104.0 s | **0.14 s** | **755.4×** |
-| **Bat OAS1** | Bat sarbecovirus restriction factor | 18 | 351 | **0.904** | **0.628** | **87.5%** | 0.35% | **0.675** | 352.0 s | **0.25 s** | **1,402.0×** |
-| **Camelid VHH** | Single-domain antibodies | 212 | 96 | **0.839** | **0.746** | **86.7%** | 3.23% | **0.635** | 976.0 s | **1.85 s** | **526.9×** |
-| **Adh** | Drosophila alcohol dehydrogenase | 23 | 254 | **0.980** | **0.669** | **80.0%** | 0.41% | **0.602** | 142.0 s | **0.22 s** | **634.1×** |
-| **Influenza A HA** | Influenza A hemagglutinin | 349 | 329 | **0.937** | **0.607** | **55.6%** | 2.64% | **0.587** | 1,829.0 s | **17.53 s** | **104.3×** |
-| **HIV RT** | HIV-1 Reverse Transcriptase | 476 | 335 | **0.959** | **0.743** | **83.3%** | 0.65% | **0.485** | 3,184.0 s | **32.95 s** | **96.6×** |
-| **TOTAL (All 22)**| **Global Benchmark Suite** | — | **11,714** | **0.970** | **0.461** | **58.6%** | **0.46%** | **0.680** | **9,516.0 s** | **81.44 s** | **116.8×** |
+| Literature Study & System | Genes / Datasets | Codons | ROC-AUC | PR-AUC | PPV | FPR | Spearman $\rho$ | Runtime (HyPhy MLE) | Runtime (AxoMEME CPU) | Throughput Speedup |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Abdul et al. (2018)** *SMC5/6 Complex* | 9 | 7,073 | **0.990** | **0.752** | **100.0%** | **0.00%** | **0.874** | 561.0 s | **3.84 s** | **171.3×** |
+| **Nisson et al. (2025)** *CCDC137 (HIV Vpr)* | 1 | 290 | **0.940** | **0.650** | **75.0%** | **0.35%** | **0.833** | 80.0 s | **0.21 s** | **380.9×** |
+| **Le Corf et al. (2026)** *GBP5 GTPase* | 2 | 1,223 | **0.958** | **0.584** | **68.2%** | **0.49%** | **0.782** | 1,174.0 s | **1.68 s** | **693.3×** |
+| **D'Oliviera et al. (2025)** *TRMT1 Cleavage* | 2 | 1,613 | **0.945** | **0.512** | **62.5%** | **0.31%** | **0.671** | 723.0 s | **1.30 s** | **543.9×** |
+| **Lytras et al. (2023)** *Bat OAS1 Factor* | 1 | 351 | **0.904** | **0.628** | **87.5%** | **0.35%** | **0.675** | 352.0 s | **0.22 s** | **1,566.3×** |
+| **Wisotsky et al. (2020)** *Benchmark Suite* | 12 | 4,290 | **0.965** | **0.618** | **68.8%** | **0.58%** | **0.615** | 8,603.0 s | **55.49 s** | **608.8×** |
+| **Hilbert & Elde (2023)** *Siglec / C-Lectins* | 57 | 28,462 | **0.892** | **0.224** | **44.8%** | **0.17%** | **0.376** | 14,203.0 s | **16.12 s** | **859.1×** |
+| **GLOBAL AGGREGATE** | **84** | **43,302** | **0.914** | **0.286** *(8.8× base)* | **50.6%** | **0.191%** | **0.489** | **25,696.0 s (7.14 h)** | **78.87 s (1.31 m)** | **325.8×** |
 
 ---
 

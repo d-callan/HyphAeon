@@ -24,8 +24,55 @@ def ensure_parent_directory(path):
     parent = os.path.dirname(os.path.abspath(path))
     os.makedirs(parent, exist_ok=True)
 
+def determine_adaptive_batch_size(num_species: int, total_sites: int, device: torch.device, user_batch_size: int = None) -> int:
+    """
+    Dynamically computes the optimal, safe site batch size based on available
+    hardware memory (VRAM / RAM) and the quadratic complexity O(N^2) of tree self-attention.
+    """
+    if user_batch_size is not None and user_batch_size > 0:
+        return min(user_batch_size, total_sites)
+        
+    n = num_species + 1  # including root token
+    
+    # 1. Determine available memory in bytes
+    available_bytes = 4 * (1024 ** 3)  # default conservative 4 GB budget
+    if device.type == 'cuda' and torch.cuda.is_available():
+        try:
+            free_mem, _ = torch.cuda.mem_get_info(device)
+            available_bytes = free_mem
+        except Exception:
+            available_bytes = 8 * (1024 ** 3)
+    else:
+        try:
+            import psutil
+            vm = psutil.virtual_memory()
+            available_bytes = vm.available
+        except Exception:
+            available_bytes = 8 * (1024 ** 3)
+            
+    # Apply safety headroom (use at most 40% of available memory for batch tensor allocations)
+    target_budget_bytes = max(int(available_bytes * 0.40), 256 * (1024 ** 2))
+    
+    # 2. Estimate dynamic activation memory per site in float32 bytes:
+    # - Pairwise genetic code masks: 4 * n^2 * 4 bytes = 16 * n^2
+    # - Embeddings and intermediate activations ~ 9216 * n
+    # - Attention weights across 6 layers x 12 heads = 288 * n^2
+    # Total dynamic activation memory per site ~ 320 * n^2 + 10000 * n bytes
+    bytes_per_site = 320 * (n ** 2) + 10000 * n + 4096
+    
+    calculated_batch = max(1, target_budget_bytes // bytes_per_site)
+    batch_size = min(total_sites, int(calculated_batch))
+    
+    return batch_size
+
 def predict_single(args):
-    device = torch.device('cuda' if torch.cuda.is_available() and not args.cpu else 'cpu')
+    if torch.cuda.is_available() and not args.cpu:
+        device = torch.device('cuda')
+    elif torch.backends.mps.is_available() and not args.cpu:
+        device = torch.device('mps')
+    else:
+        device = torch.device('cpu')
+    print(f"[*] Hardware device selected: {device.type.upper()}")
     
     if not os.path.exists(args.weights):
         print(f"[!] Error: Model weights not found at '{args.weights}'.")
@@ -57,12 +104,31 @@ def predict_single(args):
         print(f"\n[!] Error loading alignment and tree: {e}")
         sys.exit(1)
 
-    c, a, d, z = c.to(device), a.to(device), d.to(device), z.to(device)
+    # Determine adaptive batch size to prevent OOM
+    batch_size = determine_adaptive_batch_size(len(taxa), L, device, args.batch_size)
+    num_chunks = (L + batch_size - 1) // batch_size
+    mode_desc = f"manual override" if args.batch_size else "hardware adaptive"
+    print(f"[*] Site Batch Sizing ({mode_desc}): {batch_size} sites/chunk ({num_chunks} chunk{'s' if num_chunks > 1 else ''})")
     
+    d_dev = d.to(device)  # [1, N, N]
+    z_dev = z.to(device)  # [1, N, 4]
+    
+    lrt_chunks = []
     with torch.no_grad():
-        y_lrt_soft, _ = model(c, a, d, z)
-        lrts = torch.clamp(y_lrt_soft.squeeze(-1), min=0.0).cpu().numpy().flatten()
-        
+        for start_idx in range(0, L, batch_size):
+            end_idx = min(start_idx + batch_size, L)
+            cur_bs = end_idx - start_idx
+            
+            c_chunk = c[start_idx:end_idx].to(device)  # [cur_bs, N, 1]
+            a_chunk = a[start_idx:end_idx].to(device)  # [cur_bs, N, 1]
+            d_chunk = d_dev.expand(cur_bs, -1, -1)      # [cur_bs, N, N]
+            z_chunk = z_dev.expand(cur_bs, -1, -1)      # [cur_bs, N, 4]
+            
+            y_soft, _ = model(c_chunk, a_chunk, d_chunk, z_chunk)
+            chunk_lrts = torch.clamp(y_soft.squeeze(-1), min=0.0).cpu().numpy().flatten()
+            lrt_chunks.append(chunk_lrts)
+            
+    lrts = np.concatenate(lrt_chunks)
     lrts[inv] = 0.0
     elapsed = time.time() - t0
     
@@ -136,6 +202,7 @@ def main():
     pred_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
     pred_parser.add_argument("-t", "--tree", required=False, default=None, help="Path to Newick/NEXUS phylogenetic tree (optional if tree is embedded in alignment)")
     pred_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS, help="Path to pretrained model checkpoint")
+    pred_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: auto-selected dynamically based on available VRAM/RAM and taxa count)")
     pred_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     pred_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
     pred_parser.add_argument("--cpu", action="store_true", help="Force CPU inference")

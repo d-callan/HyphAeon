@@ -75,3 +75,4 @@ Thumbs.db
 results/
 tmp/
 scratch/
+.pr_monitor_state.json
