@@ -1,0 +1,36 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Install CPU-only torch first (smaller than the default CUDA wheel) so
+      # the subsequent `pip install -e .[dev]` sees the requirement satisfied.
+      - name: Install CPU torch
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install package and dev dependencies
+        run: pip install -e .[dev]
+
+      # Tests use a tiny dummy checkpoint (random weights) created at runtime,
+      # so no pretrained weights download is needed.
+      - name: Run tests
+        run: pytest tests/ -v

@@ -35,48 +35,6 @@ class BlockLinear(nn.Module):
         return torch.cat([out_codon, out_aa], dim=-1)
 
 
-# --- Stable Attention Module with Block-Diagonal Disentanglement ---
-class StableAttention(nn.Module):
-    def __init__(self, embed_dim, num_heads=4, dropout=0.1):
-        super().__init__()
-        self.embed_dim = embed_dim
-        self.num_heads = num_heads
-        self.head_dim = embed_dim // num_heads
-        
-        self.q_proj = BlockLinear(embed_dim, embed_dim)
-        self.k_proj = BlockLinear(embed_dim, embed_dim)
-        self.v_proj = BlockLinear(embed_dim, embed_dim)
-        self.out_proj = BlockLinear(embed_dim, embed_dim)
-        self.dropout = nn.Dropout(dropout)
-        
-    def forward(self, query, key, value, key_padding_mask=None):
-        batch_size, q_seq_len, _ = query.shape
-        k_seq_len = key.shape[1]
-        
-        q_proj = self.q_proj(query)
-        k_proj = self.k_proj(key)
-        v_proj = self.v_proj(value)
-        
-        q_h = q_proj.view(batch_size, q_seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        k_h = k_proj.view(batch_size, k_seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        v_h = v_proj.view(batch_size, k_seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        
-        scores = torch.matmul(q_h, k_h.transpose(-2, -1)) / math.sqrt(self.head_dim)
-        
-        if key_padding_mask is not None:
-            mask = key_padding_mask.unsqueeze(1).unsqueeze(2)
-            scores = scores.masked_fill(mask, -1e4)
-            attn_weights = torch.softmax(scores, dim=-1)
-            attn_weights = torch.where(mask, torch.zeros_like(attn_weights), attn_weights)
-        else:
-            attn_weights = torch.softmax(scores, dim=-1)
-        attn_weights = self.dropout(attn_weights)
-        
-        out = torch.matmul(attn_weights, v_h)
-        out = out.transpose(1, 2).contiguous().view(batch_size, q_seq_len, self.embed_dim)
-        return self.out_proj(out)
-
-
 # --- Custom Row Attention with Block-Diagonal Disentanglement & Learnable Phylogenetic Bias ---
 class PhyloRowAttention(nn.Module):
     def __init__(self, embed_dim, num_heads, dropout=0.1):
@@ -88,21 +46,26 @@ class PhyloRowAttention(nn.Module):
         self.q_proj = BlockLinear(embed_dim, embed_dim)
         self.k_proj = BlockLinear(embed_dim, embed_dim)
         self.v_proj = BlockLinear(embed_dim, embed_dim)
-        
-        # 3-Channel Unrooted Tree Topological Attention Projection:
-        # Channel 0: Patristic Path Distance D_ij
-        # Channel 1: Topological Node Count N_ij
-        # Channel 2: Off-Path Subtree Density S_ij
+
+        # NOTE: The following parameters are defined but NOT used in forward().
+        # They are remnants of earlier architecture iterations (3-channel tree
+        # projection, 2-layer phylo MLP, per-site rate scaler) that were
+        # simplified to the current 1-channel Markov kernel. They remain here
+        # because they are present in the pretrained checkpoint (axomeme_v1.pt)
+        # and removing them from __init__ would cause load_state_dict to fail
+        # with unexpected-key errors. Removing them requires either a checkpoint
+        # migration or a compatibility shim in the CLI. See REVIEW.md item #29.
         self.tree_w1 = nn.Parameter(torch.randn(num_heads, 3) * 0.02)
         self.tree_b1 = nn.Parameter(torch.zeros(num_heads, 1, 1))
         self.tree_w2 = nn.Parameter(torch.randn(num_heads, 1, 1) * 0.02)
-        
-        # Legacy fallback support for 1D distance inputs
+
+        # phylo_w1 IS used in forward() (Markov kernel decay rate).
+        # phylo_b1 and phylo_w2 are NOT used — same situation as above.
         self.phylo_w1 = nn.Parameter(torch.randn(num_heads, 1, 1) * 0.02)
         self.phylo_b1 = nn.Parameter(torch.zeros(num_heads, 1, 1))
         self.phylo_w2 = nn.Parameter(torch.randn(num_heads, 1, 1) * 0.02)
-        
-        # Dynamic Site-Level Tree Rate Scaler (MEME alpha_s site rate scaler intuition)
+
+        # NOT used in forward() — same situation as above.
         self.site_tree_scaler = nn.Linear(embed_dim, 1)
         nn.init.zeros_(self.site_tree_scaler.weight)
         nn.init.zeros_(self.site_tree_scaler.bias)
@@ -115,7 +78,7 @@ class PhyloRowAttention(nn.Module):
         self.out_proj = BlockLinear(embed_dim, embed_dim)
         self.dropout = nn.Dropout(dropout)
         
-    def forward(self, x, dist_matrix, mds_coords=None, padding_mask=None, nonsyn_mask=None, syn_mask=None, x0=None):
+    def forward(self, x, dist_matrix, mds_coords=None, padding_mask=None, x0=None):
         batch_size, num_species, _ = x.shape
         
         q = self.q_proj(x).view(batch_size, num_species, self.num_heads, self.head_dim).transpose(1, 2)
@@ -174,501 +137,6 @@ class PhyloRowAttention(nn.Module):
         return out
 
 
-class StableTransformerEncoderLayer(nn.Module):
-    def __init__(self, d_model, nhead, dim_feedforward, dropout=0.1):
-        super().__init__()
-        self.self_attn = StableAttention(d_model, nhead, dropout)
-        
-        self.linear1 = BlockLinear(d_model, dim_feedforward)
-        self.dropout = nn.Dropout(dropout)
-        self.linear2 = BlockLinear(dim_feedforward, d_model)
-        
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
-        
-    def forward(self, src):
-        attn_out = self.self_attn(src, src, src)
-        src = self.norm1(src + self.dropout1(attn_out))
-        
-        ff_out = self.linear2(self.dropout(F.relu(self.linear1(src))))
-        src = self.norm2(src + self.dropout2(ff_out))
-        return src
-
-
-# --- Fitch Codon Parsimony and Tree Topology Utilities ---
-CODON_TO_AA_DICT = {
-    'TTT': 0, 'TTC': 0, 'TTA': 1, 'TTG': 1, 'TCT': 2, 'TCC': 2, 'TCA': 2, 'TCG': 2,
-    'TAT': 3, 'TAC': 3, 'TAA': 20, 'TAG': 20, 'TGT': 4, 'TGC': 4, 'TGA': 20, 'TGG': 5,
-    'CTT': 1, 'CTC': 1, 'CTA': 1, 'CTG': 1, 'CCT': 6, 'CCC': 6, 'CCA': 6, 'CCG': 6,
-    'CAT': 7, 'CAC': 7, 'CAA': 8, 'CAG': 8, 'CGT': 9, 'CGC': 9, 'CGA': 9, 'CGG': 9,
-    'ATT': 10, 'ATC': 10, 'ATA': 10, 'ATG': 11, 'ACT': 12, 'ACC': 12, 'ACA': 12, 'ACG': 12,
-    'AAT': 13, 'AAC': 13, 'AAA': 14, 'AAG': 14, 'AGT': 2, 'AGC': 2, 'AGA': 9, 'AGG': 9,
-    'GTT': 15, 'GTC': 15, 'GTA': 15, 'GTG': 15, 'GCT': 16, 'GCC': 16, 'GCA': 16, 'GCG': 16,
-    'GAT': 17, 'GAC': 17, 'GAA': 18, 'GAG': 18, 'GGT': 19, 'GGC': 19, 'GGA': 19, 'GGG': 19
-}
-
-NUC_LIST = ['T', 'C', 'A', 'G']
-SENSE_CODONS = [n1+n2+n3 for n1 in NUC_LIST for n2 in NUC_LIST for n3 in NUC_LIST if CODON_TO_AA_DICT[n1+n2+n3] < 20]
-SENSE_CODON_TO_IDX = {c: i for i, c in enumerate(SENSE_CODONS)}
-SERINE_TCT_SET = {SENSE_CODON_TO_IDX[c] for c in ['TCT', 'TCC', 'TCA', 'TCG']}
-SERINE_AGC_SET = {SENSE_CODON_TO_IDX[c] for c in ['AGT', 'AGC']}
-
-def build_tree_topology(newick_str, selected_species):
-    clean_newick = newick_str.split(";")[0].strip() + ";" if newick_str else ""
-    if not clean_newick:
-        N = len(selected_species)
-        num_nodes = 2 * N - 1
-        parent_array = np.full(num_nodes, -1, dtype=np.int32)
-        for i in range(N):
-            parent_array[i] = N + (i // 2) if (N + (i // 2)) < num_nodes else num_nodes - 1
-        branch_lengths = np.ones(num_nodes, dtype=np.float32) * 0.05
-        return parent_array, branch_lengths
-        
-    try:
-        root = parse_newick(clean_newick)
-    except Exception:
-        N = len(selected_species)
-        num_nodes = 2 * N - 1
-        parent_array = np.full(num_nodes, -1, dtype=np.int32)
-        for i in range(N):
-            parent_array[i] = N + (i // 2) if (N + (i // 2)) < num_nodes else num_nodes - 1
-        branch_lengths = np.ones(num_nodes, dtype=np.float32) * 0.05
-        return parent_array, branch_lengths
-        
-    species_to_idx = {}
-    norm_selected = [s.replace("'", "").replace('"', '').strip() for s in selected_species]
-    for idx, s in enumerate(norm_selected):
-        species_to_idx[s] = idx
-        
-    N = len(selected_species)
-    num_nodes = 2 * N - 1
-    node_to_id = {}
-    
-    all_nodes = []
-    stack = [root]
-    while stack:
-        curr = stack.pop()
-        all_nodes.append(curr)
-        for c in reversed(curr.children):
-            stack.append(c)
-            
-    leaves = [n for n in all_nodes if not n.children]
-    internals = [n for n in all_nodes if n.children]
-    
-    leaves_found = 0
-    for term in leaves:
-        term_name = term.name.replace("'", "").replace('"', '').strip() if term.name else ""
-        if term_name in species_to_idx:
-            idx = species_to_idx[term_name]
-            node_to_id[term] = idx
-            leaves_found += 1
-            
-    if leaves_found < N:
-        for idx, term in enumerate(leaves):
-            if idx < N and term not in node_to_id:
-                node_to_id[term] = idx
-                
-    next_int_id = N
-    for n in internals:
-        node_to_id[n] = next_int_id
-        next_int_id += 1
-        if next_int_id >= num_nodes:
-            break
-            
-    parent_array = np.full(num_nodes, -1, dtype=np.int32)
-    branch_lengths = np.ones(num_nodes, dtype=np.float32) * 1e-3
-    
-    for n, n_id in node_to_id.items():
-        branch_lengths[n_id] = max(float(n.length), 1e-4)
-        if n.parent and n.parent in node_to_id:
-            parent_array[n_id] = node_to_id[n.parent]
-            
-    return parent_array, branch_lengths
-
-def build_sankoff_cost_matrix():
-    cost_matrix = np.zeros((61, 61), dtype=np.float32)
-    for i, c1 in enumerate(SENSE_CODONS):
-        aa1 = CODON_TO_AA_DICT[c1]
-        for j, c2 in enumerate(SENSE_CODONS):
-            if i == j:
-                cost_matrix[i, j] = 0.0
-                continue
-            aa2 = CODON_TO_AA_DICT[c2]
-            nuc_diff = sum(1 for k in range(3) if c1[k] != c2[k])
-            
-            if aa1 == aa2:
-                cost_matrix[i, j] = 1.0 * nuc_diff
-            else:
-                cost_matrix[i, j] = 2.5 * nuc_diff
-    return cost_matrix
-
-SANKOFF_COST_MATRIX = build_sankoff_cost_matrix()
-
-def fitch_codon_parsimony(site_codon_ids, parent_array, branch_lengths, max_k=32):
-    num_nodes = len(parent_array)
-    num_taxa = (num_nodes + 1) // 2
-    
-    S = np.zeros((num_nodes, 61), dtype=np.float32)
-    
-    for i in range(min(num_taxa, len(site_codon_ids))):
-        c_tok = site_codon_ids[i]
-        if c_tok < 64:
-            c_str = codons_list[c_tok] if c_tok < 64 else '???'
-            s_idx = SENSE_CODON_TO_IDX.get(c_str, 61)
-            if s_idx < 61:
-                S[i, :] = 1e6
-                S[i, s_idx] = 0.0
-            else:
-                S[i, :] = 0.0
-        else:
-            S[i, :] = 0.0
-            
-    children = [[] for _ in range(num_nodes)]
-    for v in range(num_nodes):
-        p = parent_array[v]
-        if p >= 0:
-            children[p].append(v)
-            
-    root = -1
-    for v in range(num_nodes):
-        if parent_array[v] < 0 and len(children[v]) > 0:
-            root = v
-            break
-    if root < 0:
-        root = num_nodes - 1
-        
-    # Dynamic Post-Order Bottom-Up DP (children before parent)
-    post_order = []
-    def get_post_order(u):
-        for ch in children[u]:
-            get_post_order(ch)
-        post_order.append(u)
-    get_post_order(root)
-    
-    for u in post_order:
-        ch = children[u]
-        if len(ch) > 0:
-            node_cost = np.zeros(61, dtype=np.float32)
-            for child in ch:
-                ch_cost_matrix = S[child, :][np.newaxis, :] + SANKOFF_COST_MATRIX
-                node_cost += np.min(ch_cost_matrix, axis=1)
-            S[u, :] = node_cost
-            
-    # Dynamic Pre-Order Top-Down Backtracking (parent before children)
-    pre_order = post_order[::-1]
-    reconstructed = np.zeros(num_nodes, dtype=np.int32)
-    reconstructed[root] = np.argmin(S[root, :])
-    
-    for u in pre_order[1:]:
-        p = parent_array[u]
-        p_state = reconstructed[p]
-        costs = S[u, :] + SANKOFF_COST_MATRIX[p_state, :]
-        reconstructed[u] = np.argmin(costs)
-
-        
-    active_edges = []
-    total_syn_count = 0.0
-    total_nonsyn_count = 0.0
-    
-    for v in range(num_nodes - 1):
-        p = parent_array[v]
-        if p < 0:
-            continue
-        c_u = reconstructed[p]
-        c_v = reconstructed[v]
-        
-        if c_u != c_v and c_u < 61 and c_v < 61:
-            b_len = max(float(branch_lengths[v]), 1e-4)
-            sub_id = c_u * 61 + c_v
-            
-            aa_u = CODON_TO_AA_DICT[SENSE_CODONS[c_u]]
-            aa_v = CODON_TO_AA_DICT[SENSE_CODONS[c_v]]
-            
-            str_u, str_v = SENSE_CODONS[c_u], SENSE_CODONS[c_v]
-            nuc_diff = sum(1 for i in range(3) if str_u[i] != str_v[i])
-            
-            is_syn = 1.0 if aa_u == aa_v else 0.0
-            is_nonsyn_single = 1.0 if (aa_u != aa_v and nuc_diff == 1) else 0.0
-            is_nonsyn_multi = 1.0 if (aa_u != aa_v and nuc_diff > 1) else 0.0
-            is_serine = 1.0 if (aa_u == aa_v and ((c_u in SERINE_TCT_SET and c_v in SERINE_AGC_SET) or (c_u in SERINE_AGC_SET and c_v in SERINE_TCT_SET))) else 0.0
-            
-            if is_syn == 1.0:
-                total_syn_count += 1.0
-            else:
-                total_nonsyn_count += 1.0
-                
-            rate = 1.0 / b_len
-            active_edges.append((is_syn, rate, sub_id, [is_syn, is_nonsyn_single, is_nonsyn_multi, is_serine], b_len))
-            
-    dNdS_ratio = total_nonsyn_count / (total_syn_count + 0.1)
-    rates = [e[1] for e in active_edges]
-    mean_rate = float(np.mean(rates)) if len(rates) > 0 else 1.0
-    
-    nonsyn_edges = [e for e in active_edges if e[0] == 0.0]
-    syn_edges = [e for e in active_edges if e[0] == 1.0]
-    
-    nonsyn_edges.sort(key=lambda x: x[1], reverse=True)
-    syn_edges.sort(key=lambda x: x[1], reverse=True)
-    
-    # Dynamic dual allocation ratio: 75% non-synonymous, 25% synonymous
-    target_nonsyn = int(max_k * 0.75)
-    target_syn = max_k - target_nonsyn
-    
-    k_nonsyn = min(target_nonsyn, len(nonsyn_edges))
-    k_syn = min(target_syn, len(syn_edges))
-    
-    selected = nonsyn_edges[:k_nonsyn] + syn_edges[:k_syn]
-    rem = nonsyn_edges[k_nonsyn:] + syn_edges[k_syn:]
-    rem.sort(key=lambda x: x[1], reverse=True)
-    
-    if len(selected) < max_k:
-        selected += rem[:(max_k - len(selected))]
-        
-    sub_ids = np.zeros(max_k, dtype=np.int64)
-    flags = np.zeros((max_k, 8), dtype=np.float32)
-    lengths = np.ones(max_k, dtype=np.float32) * 1e-4
-    mask = np.zeros(max_k, dtype=np.float32)
-    
-    for i, (_, rate, sub_id, fl, b_len) in enumerate(selected):
-        sub_ids[i] = sub_id
-        # Pure Transformer: Zero out all precomputed summary heuristics (dNdS_ratio, total_nonsyn, total_syn, burst_ratio)
-        flags[i] = fl + [0.0, 0.0, 0.0, 0.0]
-        lengths[i] = b_len
-        mask[i] = 1.0
-        
-    return sub_ids, flags, lengths, mask
-
-
-def _build_path_ns_tensor():
-    # 61x61x2 precomputed lookup table of expected (N, S) steps
-    sense_codons = ['AAA', 'AAC', 'AAG', 'AAT', 'ACA', 'ACC', 'ACG', 'ACT', 'AGA', 'AGC', 'AGG', 'AGT', 'ATA', 'ATC', 'ATG', 'ATT', 'CAA', 'CAC', 'CAG', 'CAT', 'CCA', 'CCC', 'CCG', 'CCT', 'CGA', 'CGC', 'CGG', 'CGT', 'CTA', 'CTC', 'CTG', 'CTT', 'GAA', 'GAC', 'GAG', 'GAT', 'GCA', 'GCC', 'GCG', 'GCT', 'GGA', 'GGC', 'GGG', 'GGT', 'GTA', 'GTC', 'GTG', 'GTT', 'TAC', 'TAT', 'TCA', 'TCC', 'TCG', 'TCT', 'TGC', 'TGG', 'TGT', 'TTA', 'TTC', 'TTG', 'TTT']
-    code = {'ATA':'I', 'ATC':'I', 'ATT':'I', 'ATG':'M', 'ACA':'T', 'ACC':'T', 'ACG':'T', 'ACT':'T', 'AAC':'N', 'AAT':'N', 'AAA':'K', 'AAG':'K', 'AGC':'S', 'AGT':'S', 'AGA':'R', 'AGG':'R', 'CTA':'L', 'CTC':'L', 'CTG':'L', 'CTT':'L', 'CCA':'P', 'CCC':'P', 'CCG':'P', 'CCT':'P', 'CAC':'H', 'CAT':'H', 'CAA':'Q', 'CAG':'Q', 'CGA':'R', 'CGC':'R', 'CGG':'R', 'CGT':'R', 'GTA':'V', 'GTC':'V', 'GTG':'V', 'GTT':'V', 'GCA':'A', 'GCC':'A', 'GCG':'A', 'GCT':'A', 'GAC':'D', 'GAT':'D', 'GAA':'E', 'GAG':'E', 'GGA':'G', 'GGC':'G', 'GGG':'G', 'GGT':'G', 'TCA':'S', 'TCC':'S', 'TCG':'S', 'TCT':'S', 'TTC':'F', 'TTT':'F', 'TTA':'L', 'TTG':'L', 'TAC':'Y', 'TAT':'Y', 'TGC':'C', 'TGT':'C', 'TGG':'W'}
-    stops = {'TAA', 'TAG', 'TGA'}
-    
-    import itertools
-    matrix = np.zeros((61, 61, 2), dtype=np.float32)
-    for i, c1 in enumerate(sense_codons):
-        for j, c2 in enumerate(sense_codons):
-            if c1 == c2:
-                continue
-            diffs = [k for k in range(3) if c1[k] != c2[k]]
-            perms = list(itertools.permutations(diffs))
-            valid_paths = []
-            for perm in perms:
-                path = [c1]
-                curr = list(c1)
-                valid = True
-                for pos in perm:
-                    curr[pos] = c2[pos]
-                    nc = "".join(curr)
-                    if nc in stops:
-                        valid = False
-                        break
-                    path.append(nc)
-                if valid:
-                    valid_paths.append(path)
-            if not valid_paths:
-                for perm in perms:
-                    path = [c1]
-                    curr = list(c1)
-                    for pos in perm:
-                        curr[pos] = c2[pos]
-                        path.append("".join(curr))
-                    valid_paths.append(path)
-            tn, ts = 0.0, 0.0
-            for p in valid_paths:
-                pn, ps = 0, 0
-                for step in range(len(p) - 1):
-                    if code.get(p[step]) == code.get(p[step+1]):
-                        ps += 1
-                    else:
-                        pn += 1
-                tn += pn
-                ts += ps
-            matrix[i, j, 0] = tn / len(valid_paths)
-            matrix[i, j, 1] = ts / len(valid_paths)
-    return torch.tensor(matrix, dtype=torch.float32)
-
-
-# --- Sparse Codon Edge Token Encoder ---
-class SparseCodonEdgeEncoder(nn.Module):
-    def __init__(self, embed_dim=128, max_k=64, num_categories=8):
-        super().__init__()
-        self.max_k = max_k
-        self.embed_dim = embed_dim
-        
-        self.register_buffer('path_ns_matrix', _build_path_ns_tensor())
-        self.codon_sub_embed = nn.Embedding(3721, 64)
-        self.category_proj = nn.Linear(num_categories, 32)
-        
-        self.b_mlp = nn.Sequential(
-            nn.Linear(2, 16),
-            nn.GELU(),
-            nn.Linear(16, 32)
-        )
-        
-        # Additional path projection layer for (exp_N, exp_S, nonsyn_ratio, nonsyn_flux, syn_flux, diff_flux)
-        self.path_proj = nn.Sequential(
-            nn.Linear(6, 16),
-            nn.GELU(),
-            nn.Linear(16, 16)
-        )
-        
-        self.edge_proj = nn.Sequential(
-            nn.Linear(64 + 32 + 32 + 16, embed_dim),
-            nn.GELU(),
-            nn.Linear(embed_dim, embed_dim)
-        )
-        
-        self.pool_combine = nn.Sequential(
-            nn.Linear(5 * embed_dim, embed_dim),
-            nn.GELU(),
-            nn.Linear(embed_dim, embed_dim)
-        )
-
-    def forward(self, active_sub_ids, active_flags, active_lengths, active_mask):
-        if self.category_proj.in_features == 4 and active_flags.shape[-1] >= 4:
-            cat_flags = active_flags[..., :4]
-        elif self.category_proj.in_features == 7 and active_flags.shape[-1] >= 7:
-            cat_flags = active_flags[..., :7]
-        elif self.category_proj.in_features == 8 and active_flags.shape[-1] < 8:
-            pad_size = 8 - active_flags.shape[-1]
-            pad_tensor = torch.zeros((*active_flags.shape[:-1], pad_size), device=active_flags.device, dtype=active_flags.dtype)
-            cat_flags = torch.cat([active_flags, pad_tensor], dim=-1)
-        else:
-            cat_flags = active_flags
-            
-        sub_emb = self.codon_sub_embed(active_sub_ids)
-        cat_emb = self.category_proj(cat_flags)
-        
-        log_b = torch.log(torch.clamp(active_lengths, min=1e-4))
-        b_feat = torch.stack([active_lengths, log_b], dim=-1)
-        b_emb = self.b_mlp(b_feat)
-        
-        # Extract path-averaged (N, S) metrics from lookup matrix
-        c_u = torch.clamp(active_sub_ids // 61, min=0, max=60)
-        c_v = torch.clamp(active_sub_ids % 61, min=0, max=60)
-        ns_vals = self.path_ns_matrix[c_u, c_v] # [B, K, 2]
-        exp_N = ns_vals[..., 0] # [B, K]
-        exp_S = ns_vals[..., 1] # [B, K]
-        
-        b_len_clamp = torch.clamp(active_lengths, min=1e-4)
-        
-        # Solution 1: Composition-Aware Path-Averaged Features
-        nonsyn_ratio = exp_N / (exp_N + exp_S + 1e-6)
-        nonsyn_flux = exp_N / b_len_clamp
-        syn_flux = exp_S / b_len_clamp
-        diff_flux = (exp_N - exp_S) / b_len_clamp
-        
-        path_feats = torch.stack([exp_N, exp_S, nonsyn_ratio, nonsyn_flux, syn_flux, diff_flux], dim=-1)
-        path_emb = self.path_proj(path_feats)
-        
-        concat_feat = torch.cat([sub_emb, cat_emb, b_emb, path_emb], dim=-1)
-        edge_vec = self.edge_proj(concat_feat)
-        
-        intensity = 1.0 / (torch.clamp(active_lengths, min=1e-4) + 1e-3)
-        intensity_log = torch.log1p(torch.clamp(intensity, max=100.0))
-        
-        weighted_edge_vec = edge_vec * intensity_log.unsqueeze(-1) * active_mask.unsqueeze(-1)
-        
-        # 1. Max Pooling across active edges (isolates 1st highest burst)
-        masked_for_max = weighted_edge_vec.masked_fill((active_mask == 0).unsqueeze(-1), -1e4)
-        max_pooled = torch.relu(torch.max(masked_for_max, dim=1)[0])
-        
-        # 2. Mean Pooling across active edges (tree-size invariant rate average)
-        active_counts = active_mask.sum(dim=1, keepdim=True).clamp(min=1.0)
-        mean_pooled = weighted_edge_vec.sum(dim=1) / active_counts
-        
-        # 3. L2 Norm Pooling (overall mutational energy normalized by active counts)
-        l2_pooled = torch.sqrt((weighted_edge_vec ** 2).sum(dim=1) / active_counts + 1e-6)
-        
-        # 4. Softmax Attention Pooling (weighted by edge intensity)
-        attn_logits = (weighted_edge_vec.sum(dim=-1) / math.sqrt(self.embed_dim)).masked_fill(active_mask == 0, -1e4)
-        attn_weights = F.softmax(attn_logits, dim=-1).unsqueeze(-1)
-        attn_pooled = (weighted_edge_vec * attn_weights).sum(dim=1)
-        
-        # 5. Top-2 Edge Pooling (isolates 2nd highest burst, zeroed if < 2 active edges)
-        has_at_least_two_edges = (active_counts >= 2.0).float()
-        top2_val, _ = torch.topk(masked_for_max, k=min(2, masked_for_max.shape[1]), dim=1)
-        if top2_val.shape[1] >= 2:
-            top2_pooled = torch.relu(top2_val[:, 1, :]) * has_at_least_two_edges
-        else:
-            top2_pooled = max_pooled * has_at_least_two_edges
-            
-        has_edges = (active_counts > 0.0).float()
-        combined = torch.cat([max_pooled, mean_pooled, l2_pooled, attn_pooled, top2_pooled], dim=-1)
-        out_vec = F.layer_norm(self.pool_combine(combined), (self.embed_dim,))
-        return torch.where(has_edges > 0, out_vec, torch.zeros_like(out_vec))
-
-
-
-# --- 17-Bin Ordinal Likelihood Partition & Soft-Bin Expectation Decoder ---
-BIN_EDGES_9 = [0.0, 0.2738, 1.8272, 3.1248, 4.4537, 5.7987, 7.5909, 12.1310, 16.6963, 21.2737, 100.0]
-BIN_EDGES_12 = [0.0, 0.2738, 0.7500, 1.2500, 1.8272, 2.4500, 3.1248, 4.4537, 5.7987, 7.5909, 12.1310, 16.6963, 21.2737, 100.0]
-BIN_EDGES_16 = [0.0, 0.2738, 0.7500, 1.2500, 1.8272, 2.4500, 3.1248, 4.4537, 5.7987, 7.5909, 12.1310, 16.6963, 22.0, 32.0, 50.0, 75.0, 100.0]
-BIN_EDGES = BIN_EDGES_16
-BIN_MEANS = torch.tensor([0.00, 0.51, 1.00, 1.54, 2.14, 2.79, 3.79, 5.13, 6.69, 9.86, 14.41, 18.98, 35.00])
-
-def sparsemax(logits, dim=-1):
-    """
-    TPU-friendly Sparsemax (Martins & Astudillo, ICML 2016).
-    Projects logits onto the probability simplex, truncating low-scoring tail values to EXACTLY 0.0.
-    Uses 100% static tensor shapes and ops to prevent PyTorch-XLA recompilation graph breaks.
-    """
-    input_sorted, _ = torch.sort(logits, descending=True, dim=dim)
-    cumsum = torch.cumsum(input_sorted, dim=dim)
-    
-    num_elements = logits.shape[dim]
-    k_range = torch.arange(1, num_elements + 1, device=logits.device, dtype=logits.dtype)
-    shape = [1] * logits.dim()
-    shape[dim] = -1
-    k_range = k_range.view(*shape)
-    
-    bound = 1.0 + k_range * input_sorted
-    is_greater = (bound > cumsum).float()
-    
-    k_max = torch.max(is_greater * k_range, dim=dim, keepdim=True)[0]
-    tau = (torch.gather(cumsum, dim, k_max.long() - 1) - 1.0) / k_max
-    
-    return torch.relu(logits - tau)
-
-
-def decode_soft_ordinal_lrt(logits_ordinal, bin_edges=None, temperature=1.0):
-    """
-    Rigorously decodes continuous LRT prediction from CORAL cumulative ordinal logits
-    using the Cumulative Survival Function Integral Theorem: E[Y] = int_0^inf P(Y > y) dy.
-    """
-    num_heads = logits_ordinal.shape[-1] if logits_ordinal.dim() > 1 else (logits_ordinal.shape[0] if logits_ordinal.dim() == 1 else 16)
-    if bin_edges is None:
-        if num_heads >= 15:
-            bin_edges = BIN_EDGES_16
-        elif num_heads >= 11:
-            bin_edges = BIN_EDGES_12
-        else:
-            bin_edges = BIN_EDGES_9
-        
-    device = logits_ordinal.device
-    edges = torch.tensor(bin_edges[:num_heads+1], device=device, dtype=logits_ordinal.dtype)
-    widths = (edges[1:] - edges[:-1]).to(device=device, dtype=logits_ordinal.dtype)
-    
-    # Cumulative probabilities P(LRT > threshold_k) for k in 0..num_heads-1
-    p_cum = torch.sigmoid(logits_ordinal / temperature)
-    
-    # E[LRT] = sum_k P(LRT > t_k) * delta_t_k
-    widths_view = widths.view(*([1] * (p_cum.dim() - 1)), -1)
-    y_continuous_lrt = torch.sum(p_cum * widths_view, dim=-1)
-    return y_continuous_lrt, p_cum
-
-
-# Fixed Empirical Prior Cutoffs b_k = logit(P(Y > T_k))
-EMPIRICAL_PRIOR_CUTOFFS = torch.tensor([
-    -1.7346, -2.1972, -2.5867, -2.9444, -3.3168, -3.6636,
-    -4.1846, -4.5951, -5.1100, -5.8061, -6.5008, -7.1301,
-    -7.8236, -8.5170, -9.2102, -9.9034
-])
-
 
 class RankConsistentCoralHead(nn.Module):
     """
@@ -706,30 +174,17 @@ class RankConsistentCoralHead(nn.Module):
         return logits
 
 
-LOG_CORAL_THRESHOLDS_8 = torch.tensor([0.0000, 0.6931, 1.4170, 1.6963, 2.0327, 2.4704, 3.0445, 3.9318, 4.6151])
 LOG_CORAL_DELTAS_8 = torch.tensor([0.6931, 0.7239, 0.2793, 0.3364, 0.4377, 0.5741, 0.8873, 0.6833])
 
-LOG_CORAL_THRESHOLDS_16 = torch.tensor([0.0000, 0.2420, 0.5596, 0.8109, 1.0393, 1.2384, 1.4170, 1.6963, 1.9168, 2.1507, 2.5750, 2.8734, 3.1355, 3.4965, 3.9318, 4.3307, 4.6151])
 LOG_CORAL_DELTAS_16 = torch.tensor([0.2420, 0.3176, 0.2513, 0.2284, 0.1991, 0.1786, 0.2793, 0.2205, 0.2339, 0.4243, 0.2984, 0.2621, 0.3610, 0.4353, 0.3989, 0.2844])
 
-LOG_CORAL_THRESHOLDS_24 = torch.tensor([
-    0.0000, 0.2420, 0.4055, 0.5596, 0.6931, 0.8544, 1.0393, 1.2384, 1.4170,
-    1.5772, 1.6963, 1.8582, 2.0327, 2.2246, 2.4704, 2.7081, 2.9444, 3.2189,
-    3.4965, 3.7612, 4.0073, 4.2341, 4.4188, 4.6151, 4.7958
-])
 LOG_CORAL_DELTAS_24 = torch.tensor([
     0.2420, 0.1635, 0.1542, 0.1335, 0.1613, 0.1849, 0.1991, 0.1786, 0.1602,
     0.1191, 0.1619, 0.1746, 0.1919, 0.2458, 0.2376, 0.2364, 0.2744, 0.2776,
     0.2647, 0.2461, 0.2268, 0.1847, 0.1963, 0.1807
 ])
 
-# Backward compatibility aliases
-LOG_CORAL_THRESHOLDS_FULL = LOG_CORAL_THRESHOLDS_16
-LOG_CORAL_DELTAS_TENSOR = LOG_CORAL_DELTAS_16
 LOG_CORAL_DELTAS_12 = LOG_CORAL_DELTAS_16[:12]
-CORAL_THRESHOLDS_FULL = LOG_CORAL_THRESHOLDS_16
-CORAL_DELTAS_TENSOR = LOG_CORAL_DELTAS_16
-PURE_CORAL_DELTAS_12 = LOG_CORAL_DELTAS_12
 
 def decode_soft_ordinal_lrt(logits_lrt_ordinal):
     """
@@ -761,51 +216,6 @@ def decode_soft_ordinal_lrt(logits_lrt_ordinal):
     return physical_lrt, probs
 
 
-class PermutationInvariantPhyloPma(nn.Module):
-    """
-    100% Permutation-Invariant Set Transformer PMA Pooling:
-    K learned probe tokens query all taxa across the phylogenetic tree.
-    Aggregated via symmetric operators (Mean, Max, Std) across K probes.
-    Zero index-dependent weights, zero random seed instability, zero competing dispersion penalty.
-    """
-    def __init__(self, embed_dim=128, num_probes=8, num_heads=4, out_dim=256):
-        super().__init__()
-        self.num_probes = num_probes
-        self.embed_dim = embed_dim
-        self.probes = nn.Parameter(torch.randn(num_probes, embed_dim) / math.sqrt(embed_dim))
-        self.mha = nn.MultiheadAttention(embed_dim, num_heads=num_heads, batch_first=True)
-        
-        # Invariant aggregation: Mean (D) + Max (D) + Std (D) = 3 * D = 384d
-        self.fusion = nn.Sequential(
-            BlockLinear(3 * embed_dim, out_dim),
-            nn.GELU(),
-            nn.LayerNorm(out_dim)
-        )
-        
-    def forward(self, site_repr, padding_mask=None):
-        # site_repr: [batch_size, num_species, embed_dim]
-        # padding_mask: [batch_size, num_species]
-        B, N, D = site_repr.shape
-        
-        # 1. Multi-Head Probe Attention across species
-        queries = self.probes.unsqueeze(0).expand(B, -1, -1).contiguous()  # [B, K, D]
-        probe_out, _ = self.mha(
-            query=queries, 
-            key=site_repr, 
-            value=site_repr, 
-            key_padding_mask=padding_mask
-        )  # [B, K, D]
-        
-        # 2. Symmetric Permutation-Invariant Reduction across K probes
-        p_mean = probe_out.mean(dim=1)                                           # [B, D]
-        p_max, _ = probe_out.max(dim=1)                                          # [B, D]
-        p_std = torch.sqrt(torch.var(probe_out, dim=1, unbiased=False) + 1e-6)   # [B, D]
-        
-        # 3. Compact 384d Invariant Feature Summary
-        p_combined = torch.cat([p_mean, p_max, p_std], dim=-1)                  # [B, 3 * D]
-        return self.fusion(p_combined)                                           # [B, out_dim]
-
-
 class PhyloAxialTransformer(nn.Module):
     """
     Phylogenetic Axial Transformer with Learned [ROOT] Token:
@@ -819,9 +229,7 @@ class PhyloAxialTransformer(nn.Module):
         super().__init__()
         self.embed_dim = embed_dim
         self.window_size = window_size
-        self.max_species = max_species
         self.num_layers = num_layers
-        self.use_aa_embeddings = True
         self.num_thresholds = num_thresholds
 
         self.codon_embedding = nn.Embedding(num_tokens, embed_dim // 2)
@@ -842,7 +250,6 @@ class PhyloAxialTransformer(nn.Module):
                 BlockLinear(2*embed_dim, embed_dim)
             ) for _ in range(num_col_layers)
         ])
-        self.col_norms = nn.ModuleList([nn.LayerNorm(embed_dim) for _ in range(num_col_layers)])
 
         self.row_layers = nn.ModuleList([
             PhyloRowAttention(embed_dim=embed_dim, num_heads=num_heads, dropout=0.1)
@@ -859,25 +266,7 @@ class PhyloAxialTransformer(nn.Module):
         # Ensure padding_mask is always a canonical boolean tensor to keep XLA graph topology static
         if padding_mask is None:
             padding_mask = torch.zeros(batch_size, num_species, dtype=torch.bool, device=msa_codons.device)
-        
-        # Pre-compute genetic code pairwise attention masks at central site
-        c_cent = msa_codons[:, :, central_idx]  # [batch_size, num_species]
-        a_cent = msa_aas[:, :, central_idx]     # [batch_size, num_species]
-        
-        valid = (c_cent < 64) & (a_cent < 21) & (~padding_mask.bool())
-            
-        v_float = valid.float()
-        v_pair = v_float.unsqueeze(1) * v_float.unsqueeze(2)  # [batch_size, num_species, num_species]
-        
-        # Static matrix identity mask (Zero PyTorch-XLA recompilation)
-        diag_mask = torch.eye(num_species, device=c_cent.device, dtype=v_float.dtype).unsqueeze(0)
-        pair_mask = v_pair * (1.0 - diag_mask)
-        
-        a_diff = (a_cent.unsqueeze(1) != a_cent.unsqueeze(2)).float() * pair_mask
-        c_diff = (c_cent.unsqueeze(1) != c_cent.unsqueeze(2)).float()
-        a_eq = (a_cent.unsqueeze(1) == a_cent.unsqueeze(2)).float()
-        c_syn = (c_diff * a_eq) * pair_mask
-        
+
         codon_emb = self.codon_embedding(msa_codons)
         aa_emb = self.aa_embedding(msa_aas)
         
@@ -904,20 +293,9 @@ class PhyloAxialTransformer(nn.Module):
         dist_top = torch.cat([torch.zeros(batch_size, 1, 1, device=dist_matrix.device), root_dist.transpose(1, 2)], dim=2)  # [batch_size, 1, num_species + 1]
         dist_bot = torch.cat([root_dist, dist_matrix], dim=2)  # [batch_size, num_species, num_species + 1]
         dist_full = torch.cat([dist_top, dist_bot], dim=1)  # [batch_size, num_species + 1, num_species + 1]
-        
-        # 5. Augment Non-Syn and Syn masks with zero borders for root
-        nonsyn_top = torch.zeros(batch_size, 1, num_species + 1, device=a_diff.device)
-        nonsyn_bot = torch.cat([torch.zeros(batch_size, num_species, 1, device=a_diff.device), a_diff], dim=2)
-        nonsyn_full = torch.cat([nonsyn_top, nonsyn_bot], dim=1)
-        
-        syn_top = torch.zeros(batch_size, 1, num_species + 1, device=c_syn.device)
-        syn_bot = torch.cat([torch.zeros(batch_size, num_species, 1, device=c_syn.device), c_syn], dim=2)
-        syn_full = torch.cat([syn_top, syn_bot], dim=1)
-        
+
         num_nodes = num_species + 1
         padding_mask_dup = padding_mask_full.unsqueeze(1).expand(-1, window_size, -1).contiguous().view(batch_size * window_size, num_nodes)
-        nonsyn_mask_dup = nonsyn_full.unsqueeze(1).expand(-1, window_size, -1, -1).contiguous().view(batch_size * window_size, num_nodes, num_nodes)
-        syn_mask_dup = syn_full.unsqueeze(1).expand(-1, window_size, -1, -1).contiguous().view(batch_size * window_size, num_nodes, num_nodes)
 
         # 6. Feature Transformation along Column Axis (if window_size > 1)
         for i in range(len(self.col_layers)):
@@ -936,7 +314,7 @@ class PhyloAxialTransformer(nn.Module):
         x0_dup = x_full.transpose(1, 2).contiguous().view(batch_size * window_size, num_nodes, self.embed_dim)
         for i in range(len(self.row_layers)):
             row_in = x_full.transpose(1, 2).contiguous().view(batch_size * window_size, num_nodes, self.embed_dim)
-            row_out = self.row_layers[i](row_in, dist_dup, mds_coords=mds_dup, padding_mask=padding_mask_dup, nonsyn_mask=nonsyn_mask_dup, syn_mask=syn_mask_dup, x0=x0_dup)
+            row_out = self.row_layers[i](row_in, dist_dup, mds_coords=mds_dup, padding_mask=padding_mask_dup, x0=x0_dup)
             row_out = self.row_norms[i](row_in + row_out)
             x_full = row_out.reshape(batch_size, window_size, num_nodes, self.embed_dim).transpose(1, 2)
             

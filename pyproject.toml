@@ -23,13 +23,20 @@ dependencies = [
     "numpy>=1.22.0",
     "scipy>=1.9.0",
     "pandas>=1.5.0",
+    "psutil>=5.9.0",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
 
 [project.scripts]
 axomeme = "axomeme.cli:main"
 
 [tool.setuptools]
 packages = ["axomeme"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [project.urls]
 "Homepage" = "https://github.com/veg/axomeme"
