@@ -30,6 +30,9 @@ dependencies = [
 [project.scripts]
 axomeme = "axomeme.cli:main"
 
+[tool.setuptools]
+packages = ["axomeme"]
+
 [project.urls]
 "Homepage" = "https://github.com/veg/axomeme"
 "Bug Tracker" = "https://github.com/veg/axomeme/issues"
