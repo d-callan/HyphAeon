@@ -19,6 +19,10 @@ from .dataset import load_alignment_and_tree
 
 DEFAULT_WEIGHTS = os.path.join(os.path.dirname(os.path.dirname(__file__)), "weights", "axomeme_v1.pt")
 
+def ensure_parent_directory(path):
+    parent = os.path.dirname(os.path.abspath(path))
+    os.makedirs(parent, exist_ok=True)
+
 def predict_single(args):
     device = torch.device('cuda' if torch.cuda.is_available() and not args.cpu else 'cpu')
     
@@ -85,6 +89,7 @@ def predict_single(args):
     ]
     
     if args.output:
+        ensure_parent_directory(args.output)
         with open(args.output, "w") as f:
             json.dump({
                 "alignment": args.alignment,
@@ -97,6 +102,7 @@ def predict_single(args):
         print(f"\n[✓] JSON results written to: {args.output}")
         
     if args.csv:
+        ensure_parent_directory(args.csv)
         df = pd.DataFrame(results_list)
         df.to_csv(args.csv, index=False)
         print(f"[✓] CSV results written to: {args.csv}")
