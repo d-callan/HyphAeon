@@ -35,48 +35,6 @@ class BlockLinear(nn.Module):
         return torch.cat([out_codon, out_aa], dim=-1)
 
 
-# --- Stable Attention Module with Block-Diagonal Disentanglement ---
-class StableAttention(nn.Module):
-    def __init__(self, embed_dim, num_heads=4, dropout=0.1):
-        super().__init__()
-        self.embed_dim = embed_dim
-        self.num_heads = num_heads
-        self.head_dim = embed_dim // num_heads
-        
-        self.q_proj = BlockLinear(embed_dim, embed_dim)
-        self.k_proj = BlockLinear(embed_dim, embed_dim)
-        self.v_proj = BlockLinear(embed_dim, embed_dim)
-        self.out_proj = BlockLinear(embed_dim, embed_dim)
-        self.dropout = nn.Dropout(dropout)
-        
-    def forward(self, query, key, value, key_padding_mask=None):
-        batch_size, q_seq_len, _ = query.shape
-        k_seq_len = key.shape[1]
-        
-        q_proj = self.q_proj(query)
-        k_proj = self.k_proj(key)
-        v_proj = self.v_proj(value)
-        
-        q_h = q_proj.view(batch_size, q_seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        k_h = k_proj.view(batch_size, k_seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        v_h = v_proj.view(batch_size, k_seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        
-        scores = torch.matmul(q_h, k_h.transpose(-2, -1)) / math.sqrt(self.head_dim)
-        
-        if key_padding_mask is not None:
-            mask = key_padding_mask.unsqueeze(1).unsqueeze(2)
-            scores = scores.masked_fill(mask, -1e4)
-            attn_weights = torch.softmax(scores, dim=-1)
-            attn_weights = torch.where(mask, torch.zeros_like(attn_weights), attn_weights)
-        else:
-            attn_weights = torch.softmax(scores, dim=-1)
-        attn_weights = self.dropout(attn_weights)
-        
-        out = torch.matmul(attn_weights, v_h)
-        out = out.transpose(1, 2).contiguous().view(batch_size, q_seq_len, self.embed_dim)
-        return self.out_proj(out)
-
-
 # --- Custom Row Attention with Block-Diagonal Disentanglement & Learnable Phylogenetic Bias ---
 class PhyloRowAttention(nn.Module):
     def __init__(self, embed_dim, num_heads, dropout=0.1):
@@ -88,21 +46,26 @@ class PhyloRowAttention(nn.Module):
         self.q_proj = BlockLinear(embed_dim, embed_dim)
         self.k_proj = BlockLinear(embed_dim, embed_dim)
         self.v_proj = BlockLinear(embed_dim, embed_dim)
-        
-        # 3-Channel Unrooted Tree Topological Attention Projection:
-        # Channel 0: Patristic Path Distance D_ij
-        # Channel 1: Topological Node Count N_ij
-        # Channel 2: Off-Path Subtree Density S_ij
+
+        # NOTE: The following parameters are defined but NOT used in forward().
+        # They are remnants of earlier architecture iterations (3-channel tree
+        # projection, 2-layer phylo MLP, per-site rate scaler) that were
+        # simplified to the current 1-channel Markov kernel. They remain here
+        # because they are present in the pretrained checkpoint (axomeme_v1.pt)
+        # and removing them from __init__ would cause load_state_dict to fail
+        # with unexpected-key errors. Removing them requires either a checkpoint
+        # migration or a compatibility shim in the CLI. See REVIEW.md item #29.
         self.tree_w1 = nn.Parameter(torch.randn(num_heads, 3) * 0.02)
         self.tree_b1 = nn.Parameter(torch.zeros(num_heads, 1, 1))
         self.tree_w2 = nn.Parameter(torch.randn(num_heads, 1, 1) * 0.02)
-        
-        # Legacy fallback support for 1D distance inputs
+
+        # phylo_w1 IS used in forward() (Markov kernel decay rate).
+        # phylo_b1 and phylo_w2 are NOT used — same situation as above.
         self.phylo_w1 = nn.Parameter(torch.randn(num_heads, 1, 1) * 0.02)
         self.phylo_b1 = nn.Parameter(torch.zeros(num_heads, 1, 1))
         self.phylo_w2 = nn.Parameter(torch.randn(num_heads, 1, 1) * 0.02)
-        
-        # Dynamic Site-Level Tree Rate Scaler (MEME alpha_s site rate scaler intuition)
+
+        # NOT used in forward() — same situation as above.
         self.site_tree_scaler = nn.Linear(embed_dim, 1)
         nn.init.zeros_(self.site_tree_scaler.weight)
         nn.init.zeros_(self.site_tree_scaler.bias)
@@ -115,7 +78,7 @@ class PhyloRowAttention(nn.Module):
         self.out_proj = BlockLinear(embed_dim, embed_dim)
         self.dropout = nn.Dropout(dropout)
         
-    def forward(self, x, dist_matrix, mds_coords=None, padding_mask=None, nonsyn_mask=None, syn_mask=None, x0=None):
+    def forward(self, x, dist_matrix, mds_coords=None, padding_mask=None, x0=None):
         batch_size, num_species, _ = x.shape
         
         q = self.q_proj(x).view(batch_size, num_species, self.num_heads, self.head_dim).transpose(1, 2)
@@ -211,30 +174,17 @@ class RankConsistentCoralHead(nn.Module):
         return logits
 
 
-LOG_CORAL_THRESHOLDS_8 = torch.tensor([0.0000, 0.6931, 1.4170, 1.6963, 2.0327, 2.4704, 3.0445, 3.9318, 4.6151])
 LOG_CORAL_DELTAS_8 = torch.tensor([0.6931, 0.7239, 0.2793, 0.3364, 0.4377, 0.5741, 0.8873, 0.6833])
 
-LOG_CORAL_THRESHOLDS_16 = torch.tensor([0.0000, 0.2420, 0.5596, 0.8109, 1.0393, 1.2384, 1.4170, 1.6963, 1.9168, 2.1507, 2.5750, 2.8734, 3.1355, 3.4965, 3.9318, 4.3307, 4.6151])
 LOG_CORAL_DELTAS_16 = torch.tensor([0.2420, 0.3176, 0.2513, 0.2284, 0.1991, 0.1786, 0.2793, 0.2205, 0.2339, 0.4243, 0.2984, 0.2621, 0.3610, 0.4353, 0.3989, 0.2844])
 
-LOG_CORAL_THRESHOLDS_24 = torch.tensor([
-    0.0000, 0.2420, 0.4055, 0.5596, 0.6931, 0.8544, 1.0393, 1.2384, 1.4170,
-    1.5772, 1.6963, 1.8582, 2.0327, 2.2246, 2.4704, 2.7081, 2.9444, 3.2189,
-    3.4965, 3.7612, 4.0073, 4.2341, 4.4188, 4.6151, 4.7958
-])
 LOG_CORAL_DELTAS_24 = torch.tensor([
     0.2420, 0.1635, 0.1542, 0.1335, 0.1613, 0.1849, 0.1991, 0.1786, 0.1602,
     0.1191, 0.1619, 0.1746, 0.1919, 0.2458, 0.2376, 0.2364, 0.2744, 0.2776,
     0.2647, 0.2461, 0.2268, 0.1847, 0.1963, 0.1807
 ])
 
-# Backward compatibility aliases
-LOG_CORAL_THRESHOLDS_FULL = LOG_CORAL_THRESHOLDS_16
-LOG_CORAL_DELTAS_TENSOR = LOG_CORAL_DELTAS_16
 LOG_CORAL_DELTAS_12 = LOG_CORAL_DELTAS_16[:12]
-CORAL_THRESHOLDS_FULL = LOG_CORAL_THRESHOLDS_16
-CORAL_DELTAS_TENSOR = LOG_CORAL_DELTAS_16
-PURE_CORAL_DELTAS_12 = LOG_CORAL_DELTAS_12
 
 def decode_soft_ordinal_lrt(logits_lrt_ordinal):
     """
@@ -279,9 +229,7 @@ class PhyloAxialTransformer(nn.Module):
         super().__init__()
         self.embed_dim = embed_dim
         self.window_size = window_size
-        self.max_species = max_species
         self.num_layers = num_layers
-        self.use_aa_embeddings = True
         self.num_thresholds = num_thresholds
 
         self.codon_embedding = nn.Embedding(num_tokens, embed_dim // 2)
@@ -302,7 +250,6 @@ class PhyloAxialTransformer(nn.Module):
                 BlockLinear(2*embed_dim, embed_dim)
             ) for _ in range(num_col_layers)
         ])
-        self.col_norms = nn.ModuleList([nn.LayerNorm(embed_dim) for _ in range(num_col_layers)])
 
         self.row_layers = nn.ModuleList([
             PhyloRowAttention(embed_dim=embed_dim, num_heads=num_heads, dropout=0.1)
@@ -319,25 +266,7 @@ class PhyloAxialTransformer(nn.Module):
         # Ensure padding_mask is always a canonical boolean tensor to keep XLA graph topology static
         if padding_mask is None:
             padding_mask = torch.zeros(batch_size, num_species, dtype=torch.bool, device=msa_codons.device)
-        
-        # Pre-compute genetic code pairwise attention masks at central site
-        c_cent = msa_codons[:, :, central_idx]  # [batch_size, num_species]
-        a_cent = msa_aas[:, :, central_idx]     # [batch_size, num_species]
-        
-        valid = (c_cent < 64) & (a_cent < 21) & (~padding_mask.bool())
-            
-        v_float = valid.float()
-        v_pair = v_float.unsqueeze(1) * v_float.unsqueeze(2)  # [batch_size, num_species, num_species]
-        
-        # Static matrix identity mask (Zero PyTorch-XLA recompilation)
-        diag_mask = torch.eye(num_species, device=c_cent.device, dtype=v_float.dtype).unsqueeze(0)
-        pair_mask = v_pair * (1.0 - diag_mask)
-        
-        a_diff = (a_cent.unsqueeze(1) != a_cent.unsqueeze(2)).float() * pair_mask
-        c_diff = (c_cent.unsqueeze(1) != c_cent.unsqueeze(2)).float()
-        a_eq = (a_cent.unsqueeze(1) == a_cent.unsqueeze(2)).float()
-        c_syn = (c_diff * a_eq) * pair_mask
-        
+
         codon_emb = self.codon_embedding(msa_codons)
         aa_emb = self.aa_embedding(msa_aas)
         
@@ -364,20 +293,9 @@ class PhyloAxialTransformer(nn.Module):
         dist_top = torch.cat([torch.zeros(batch_size, 1, 1, device=dist_matrix.device), root_dist.transpose(1, 2)], dim=2)  # [batch_size, 1, num_species + 1]
         dist_bot = torch.cat([root_dist, dist_matrix], dim=2)  # [batch_size, num_species, num_species + 1]
         dist_full = torch.cat([dist_top, dist_bot], dim=1)  # [batch_size, num_species + 1, num_species + 1]
-        
-        # 5. Augment Non-Syn and Syn masks with zero borders for root
-        nonsyn_top = torch.zeros(batch_size, 1, num_species + 1, device=a_diff.device)
-        nonsyn_bot = torch.cat([torch.zeros(batch_size, num_species, 1, device=a_diff.device), a_diff], dim=2)
-        nonsyn_full = torch.cat([nonsyn_top, nonsyn_bot], dim=1)
-        
-        syn_top = torch.zeros(batch_size, 1, num_species + 1, device=c_syn.device)
-        syn_bot = torch.cat([torch.zeros(batch_size, num_species, 1, device=c_syn.device), c_syn], dim=2)
-        syn_full = torch.cat([syn_top, syn_bot], dim=1)
-        
+
         num_nodes = num_species + 1
         padding_mask_dup = padding_mask_full.unsqueeze(1).expand(-1, window_size, -1).contiguous().view(batch_size * window_size, num_nodes)
-        nonsyn_mask_dup = nonsyn_full.unsqueeze(1).expand(-1, window_size, -1, -1).contiguous().view(batch_size * window_size, num_nodes, num_nodes)
-        syn_mask_dup = syn_full.unsqueeze(1).expand(-1, window_size, -1, -1).contiguous().view(batch_size * window_size, num_nodes, num_nodes)
 
         # 6. Feature Transformation along Column Axis (if window_size > 1)
         for i in range(len(self.col_layers)):
@@ -396,7 +314,7 @@ class PhyloAxialTransformer(nn.Module):
         x0_dup = x_full.transpose(1, 2).contiguous().view(batch_size * window_size, num_nodes, self.embed_dim)
         for i in range(len(self.row_layers)):
             row_in = x_full.transpose(1, 2).contiguous().view(batch_size * window_size, num_nodes, self.embed_dim)
-            row_out = self.row_layers[i](row_in, dist_dup, mds_coords=mds_dup, padding_mask=padding_mask_dup, nonsyn_mask=nonsyn_mask_dup, syn_mask=syn_mask_dup, x0=x0_dup)
+            row_out = self.row_layers[i](row_in, dist_dup, mds_coords=mds_dup, padding_mask=padding_mask_dup, x0=x0_dup)
             row_out = self.row_norms[i](row_in + row_out)
             x_full = row_out.reshape(batch_size, window_size, num_nodes, self.embed_dim).transpose(1, 2)
             
