@@ -52,7 +52,7 @@ def train_epoch(model, loader, optimizer, scaler, device, args):
         y_true = batch['target_lrt'].to(device)
         
         optimizer.zero_grad()
-        with torch.cuda.amp.autocast(enabled=args.fp16):
+        with torch.amp.autocast('cuda', enabled=args.fp16):
             y_pred, _ = model(c, a, d, z)
             # Robust Huber / Smooth L1 loss on selection test statistic
             loss = nn.functional.smooth_l1_loss(y_pred.squeeze(-1), y_true, beta=1.0)
@@ -95,7 +95,7 @@ def main():
     
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
-    scaler = torch.cuda.amp.GradScaler(enabled=args.fp16)
+    scaler = torch.amp.GradScaler('cuda', enabled=args.fp16)
     
     print(f"[*] Starting training on {device} ({args.epochs} epochs)...")
     best_loss = float('inf')

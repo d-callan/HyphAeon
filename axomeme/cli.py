@@ -17,7 +17,8 @@ import torch
 from .model import PhyloAxialTransformer
 from .dataset import load_alignment_and_tree
 
-DEFAULT_WEIGHTS = os.path.join(os.path.dirname(os.path.dirname(__file__)), "weights", "axomeme_v1.pt")
+_REPO_WEIGHTS = os.path.join(os.path.dirname(os.path.dirname(__file__)), "weights", "axomeme_v1.pt")
+DEFAULT_WEIGHTS = os.environ.get("AXOMEME_WEIGHTS", _REPO_WEIGHTS)
 
 def ensure_parent_directory(path):
     parent = os.path.dirname(os.path.abspath(path))
@@ -32,8 +33,14 @@ def predict_single(args):
         sys.exit(1)
         
     print(f"[*] Loading AxoMEME model from: {args.weights}")
-    model = PhyloAxialTransformer(embed_dim=384, num_layers=6, num_heads=12, window_size=1).to(device)
     ckpt = torch.load(args.weights, map_location=device, weights_only=False)
+    ckpt_args = ckpt.get('args', {}) if isinstance(ckpt, dict) else {}
+    model = PhyloAxialTransformer(
+        embed_dim=ckpt_args.get('embed_dim', 384),
+        num_layers=ckpt_args.get('layers', 6),
+        num_heads=ckpt_args.get('heads', 12),
+        window_size=ckpt_args.get('window_size', 1),
+    ).to(device)
     model.load_state_dict(ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt)
     model.eval()
     
