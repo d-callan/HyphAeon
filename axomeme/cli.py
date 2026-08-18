@@ -99,7 +99,7 @@ def predict_single(args):
     # (legacy .pt files store args inline). If using HF variant download, fetch config.json from HF.
     config = {}
     if args.weights and os.path.exists(args.weights) and args.weights.endswith(".pt"):
-        ckpt = torch.load(args.weights, map_location="cpu", weights_only=False)
+        ckpt = torch.load(args.weights, map_location="cpu", weights_only=True)
         if isinstance(ckpt, dict) and "args" in ckpt:
             config = ckpt["args"]
         elif isinstance(ckpt, dict):

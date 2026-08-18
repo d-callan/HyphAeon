@@ -182,7 +182,7 @@ def load_weights(
         return load_file(path, device=str(map_location))
 
     # .pt format (legacy or explicit path)
-    ckpt = torch.load(path, map_location=map_location, weights_only=False)
+    ckpt = torch.load(path, map_location=map_location, weights_only=True)
     if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
         return ckpt["model_state_dict"]
     if isinstance(ckpt, dict) and "state_dict" in ckpt:
