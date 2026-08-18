@@ -129,6 +129,10 @@ Non-finite and materially negative LRTs are retained as source values but marked
 ineligible. Negative numerical noise within `1e-8` of zero is clamped to zero.
 Only amino-acid-variable sites are eligible for training.
 
+Use a clean output directory when changing the alignment set. If unrelated NPZ
+archives are already present, the builder warns but does not delete them; the
+training script will still consume every NPZ in `--data_dir`.
+
 ### 2. Train
 
 The trainer discovers and validates every `.npz` directly in `--data_dir`; there

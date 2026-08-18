@@ -1,5 +1,6 @@
 import gzip
 import json
+import warnings
 
 import numpy as np
 import pytest
@@ -182,6 +183,63 @@ def test_training_directory_builds_every_alignment_gene(tmp_path):
     dataset = GeneTensorsDataset(str(output_dir))
     assert len(dataset) == 2
     assert {dataset[0]["gene_name"], dataset[1]["gene_name"]} == {"alpha", "beta"}
+
+
+def test_training_directory_does_not_warn_for_clean_output(tmp_path):
+    alignment_dir, tree_dir, meme_dir, *_ = write_inputs(tmp_path)
+    output_dir = tmp_path / "npz"
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        build_training_directory(
+            str(alignment_dir), str(meme_dir), str(output_dir), str(tree_dir)
+        )
+
+    assert caught == []
+
+
+def test_training_directory_does_not_warn_for_expected_existing_archive(tmp_path):
+    alignment_dir, tree_dir, meme_dir, *_ = write_inputs(tmp_path)
+    output_dir = tmp_path / "npz"
+    output_dir.mkdir()
+    (output_dir / "gene.npz").write_text("old archive will be overwritten")
+    (output_dir / "notes.txt").write_text("non-NPZ files are ignored")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        build_training_directory(
+            str(alignment_dir), str(meme_dir), str(output_dir), str(tree_dir)
+        )
+
+    assert caught == []
+    with np.load(output_dir / "gene.npz", allow_pickle=False) as data:
+        assert data["gene_name"].item() == "gene"
+
+
+def test_training_directory_warns_once_for_unexpected_archives(tmp_path):
+    alignment_dir, tree_dir, meme_dir, *_ = write_inputs(tmp_path)
+    output_dir = tmp_path / "npz"
+    output_dir.mkdir()
+    stale_paths = []
+    for index in range(12):
+        path = output_dir / f"stale_{index:02d}.npz"
+        np.savez(path, marker=np.asarray(index))
+        stale_paths.append(path)
+
+    with pytest.warns(UserWarning) as caught:
+        build_training_directory(
+            str(alignment_dir), str(meme_dir), str(output_dir), str(tree_dir)
+        )
+
+    assert len(caught) == 1
+    message = str(caught[0].message)
+    assert "12 NPZ archive(s)" in message
+    assert "stale_00.npz" in message
+    assert "stale_09.npz" in message
+    assert "and 2 more" in message
+    assert "every .npz in --data_dir" in message
+    assert all(path.exists() for path in stale_paths)
+    assert (output_dir / "gene.npz").exists()
 
 
 def test_dataset_rejects_legacy_per_site_npz(tmp_path):

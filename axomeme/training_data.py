@@ -5,6 +5,7 @@ from __future__ import annotations
 import gzip
 import json
 import re
+import warnings
 import zipfile
 from pathlib import Path
 from typing import Dict, Iterable, Optional, Tuple
@@ -272,6 +273,27 @@ def build_training_directory(
     pairs = pair_training_inputs(alignment_dir, meme_dir, tree_dir)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
+
+    expected_archives = {f"{gene}.npz" for gene, *_ in pairs}
+    unexpected_archives = sorted(
+        path.name
+        for path in output.glob("*.npz")
+        if path.name not in expected_archives
+    )
+    if unexpected_archives:
+        preview_limit = 10
+        preview = ", ".join(unexpected_archives[:preview_limit])
+        remaining = len(unexpected_archives) - preview_limit
+        if remaining > 0:
+            preview = f"{preview}, and {remaining} more"
+        warnings.warn(
+            f"Output directory contains {len(unexpected_archives)} NPZ archive(s) "
+            f"that are not outputs of the current alignment set: {preview}. "
+            "train.py will include every .npz in --data_dir; remove these files "
+            "or use a clean output directory if they should not be trained on.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     summaries = []
     for gene, alignment, tree, meme in pairs:
