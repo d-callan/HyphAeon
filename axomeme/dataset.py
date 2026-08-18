@@ -413,20 +413,25 @@ def load_alignment_and_tree(fa_path: str, nwk_path: Optional[str] = None, max_sp
                 f"and alignment sequences ({list(seq_dict.keys())[:5]}...)."
             )
 
-    # 5. Compute distance matrix & optional Max-PD downsampling
-    dist_mat = compute_fast_dist_matrix(tree_obj, taxa)
-    if max_species is not None and len(taxa) > max_species:
-        dist_mat, taxa = downsample_taxa_faith_pd(dist_mat, taxa, max_species)
-        print(f"[*] Faith's PD Species Downsampling: Selected {len(taxa)} taxa maximizing tree diversity.")
-
-    mds_coords = compute_mds_coordinates(dist_mat, n_components=4)
-
-    # 6. Build codon & AA tensors
     n_taxa = len(taxa)
     first_seq = seq_dict[taxa[0]]
     L = len(first_seq) // 3
     if L == 0:
         raise ValueError(f"Alignment sequence length {len(first_seq)} bp is less than 1 codon (3 bp).")
+
+    # 5. Compute distance matrix & optional Max-PD downsampling
+    dist_mat = compute_fast_dist_matrix(tree_obj, taxa)
+
+    # If tree branch lengths are raw mutation counts (> 10.0) rather than substitutions per site,
+    # normalize by alignment codon length L to bring distances into standard evolutionary scale
+    if dist_mat.max() > 10.0:
+        dist_mat = dist_mat / L
+
+    if max_species is not None and len(taxa) > max_species:
+        dist_mat, taxa = downsample_taxa_faith_pd(dist_mat, taxa, max_species)
+        print(f"[*] Faith's PD Species Downsampling: Selected {len(taxa)} taxa maximizing tree diversity.")
+
+    mds_coords = compute_mds_coordinates(dist_mat, n_components=4)
 
     c_all = np.zeros((L, n_taxa, 1), dtype=np.int64)
     a_all = np.zeros((L, n_taxa, 1), dtype=np.int64)
