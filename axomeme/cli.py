@@ -121,8 +121,8 @@ def predict_single(args):
             
             c_chunk = c[start_idx:end_idx].to(device)  # [cur_bs, N, 1]
             a_chunk = a[start_idx:end_idx].to(device)  # [cur_bs, N, 1]
-            d_chunk = d_dev.expand(cur_bs, -1, -1)      # [cur_bs, N, N]
-            z_chunk = z_dev.expand(cur_bs, -1, -1)      # [cur_bs, N, 4]
+            d_chunk = d_dev.expand(cur_bs, -1, -1).contiguous()  # [cur_bs, N, N]
+            z_chunk = z_dev.expand(cur_bs, -1, -1).contiguous()  # [cur_bs, N, 4]
             
             y_soft, _ = model(c_chunk, a_chunk, d_chunk, z_chunk)
             chunk_lrts = torch.clamp(y_soft.squeeze(-1), min=0.0).cpu().numpy().flatten()
