@@ -104,32 +104,40 @@ def predict_single(args):
         print(f"\n[!] Error loading alignment and tree: {e}")
         sys.exit(1)
 
+    # 1. Fast Invariable Site Filter (Invariable codons mathematically have LRT=0, p=1.0)
+    variable_indices = np.where(~inv)[0]
+    num_variable = len(variable_indices)
+
     # Determine adaptive batch size to prevent OOM
-    batch_size = determine_adaptive_batch_size(len(taxa), L, device, args.batch_size)
-    num_chunks = (L + batch_size - 1) // batch_size
+    batch_size = determine_adaptive_batch_size(len(taxa), max(1, num_variable), device, args.batch_size)
+    num_chunks = (num_variable + batch_size - 1) // batch_size if num_variable > 0 else 0
     mode_desc = f"manual override" if args.batch_size else "hardware adaptive"
-    print(f"[*] Site Batch Sizing ({mode_desc}): {batch_size} sites/chunk ({num_chunks} chunk{'s' if num_chunks > 1 else ''})")
+    print(f"[*] Site Batch Sizing ({mode_desc}): {batch_size} sites/chunk ({num_chunks} chunk{'s' if num_chunks != 1 else ''} for {num_variable}/{L} variable codons)")
     
+    # 2. Pre-compute static tree kernel cache (Markov log-bias + Tree-RoPE cos/sin)
     d_dev = d.to(device)  # [1, N, N]
     z_dev = z.to(device)  # [1, N, 4]
+    tree_cache = model.precompute_tree_cache(d_dev, z_dev)
     
-    lrt_chunks = []
-    with torch.no_grad():
-        for start_idx in range(0, L, batch_size):
-            end_idx = min(start_idx + batch_size, L)
-            cur_bs = end_idx - start_idx
-            
-            c_chunk = c[start_idx:end_idx].to(device)  # [cur_bs, N, 1]
-            a_chunk = a[start_idx:end_idx].to(device)  # [cur_bs, N, 1]
-            d_chunk = d_dev.expand(cur_bs, -1, -1).contiguous()  # [cur_bs, N, N]
-            z_chunk = z_dev.expand(cur_bs, -1, -1).contiguous()  # [cur_bs, N, 4]
-            
-            y_soft, _ = model(c_chunk, a_chunk, d_chunk, z_chunk)
-            chunk_lrts = torch.clamp(y_soft.squeeze(-1), min=0.0).cpu().numpy().flatten()
-            lrt_chunks.append(chunk_lrts)
-            
-    lrts = np.concatenate(lrt_chunks)
-    lrts[inv] = 0.0
+    lrts = np.zeros(L, dtype=np.float32)
+    if num_variable > 0:
+        with torch.no_grad():
+            for start_idx in range(0, num_variable, batch_size):
+                end_idx = min(start_idx + batch_size, num_variable)
+                batch_site_idx = variable_indices[start_idx:end_idx]
+                
+                c_chunk = c[batch_site_idx].to(device)  # [cur_bs, N, 1]
+                a_chunk = a[batch_site_idx].to(device)  # [cur_bs, N, 1]
+                
+                y_soft, _ = model.forward_cached(c_chunk, a_chunk, tree_cache)
+                chunk_lrts = torch.clamp(y_soft.squeeze(-1), min=0.0).cpu().numpy().flatten()
+                lrts[batch_site_idx] = chunk_lrts
+                
+    if device.type == 'mps':
+        torch.mps.synchronize()
+    elif device.type == 'cuda':
+        torch.cuda.synchronize()
+
     elapsed = time.time() - t0
     
     # Asymptotic p-values based on 0.5 delta(0) + 0.5 chi^2(1)
