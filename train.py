@@ -17,7 +17,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 
-from axomeme.model import PhyloAxialTransformer
+from axomeme.model import PhyloAxialTransformer, encode_ordinal_lrt_targets
 
 class SelectionTensorsDataset(Dataset):
     """
@@ -53,9 +53,14 @@ def train_epoch(model, loader, optimizer, scaler, device, args):
         
         optimizer.zero_grad()
         with torch.amp.autocast('cuda', enabled=args.fp16):
-            y_pred, _ = model(c, a, d, z)
-            # Robust Huber / Smooth L1 loss on selection test statistic
-            loss = nn.functional.smooth_l1_loss(y_pred.squeeze(-1), y_true, beta=1.0)
+            logits = model(c, a, d, z)
+            ordinal_targets = encode_ordinal_lrt_targets(y_true, logits.shape[-1])
+            if ordinal_targets.shape != logits.shape:
+                raise ValueError(
+                    f"Target shape {tuple(y_true.shape)} is incompatible with "
+                    f"model output shape {tuple(logits.shape)}"
+                )
+            loss = nn.functional.binary_cross_entropy_with_logits(logits, ordinal_targets)
             
         scaler.scale(loss).backward()
         scaler.unscale_(optimizer)
