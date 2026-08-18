@@ -17,7 +17,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 
-from axomeme.model import PhyloAxialTransformer, encode_ordinal_lrt_targets
+from axomeme.model import PhyloAxialTransformer, decode_soft_ordinal_lrt
 
 class SelectionTensorsDataset(Dataset):
     """
@@ -54,13 +54,14 @@ def train_epoch(model, loader, optimizer, scaler, device, args):
         optimizer.zero_grad()
         with torch.amp.autocast('cuda', enabled=args.fp16):
             logits = model(c, a, d, z)
-            ordinal_targets = encode_ordinal_lrt_targets(y_true, logits.shape[-1])
-            if ordinal_targets.shape != logits.shape:
+            y_pred, _ = decode_soft_ordinal_lrt(logits)
+            y_true = y_true.reshape(-1)
+            if y_pred.shape != y_true.shape:
                 raise ValueError(
                     f"Target shape {tuple(y_true.shape)} is incompatible with "
-                    f"model output shape {tuple(logits.shape)}"
+                    f"decoded prediction shape {tuple(y_pred.shape)}"
                 )
-            loss = nn.functional.binary_cross_entropy_with_logits(logits, ordinal_targets)
+            loss = nn.functional.smooth_l1_loss(y_pred, y_true, beta=1.0)
             
         scaler.scale(loss).backward()
         scaler.unscale_(optimizer)

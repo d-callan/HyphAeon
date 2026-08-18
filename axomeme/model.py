@@ -186,32 +186,6 @@ LOG_CORAL_DELTAS_24 = torch.tensor([
 
 LOG_CORAL_DELTAS_12 = LOG_CORAL_DELTAS_16[:12]
 
-def get_log_lrt_bin_widths(num_thresholds, device=None, dtype=None):
-    """Return the log(1 + LRT) integration widths used by the ordinal head."""
-    if num_thresholds == 8:
-        deltas = LOG_CORAL_DELTAS_8
-    elif num_thresholds == 12:
-        deltas = LOG_CORAL_DELTAS_12
-    elif num_thresholds == 16:
-        deltas = LOG_CORAL_DELTAS_16
-    elif num_thresholds == 24:
-        deltas = LOG_CORAL_DELTAS_24
-    else:
-        raise ValueError(f"Unsupported number of ordinal thresholds: {num_thresholds}")
-    return deltas.to(device=device, dtype=dtype)
-
-
-def encode_ordinal_lrt_targets(target_lrt, num_thresholds):
-    """Encode physical LRT values as monotonic log-space survival targets."""
-    target_lrt = torch.clamp(target_lrt, min=0.0)
-    log_lrt = torch.log1p(target_lrt).reshape(-1, 1)
-    deltas = get_log_lrt_bin_widths(
-        num_thresholds, device=target_lrt.device, dtype=target_lrt.dtype
-    )
-    lower_bounds = torch.cat([deltas.new_zeros(1), torch.cumsum(deltas[:-1], dim=0)])
-    return (log_lrt > lower_bounds.unsqueeze(0)).to(target_lrt.dtype)
-
-
 def decode_soft_ordinal_lrt(logits_lrt_ordinal):
     """
     Log-Space Soft-Bin Survival Integral Decoder:
@@ -223,9 +197,16 @@ def decode_soft_ordinal_lrt(logits_lrt_ordinal):
         
     probs = torch.sigmoid(logits_lrt_ordinal)
     K = probs.shape[-1]
-    deltas = get_log_lrt_bin_widths(
-        K, device=logits_lrt_ordinal.device, dtype=logits_lrt_ordinal.dtype
-    )
+    if K == 8:
+        deltas = LOG_CORAL_DELTAS_8.to(device=logits_lrt_ordinal.device, dtype=logits_lrt_ordinal.dtype)
+    elif K == 16:
+        deltas = LOG_CORAL_DELTAS_16.to(device=logits_lrt_ordinal.device, dtype=logits_lrt_ordinal.dtype)
+    elif K == 24:
+        deltas = LOG_CORAL_DELTAS_24.to(device=logits_lrt_ordinal.device, dtype=logits_lrt_ordinal.dtype)
+    elif K == 12:
+        deltas = LOG_CORAL_DELTAS_12.to(device=logits_lrt_ordinal.device, dtype=logits_lrt_ordinal.dtype)
+    else:
+        deltas = LOG_CORAL_DELTAS_16[:K].to(device=logits_lrt_ordinal.device, dtype=logits_lrt_ordinal.dtype)
     
     # Expected log(1 + LRT) via continuous survival integration
     log_lrt_expected = (probs * deltas.view(1, -1)).sum(dim=1)
@@ -492,6 +473,7 @@ class PhyloAxialTransformer(nn.Module):
         else:
             y_lrt_soft, _ = decode_soft_ordinal_lrt(logits_lrt_ordinal)
             return y_lrt_soft.view(batch_size), logits_lrt_ordinal
+
 
 
 

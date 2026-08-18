@@ -2,20 +2,22 @@ from types import SimpleNamespace
 
 import torch
 
-from axomeme.model import PhyloAxialTransformer, encode_ordinal_lrt_targets
+from axomeme.model import PhyloAxialTransformer, decode_soft_ordinal_lrt
 from train import train_epoch
 
 
-def test_ordinal_lrt_targets_are_monotonic():
-    targets = encode_ordinal_lrt_targets(torch.tensor([0.0, 1.0, 100.0]), 16)
+def test_ordinal_decoder_is_differentiable():
+    logits = torch.randn(2, 16, requires_grad=True)
+    decoded, _ = decode_soft_ordinal_lrt(logits)
+    decoded.sum().backward()
 
-    assert targets.shape == (3, 16)
-    assert not targets[0].any()
-    assert torch.all(targets[:, 1:] <= targets[:, :-1])
-    assert targets[2].sum() > targets[1].sum()
+    assert decoded.shape == (2,)
+    assert logits.grad is not None
+    assert torch.isfinite(logits.grad).all()
+    assert torch.count_nonzero(logits.grad) > 0
 
 
-def test_train_epoch_accepts_model_training_output():
+def test_train_epoch_decodes_logits_for_smooth_l1():
     model = PhyloAxialTransformer(
         embed_dim=8, num_layers=1, num_heads=1, window_size=1
     )
