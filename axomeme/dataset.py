@@ -330,10 +330,35 @@ def compute_mds_coordinates(dist_matrix: np.ndarray, n_components: int = 4) -> n
         coords = np.hstack([coords, pad])
     return coords.astype(np.float32)
 
-def load_alignment_and_tree(fa_path: str, nwk_path: Optional[str] = None):
+def downsample_taxa_faith_pd(dist_mat: np.ndarray, taxa: List[str], max_species: int) -> Tuple[np.ndarray, List[str]]:
+    """
+    Greedily selects max_species taxa maximizing Faith's Phylogenetic Diversity (PD) / tree spread
+    using farthest-point traversal on the patristic distance matrix.
+    """
+    n = len(taxa)
+    if max_species >= n or max_species <= 0:
+        return dist_mat, taxa
+
+    # Step 1: Start with pair of most distant taxa
+    idx1, idx2 = np.unravel_index(np.argmax(dist_mat), dist_mat.shape)
+    selected_indices = [idx1, idx2]
+    min_dists = np.minimum(dist_mat[idx1], dist_mat[idx2])
+
+    # Step 2: Greedily add taxon with maximum distance to the current set
+    for _ in range(2, max_species):
+        next_idx = int(np.argmax(min_dists))
+        selected_indices.append(next_idx)
+        min_dists = np.minimum(min_dists, dist_mat[next_idx])
+
+    selected_taxa = [taxa[i] for i in selected_indices]
+    sub_dist_mat = dist_mat[np.ix_(selected_indices, selected_indices)]
+    return sub_dist_mat, selected_taxa
+
+def load_alignment_and_tree(fa_path: str, nwk_path: Optional[str] = None, max_species: Optional[int] = None):
     """
     Parses alignment (FASTA or NEXUS) and phylogenetic tree (from nwk_path or embedded in alignment).
     Enforces non-zero branch lengths (estimating them via HyPhy if available and missing).
+    Optionally applies greedy Faith's PD species downsampling if max_species is specified.
     Returns PyTorch tensors (c, a, d, z), invariable mask, taxa list, and codon length L.
     """
     # 1. Parse alignment sequences
@@ -388,8 +413,12 @@ def load_alignment_and_tree(fa_path: str, nwk_path: Optional[str] = None):
                 f"and alignment sequences ({list(seq_dict.keys())[:5]}...)."
             )
 
-    # 5. Compute distance matrix & MDS embedding
+    # 5. Compute distance matrix & optional Max-PD downsampling
     dist_mat = compute_fast_dist_matrix(tree_obj, taxa)
+    if max_species is not None and len(taxa) > max_species:
+        dist_mat, taxa = downsample_taxa_faith_pd(dist_mat, taxa, max_species)
+        print(f"[*] Faith's PD Species Downsampling: Selected {len(taxa)} taxa maximizing tree diversity.")
+
     mds_coords = compute_mds_coordinates(dist_mat, n_components=4)
 
     # 6. Build codon & AA tensors

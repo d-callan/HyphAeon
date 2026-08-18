@@ -99,7 +99,7 @@ def predict_single(args):
     
     t0 = time.time()
     try:
-        c, a, d, z, inv, taxa, L = load_alignment_and_tree(args.alignment, args.tree)
+        c, a, d, z, inv, taxa, L = load_alignment_and_tree(args.alignment, args.tree, max_species=args.max_species)
     except Exception as e:
         print(f"\n[!] Error loading alignment and tree: {e}")
         sys.exit(1)
@@ -203,6 +203,7 @@ def main():
     pred_parser.add_argument("-t", "--tree", required=False, default=None, help="Path to Newick/NEXUS phylogenetic tree (optional if tree is embedded in alignment)")
     pred_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS, help="Path to pretrained model checkpoint")
     pred_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: auto-selected dynamically based on available VRAM/RAM and taxa count)")
+    pred_parser.add_argument("-s", "--max-species", type=int, default=None, help="Maximum number of species/taxa to include (applies greedy Faith's PD downsampling)")
     pred_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     pred_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
     pred_parser.add_argument("--cpu", action="store_true", help="Force CPU inference")
