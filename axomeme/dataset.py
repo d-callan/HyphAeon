@@ -431,6 +431,7 @@ def load_alignment_and_tree(fa_path: str, nwk_path: Optional[str] = None, max_sp
         dist_mat, taxa = downsample_taxa_faith_pd(dist_mat, taxa, max_species)
         print(f"[*] Faith's PD Species Downsampling: Selected {len(taxa)} taxa maximizing tree diversity.")
 
+    n_taxa = len(taxa)
     mds_coords = compute_mds_coordinates(dist_mat, n_components=4)
 
     c_all = np.zeros((L, n_taxa, 1), dtype=np.int64)
