@@ -90,7 +90,33 @@ Taking **HyPhy MEME** ($p \le 0.10$ / asymptotic $\text{LRT} \ge 4.605$) as grou
 
 The foundation model was trained across thousands of mammalian genome alignments (TOGA 241-mammal corpus) and verified against extensive null and episodic Pyvolve simulations.
 
-* **Pretrained Weights Snapshot**: Included in [`weights/axomeme_v1.pt`](weights/axomeme_v1.pt) (22 MB).
+### Model Weights
+
+Pretrained weights are hosted on **Hugging Face**: https://huggingface.co/datamonkey/axomeme
+
+This is the source of truth for model weights. On first use, AxoMEME automatically
+downloads the selected variant from Hugging Face and caches it locally
+(`~/.cache/axomeme/`). Subsequent runs use the cached copy. Downloads are ~7 MB
+and take ~1 second on a typical connection.
+
+To list available variants:
+```bash
+axomeme list-models
+```
+
+To use a specific variant:
+```bash
+axomeme predict --alignment alignment.fa --model-variant viral
+```
+
+> [!NOTE]
+> While the model repo is gated, set the `HF_TOKEN` environment variable to
+> authenticate. Get a token at https://huggingface.co/settings/tokens (read
+> access is sufficient). See `.env.example` for details. Once the repo is made
+> public, the token will no longer be required.
+
+### Training Data
+
 * **Mammalian Training Database (TOGA SQLite, 37 GB)**: Available on Google Drive ([`Google Drive Link: TOGA_MEME_DB`](https://drive.google.com/drive/folders/axomeme-training-data)).
 * **Pre-extracted `.npz` Alignment Tensors (18,253 Genes)**: Available on Google Drive ([`Google Drive Link: NPZ_Tensors_Archive`](https://drive.google.com/drive/folders/axomeme-tensors)).
 

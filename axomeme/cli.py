@@ -16,9 +16,18 @@ import torch
 
 from .model import PhyloAxialTransformer
 from .dataset import load_alignment_and_tree
+from .weights import (
+    resolve_weights_path,
+    load_model_config,
+    load_weights,
+    list_available_variants,
+    DEFAULT_VARIANT,
+    HF_REPO_ID,
+)
 
-_REPO_WEIGHTS = os.path.join(os.path.dirname(os.path.dirname(__file__)), "weights", "axomeme_v1.pt")
-DEFAULT_WEIGHTS = os.environ.get("AXOMEME_WEIGHTS", _REPO_WEIGHTS)
+DEFAULT_VARIANT_ENV = os.environ.get("AXOMEME_VARIANT", DEFAULT_VARIANT)
+# If set, AXOMEME_WEIGHTS points to a local weights file and bypasses HF download.
+DEFAULT_WEIGHTS_ENV = os.environ.get("AXOMEME_WEIGHTS")
 
 def ensure_parent_directory(path):
     parent = os.path.dirname(os.path.abspath(path))
@@ -73,22 +82,44 @@ def predict_single(args):
     else:
         device = torch.device('cpu')
     print(f"[*] Hardware device selected: {device.type.upper()}")
-    
-    if not os.path.exists(args.weights):
-        print(f"[!] Error: Model weights not found at '{args.weights}'.")
-        print("    Please download pretrained weights or specify --weights /path/to/axomeme_v1.pt")
+
+    # Resolve weights: explicit --weights path > --model-variant (download from HF) > default variant
+    try:
+        weights_path = resolve_weights_path(
+            weights=args.weights,
+            variant=args.model_variant,
+        )
+    except RuntimeError as e:
+        print(f"[!] {e}")
         sys.exit(1)
-        
-    print(f"[*] Loading AxoMEME model from: {args.weights}")
-    ckpt = torch.load(args.weights, map_location=device, weights_only=False)
-    ckpt_args = ckpt.get('args', {}) if isinstance(ckpt, dict) else {}
+    print(f"[*] Loading AxoMEME model from: {weights_path}")
+
+    # Load architecture config.
+    # If using an explicit local --weights path, try to read config from the checkpoint
+    # (legacy .pt files store args inline). If using HF variant download, fetch config.json from HF.
+    config = {}
+    if args.weights and os.path.exists(args.weights) and args.weights.endswith(".pt"):
+        ckpt = torch.load(args.weights, map_location="cpu", weights_only=False)
+        if isinstance(ckpt, dict) and "args" in ckpt:
+            config = ckpt["args"]
+        elif isinstance(ckpt, dict):
+            # Legacy .pt without 'args' dict — extract known keys
+            config = {k: ckpt[k] for k in ("embed_dim", "num_layers", "num_heads", "window_size") if k in ckpt}
+    else:
+        try:
+            config = load_model_config(variant=args.model_variant)
+        except Exception:
+            pass  # Fall back to defaults
+
     model = PhyloAxialTransformer(
-        embed_dim=ckpt_args.get('embed_dim', 384),
-        num_layers=ckpt_args.get('layers', 6),
-        num_heads=ckpt_args.get('heads', 12),
-        window_size=ckpt_args.get('window_size', 1),
+        embed_dim=config.get('embed_dim', 384),
+        num_layers=config.get('num_layers', config.get('layers', 6)),
+        num_heads=config.get('num_heads', config.get('heads', 12)),
+        window_size=config.get('window_size', 1),
     ).to(device)
-    model.load_state_dict(ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt)
+
+    state_dict = load_weights(weights=weights_path, variant=args.model_variant, map_location=device)
+    model.load_state_dict(state_dict)
     model.eval()
     
     print(f"[*] Parsing Alignment: {args.alignment}")
@@ -198,27 +229,58 @@ def predict_single(args):
         df.to_csv(args.csv, index=False)
         print(f"[✓] CSV results written to: {args.csv}")
 
+def list_models():
+    """List available model variants from Hugging Face."""
+    try:
+        variants = list_available_variants()
+    except Exception as e:
+        print(f"[!] Could not fetch model list from Hugging Face: {e}")
+        if "401" in str(e) or "Unauthorized" in str(e):
+            print("    The model repo may be gated. Set HF_TOKEN env var to authenticate.")
+            print("    Get a token at: https://huggingface.co/settings/tokens")
+        return
+
+    if not variants:
+        print("No model variants found on Hugging Face.")
+        return
+
+    print(f"Available AxoMEME model variants ({HF_REPO_ID}):")
+    print()
+    for v in variants:
+        default = " (default)" if v["variant"] == DEFAULT_VARIANT else ""
+        print(f"  {v['variant']:15s}  {v['description']}{default}")
+    print()
+    print("Use with:  axomeme predict -a alignment.fa --model-variant <variant>")
+    print(f"Default variant: {DEFAULT_VARIANT}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="AxoMEME: Ultra-Fast Neural Inference of Episodic Positive Selection",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
-    
+
     # Predict parser
     pred_parser = subparsers.add_parser("predict", help="Run selection inference on a codon alignment and tree")
     pred_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
     pred_parser.add_argument("-t", "--tree", required=False, default=None, help="Path to Newick/NEXUS phylogenetic tree (optional if tree is embedded in alignment)")
-    pred_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS, help="Path to pretrained model checkpoint")
+    pred_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download). Can also be set via AXOMEME_WEIGHTS env var.")
+    pred_parser.add_argument("--model-variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from Hugging Face (default: {DEFAULT_VARIANT})")
     pred_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: auto-selected dynamically based on available VRAM/RAM and taxa count)")
     pred_parser.add_argument("-s", "--max-species", type=int, default=None, help="Maximum number of species/taxa to include (applies greedy Faith's PD downsampling)")
     pred_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     pred_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
     pred_parser.add_argument("--cpu", action="store_true", help="Force CPU inference")
-    
+
+    # List-models parser
+    list_parser = subparsers.add_parser("list-models", help="List available model variants from Hugging Face")
+
     args = parser.parse_args()
     if args.command == "predict":
         predict_single(args)
+    elif args.command == "list-models":
+        list_models()
     else:
         parser.print_help()
 
