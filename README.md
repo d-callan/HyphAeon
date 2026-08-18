@@ -91,20 +91,55 @@ Taking **HyPhy MEME** ($p \le 0.10$ / asymptotic $\text{LRT} \ge 4.605$) as grou
 The foundation model was trained across thousands of mammalian genome alignments (TOGA 241-mammal corpus) and verified against extensive null and episodic Pyvolve simulations.
 
 * **Pretrained Weights Snapshot**: Included in [`weights/axomeme_v1.pt`](weights/axomeme_v1.pt) (22 MB).
-* **Mammalian Training Database (TOGA SQLite, 37 GB)**: Available on Google Drive ([`Google Drive Link: TOGA_MEME_DB`](https://drive.google.com/drive/folders/axomeme-training-data)).
-* **Pre-extracted `.npz` Alignment Tensors (18,253 Genes)**: Available on Google Drive ([`Google Drive Link: NPZ_Tensors_Archive`](https://drive.google.com/drive/folders/axomeme-tensors)).
 
 ---
 
 ## 🛠️ Retraining AxoMEME
 
-To train the model from scratch or fine-tune on custom alignment tensors:
+### 1. Build per-gene training tensors
+
+Prepare one alignment and one official HyPhy MEME JSON result per gene. Trees may
+be supplied as matching Newick files or embedded in the alignments. Filenames are
+paired by gene name; for example, `gene1.fasta`, `gene1.nwk`, and
+`gene1.MEME.json.gz` form one training record.
+
+```bash
+python scripts/build_training_npz.py \
+  --alignment_dir /path/to/alignments/ \
+  --tree_dir /path/to/trees/ \
+  --meme_dir /path/to/meme_results/ \
+  --output_dir /path/to/training_npz/
+```
+
+Omit `--tree_dir` when every alignment contains an embedded tree. The alignment
+directory is authoritative: every alignment must have a corresponding MEME result.
+The script writes one compressed NPZ per gene with the following schema:
+
+| Key | Shape | Description |
+| :--- | :--- | :--- |
+| `c`, `a` | `[sites, taxa, 1]` | Codon and amino-acid tokens |
+| `d` | `[taxa, taxa]` | Patristic distance matrix shared by the gene |
+| `z` | `[taxa, 4]` | Four-dimensional MDS tree coordinates |
+| `target_lrt` | `[sites]` | Physical MEME LRT targets |
+| `eligible_mask` | `[sites]` | Immutable mask of usable amino-acid-variable sites |
+| `taxa` | `[taxa]` | Taxon names in tensor order |
+| `gene_name`, `schema_version` | scalar | Archive identity and compatibility metadata |
+
+Non-finite and materially negative LRTs are retained as source values but marked
+ineligible. Negative numerical noise within `1e-8` of zero is clamped to zero.
+Only amino-acid-variable sites are eligible for training.
+
+### 2. Train
+
+The trainer discovers and validates every `.npz` directly in `--data_dir`; there
+is no manifest or automatic train/test split. Keep held-out genes outside this
+directory if you intend to evaluate generalization separately.
 
 ```bash
 python train.py \
-  --data_dir /path/to/extracted_npz_tensors/ \
+  --data_dir /path/to/training_npz/ \
   --epochs 30 \
-  --batch_size 1 \
+  --batch_size 32 \
   --lr 3e-4 \
   --embed_dim 384 \
   --layers 6 \
@@ -112,6 +147,13 @@ python train.py \
   --fp16 \
   --output_dir weights/
 ```
+
+`--batch_size` is the number of sites in one optimizer step, not the number of
+genes. The loader processes one gene at a time, shuffles that gene's eligible
+sites without replacement, and retains the final partial batch. Consequently,
+every eligible site is used exactly once per completed epoch, even when a gene
+contains fewer sites than `--batch_size`. Genes may have different numbers of
+sites and taxa because sites from different genes are never collated together.
 
 ---
 
