@@ -49,7 +49,50 @@ axomeme predict \
 > [!NOTE]
 > When `--tree` is omitted, AxoMEME automatically extracts the embedded phylogenetic tree from the alignment file. If the tree contains uncalibrated topology or zero branch lengths, AxoMEME automatically estimates branch lengths via HyPhy (HKY85) or enforces strictly positive lower bounds ($10^{-4}$).
 
-### 2. Output Preview
+### 2. Choosing a Model Variant
+
+AxoMEME supports multiple model variants hosted on Hugging Face. On first use,
+weights are downloaded automatically (~7 MB, ~1 second) and cached locally.
+
+List available variants:
+```bash
+axomeme list-models
+```
+
+Use a specific variant:
+```bash
+# General model (default — trained on diverse alignments)
+axomeme predict --alignment alignment.fa --tree tree.nwk
+
+# Viral fine-tuned variant (better for viral datasets)
+axomeme predict --alignment alignment.fa --tree tree.nwk --model-variant viral
+```
+
+Use a local weights file (bypasses HF download):
+```bash
+# Supports both .pt and .safetensors formats
+axomeme predict --alignment alignment.fa --tree tree.nwk --weights /path/to/model.pt
+axomeme predict --alignment alignment.fa --tree tree.nwk --weights /path/to/model.safetensors
+```
+
+### 3. Configuration via Environment Variables
+
+| Variable | Description | Default |
+|---|---|---|
+| `HF_TOKEN` | Hugging Face token (required while repo is gated) | — |
+| `AXOMEME_VARIANT` | Model variant to download | `general` |
+| `AXOMEME_WEIGHTS` | Path to local weights file (overrides HF download) | — |
+| `AXOMEME_CACHE` | Cache directory for downloaded weights | `~/.cache/axomeme` |
+
+See [`.env.example`](.env.example) for details. Copy it to `.env` and fill in
+as needed.
+
+> [!NOTE]
+> While the model repo is gated, set `HF_TOKEN` to authenticate. Get a token at
+> https://huggingface.co/settings/tokens (read access is sufficient). Once the
+> repo is made public, the token will no longer be required.
+
+### 4. Output Preview
 ```
 ===========================================================================
 🎉 AxoMEME Inference Complete in 0.842 seconds!
@@ -92,28 +135,16 @@ The foundation model was trained across thousands of mammalian genome alignments
 
 ### Model Weights
 
-Pretrained weights are hosted on **Hugging Face**: https://huggingface.co/datamonkey/axomeme
+Weights are hosted on **Hugging Face**: https://huggingface.co/datamonkey/axomeme
 
-This is the source of truth for model weights. On first use, AxoMEME automatically
-downloads the selected variant from Hugging Face and caches it locally
-(`~/.cache/axomeme/`). Subsequent runs use the cached copy. Downloads are ~7 MB
-and take ~1 second on a typical connection.
+See [CLI Usage](#-cli-usage) above for instructions on listing variants,
+selecting a model, and configuring download behavior. Key points:
 
-To list available variants:
-```bash
-axomeme list-models
-```
-
-To use a specific variant:
-```bash
-axomeme predict --alignment alignment.fa --model-variant viral
-```
-
-> [!NOTE]
-> While the model repo is gated, set the `HF_TOKEN` environment variable to
-> authenticate. Get a token at https://huggingface.co/settings/tokens (read
-> access is sufficient). See `.env.example` for details. Once the repo is made
-> public, the token will no longer be required.
+- Weights download automatically on first use (~7 MB, ~1 second) and cache locally
+- Use `axomeme list-models` to see available variants
+- Use `--model-variant viral` or `AXOMEME_VARIANT` env var to select a variant
+- Use `--weights /path/to/file` or `AXOMEME_WEIGHTS` env var to use a local file
+- Set `HF_TOKEN` while the repo is gated (see [`.env.example`](.env.example))
 
 ### Training Data
 
