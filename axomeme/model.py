@@ -467,12 +467,8 @@ class PhyloAxialTransformer(nn.Module):
         
         # 16-Bin Ordinal LRT Logits directly from [ROOT] representation
         logits_lrt_ordinal = self.lrt_ordinal_head(root_repr)
-        
-        if self.training:
-            return logits_lrt_ordinal
-        else:
-            y_lrt_soft, _ = decode_soft_ordinal_lrt(logits_lrt_ordinal)
-            return y_lrt_soft.view(batch_size), logits_lrt_ordinal
+        y_lrt_soft, _ = decode_soft_ordinal_lrt(logits_lrt_ordinal)
+        return y_lrt_soft.view(batch_size), logits_lrt_ordinal
 
 
 

@@ -1,15 +1,20 @@
 """
-AxoMEME: Ultra-Fast Neural Inference of Episodic Positive Selection in Molecular Sequences
-https://github.com/veg/axomeme
+AxoMEME: Ultra-Fast Neural Inference of Episodic Selection,
+Phenotype-Genotype Association Mapping, and Epistatic Sector Mining.
 """
 
 from .model import PhyloAxialTransformer
-from .dataset import load_alignment_and_tree, compute_mds_coordinates, compute_fast_dist_matrix
+from .dataset import load_alignment_and_tree, parse_alignment_sequences
+from .phenotype import run_phenotype_association, resolve_phenotype_vector, PRESETS
+from .epistasis import run_epistatic_sector_mining
 
 __version__ = "1.0.0"
 __all__ = [
     "PhyloAxialTransformer",
     "load_alignment_and_tree",
-    "compute_mds_coordinates",
-    "compute_fast_dist_matrix"
+    "parse_alignment_sequences",
+    "run_phenotype_association",
+    "resolve_phenotype_vector",
+    "run_epistatic_sector_mining",
+    "PRESETS",
 ]
