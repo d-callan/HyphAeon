@@ -356,10 +356,34 @@ def downsample_taxa_faith_pd(dist_mat: np.ndarray, taxa: List[str], max_species:
     sub_dist_mat = dist_mat[np.ix_(selected_indices, selected_indices)]
     return sub_dist_mat, selected_taxa
 
-def load_alignment_and_tree(fa_path: str, nwk_path: Optional[str] = None, max_species: Optional[int] = None):
+def prune_identical_sequences(seq_dict: Dict[str, str], taxa: List[str]) -> Tuple[List[str], Dict[str, List[str]], int]:
+    """
+    Identifies and collapses 100% identical sequence duplicates among matching taxa.
+    Retains 1 representative taxon per unique haplotype and prunes redundant duplicate leaves.
+    Returns (unique_taxa, dup_map, num_pruned).
+    """
+    seen_seqs = {}
+    unique_taxa = []
+    dup_map = {}
+    
+    for t in taxa:
+        seq = seq_dict[t]
+        if seq not in seen_seqs:
+            seen_seqs[seq] = t
+            unique_taxa.append(t)
+            dup_map[t] = []
+        else:
+            rep = seen_seqs[seq]
+            dup_map[rep].append(t)
+            
+    num_pruned = len(taxa) - len(unique_taxa)
+    return unique_taxa, dup_map, num_pruned
+
+def load_alignment_and_tree(fa_path: str, nwk_path: Optional[str] = None, max_species: Optional[int] = None, prune_duplicates: bool = True):
     """
     Parses alignment (FASTA or NEXUS) and phylogenetic tree (from nwk_path or embedded in alignment).
     Enforces non-zero branch lengths (estimating them via HyPhy if available and missing).
+    Automatically prunes identical sequence duplicates and trims tree accordingly if prune_duplicates=True.
     Optionally applies greedy Faith's PD species downsampling if max_species is specified.
     Returns PyTorch tensors (c, a, d, z), invariable mask, taxa list, and codon length L.
     """
@@ -421,6 +445,13 @@ def load_alignment_and_tree(fa_path: str, nwk_path: Optional[str] = None, max_sp
         print(f"[*] Taxon Matching: Retained {len(taxa)} shared taxa ({dropped_aln} alignment sequences, {dropped_tree} tree terminals unshared).")
     else:
         print(f"[*] Taxon Matching: 100% concordance ({len(taxa)} shared taxa).")
+
+    # Automated Duplicate Sequence & Tree Pruning
+    if prune_duplicates and len(taxa) > 1:
+        unique_taxa, dup_map, num_pruned = prune_identical_sequences(seq_dict, taxa)
+        if num_pruned > 0:
+            print(f"[*] Duplicate Taxon Pruning: Collapsed {num_pruned} identical duplicate sequence(s) ({len(taxa)} -> {len(unique_taxa)} unique haplotypes).")
+            taxa = unique_taxa
 
     # Sequence length & reading frame validation
     seq_lengths = {sp: len(seq_dict[sp]) for sp in taxa}

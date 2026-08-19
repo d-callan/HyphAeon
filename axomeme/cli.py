@@ -89,7 +89,10 @@ def cmd_predict(args):
     
     t0 = time.time()
     try:
-        c, a, d, z, inv, taxa, L = load_alignment_and_tree(args.alignment, args.tree, max_species=args.max_species)
+        prune_dups = not getattr(args, "no_prune_duplicates", False)
+        c, a, d, z, inv, taxa, L = load_alignment_and_tree(
+            args.alignment, args.tree, max_species=args.max_species, prune_duplicates=prune_dups
+        )
     except Exception as e:
         print(f"\n[!] Error loading alignment and tree: {e}")
         sys.exit(1)
@@ -325,6 +328,7 @@ def main():
     pred_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS, help="Path to pretrained model checkpoint")
     pred_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: auto-selected)")
     pred_parser.add_argument("-s", "--max-species", type=int, default=None, help="Maximum number of species to include (PD downsampling)")
+    pred_parser.add_argument("--no-prune-duplicates", action="store_true", help="Disable automatic collapsing of 100% identical sequence duplicates")
     pred_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     pred_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
     pred_parser.add_argument("--cpu", action="store_true", help="Force CPU inference")
