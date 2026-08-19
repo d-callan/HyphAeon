@@ -96,16 +96,29 @@ The foundation model was trained across thousands of mammalian genome alignments
 
 ## 🛠️ Retraining AxoMEME
 
-### 1. Build per-gene training tensors
+### 1. Split genes before building tensors
+
+Create the training and held-out sets at the **gene level** before generating
+NPZ files. All sites from a gene must remain in the same split; splitting sites
+from one gene across training and test data can leak gene-specific alignment and
+tree information into the evaluation set.
+
+`train.py` does not create a split or run validation. It trains on every `.npz`
+in `--data_dir`, so build the training cache from only the training alignment
+directory. If you also cache held-out genes, write them to a different directory.
+The tree and MEME directories may contain results for both splits because the
+alignment directory determines which genes the cache builder processes.
+
+### 2. Build per-gene training tensors
 
 Prepare one alignment and one official HyPhy MEME JSON result per gene. Trees may
 be supplied as matching Newick files or embedded in the alignments. Filenames are
-paired by gene name; for example, `gene1.fasta`, `gene1.nwk`, and
+paired by gene name; for example, `gene1.msa`, `gene1.nwk`, and
 `gene1.MEME.json.gz` form one training record.
 
 ```bash
 python scripts/build_training_npz.py \
-  --alignment_dir /path/to/alignments/ \
+  --alignment_dir /path/to/training_alignments/ \
   --tree_dir /path/to/trees/ \
   --meme_dir /path/to/meme_results/ \
   --output_dir /path/to/training_npz/
@@ -113,7 +126,10 @@ python scripts/build_training_npz.py \
 
 Omit `--tree_dir` when every alignment contains an embedded tree. The alignment
 directory is authoritative: every alignment must have a corresponding MEME result.
-The script writes one compressed NPZ per gene with the following schema:
+Supported alignment extensions include FASTA, NEXUS, and MSA, optionally gzip
+compressed. External tree filenames must use a supported Newick suffix such as
+`.nwk`, `.tree`, `.tre`, or `.newick`. The script writes one compressed NPZ per
+gene with the following schema:
 
 | Key | Shape | Description |
 | :--- | :--- | :--- |
@@ -133,24 +149,24 @@ Use a clean output directory when changing the alignment set. If unrelated NPZ
 archives are already present, the builder warns but does not delete them; the
 training script will still consume every NPZ in `--data_dir`.
 
-### 2. Train
+### 3. Fine-tune the pretrained model
 
 The trainer discovers and validates every `.npz` directly in `--data_dir`; there
-is no manifest or automatic train/test split. Keep held-out genes outside this
-directory if you intend to evaluate generalization separately.
+is no manifest, automatic train/test split, or validation loop. Use a new output
+directory for each run so an existing `axomeme_best.pt` is not overwritten.
 
 ```bash
 python train.py \
   --data_dir /path/to/training_npz/ \
   --init_checkpoint weights/axomeme_v1.pt \
   --epochs 30 \
-  --batch_size 32 \
+  --batch_size 1 \
   --lr 3e-4 \
   --embed_dim 384 \
   --layers 6 \
   --heads 12 \
   --fp16 \
-  --output_dir weights/
+  --output_dir /path/to/run_weights/
 ```
 
 `--batch_size` is the number of sites in one optimizer step, not the number of
@@ -160,7 +176,23 @@ every eligible site is used exactly once per completed epoch, even when a gene
 contains fewer sites than `--batch_size`. Genes may have different numbers of
 sites and taxa because sites from different genes are never collated together.
 When `--init_checkpoint` is supplied, only model weights are loaded; fine-tuning
-starts with a fresh optimizer and learning-rate schedule.
+starts with a fresh optimizer and learning-rate schedule. The architecture flags
+must match the checkpoint; the bundled checkpoint uses `--embed_dim 384`,
+`--layers 6`, and `--heads 12`.
+
+> [!WARNING]
+> Use `--batch_size 1` with the current implementation. Larger site batches are
+> intended to be supported, but can currently trigger a tensor-shape runtime
+> error in the model forward pass.
+
+During training, ordinal logits are differentiably decoded to scalar LRT values
+and compared with the MEME targets using Smooth L1 loss. The reported epoch loss
+is site-weighted. `axomeme_best.pt` is the checkpoint with the lowest **training**
+loss; assess generalization separately using the held-out genes.
+
+To train from scratch instead of fine-tuning, omit `--init_checkpoint` and choose
+the architecture and learning rate explicitly. The other data preparation and
+gene-level splitting requirements are unchanged.
 
 ---
 
