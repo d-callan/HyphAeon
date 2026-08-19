@@ -35,11 +35,13 @@ REQUIRED_GENE_KEYS = {
 ALIGNMENT_SUFFIXES = (
     ".fasta.gz",
     ".nexus.gz",
+    ".msa.gz",
     ".fas.gz",
     ".nex.gz",
     ".fa.gz",
     ".fasta",
     ".nexus",
+    ".msa",
     ".fas",
     ".nex",
     ".fa",

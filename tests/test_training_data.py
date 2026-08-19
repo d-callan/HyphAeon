@@ -139,6 +139,25 @@ def test_pairing_requires_meme_for_every_alignment(tmp_path):
         pair_training_inputs(str(alignment_dir), str(meme_dir), str(tree_dir))
 
 
+def test_pairing_supports_msa_alignments_with_nwk_trees(tmp_path):
+    alignment_dir = tmp_path / "alignments"
+    tree_dir = tmp_path / "trees"
+    meme_dir = tmp_path / "meme"
+    for directory in (alignment_dir, tree_dir, meme_dir):
+        directory.mkdir()
+    (alignment_dir / "gene.msa").write_text(">a\nATG\n>b\nATA\n>c\nATG\n")
+    (tree_dir / "gene.nwk").write_text("((a:0.1,b:0.1):0.05,c:0.15);\n")
+    (meme_dir / "gene.MEME.json").write_text("{}")
+
+    pairs = pair_training_inputs(str(alignment_dir), str(meme_dir), str(tree_dir))
+
+    assert len(pairs) == 1
+    assert pairs[0][0] == "gene"
+    assert pairs[0][1].name == "gene.msa"
+    assert pairs[0][2].name == "gene.nwk"
+    assert pairs[0][3].name == "gene.MEME.json"
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [

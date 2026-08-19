@@ -142,6 +142,7 @@ directory if you intend to evaluate generalization separately.
 ```bash
 python train.py \
   --data_dir /path/to/training_npz/ \
+  --init_checkpoint weights/axomeme_v1.pt \
   --epochs 30 \
   --batch_size 32 \
   --lr 3e-4 \
@@ -158,6 +159,8 @@ sites without replacement, and retains the final partial batch. Consequently,
 every eligible site is used exactly once per completed epoch, even when a gene
 contains fewer sites than `--batch_size`. Genes may have different numbers of
 sites and taxa because sites from different genes are never collated together.
+When `--init_checkpoint` is supplied, only model weights are loaded; fine-tuning
+starts with a fresh optimizer and learning-rate schedule.
 
 ---
 

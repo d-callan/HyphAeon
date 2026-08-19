@@ -76,3 +76,8 @@ results/
 tmp/
 scratch/
 .pr_monitor_state.json
+
+# Local Drosophila fine-tuning workflow
+scripts/prepare_drosophila_finetuning.py
+scripts/slurm/
+tests/test_drosophila_preparation.py

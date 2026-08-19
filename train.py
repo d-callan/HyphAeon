@@ -19,6 +19,22 @@ from axomeme.model import PhyloAxialTransformer, decode_soft_ordinal_lrt
 from axomeme.training_data import GeneTensorsDataset
 
 
+def load_initial_checkpoint(model, checkpoint_path):
+    """Strictly initialize model weights without resuming optimizer state."""
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    if not isinstance(checkpoint, dict):
+        raise ValueError(f"Checkpoint must contain a state dictionary: {checkpoint_path}")
+    state_dict = checkpoint.get("model_state_dict", checkpoint)
+    try:
+        model.load_state_dict(state_dict, strict=True)
+    except RuntimeError as exc:
+        raise ValueError(
+            f"Checkpoint architecture is incompatible with the requested model: "
+            f"{checkpoint_path}"
+        ) from exc
+    return checkpoint
+
+
 def collate_single_gene(items):
     """Remove DataLoader's outer batch dimension; gene batching is always one."""
     if len(items) != 1:
@@ -95,6 +111,10 @@ def main():
     parser.add_argument("--layers", type=int, default=6, help="Number of axial transformer layers")
     parser.add_argument("--heads", type=int, default=12, help="Number of attention heads")
     parser.add_argument("--fp16", action="store_true", help="Enable FP16 mixed precision")
+    parser.add_argument(
+        "--init_checkpoint",
+        help="Optional checkpoint used to initialize model weights for fine-tuning",
+    )
     parser.add_argument("--output_dir", default="weights", help="Directory to save checkpoint snapshots")
     args = parser.parse_args()
     if args.batch_size <= 0:
@@ -117,7 +137,11 @@ def main():
         num_layers=args.layers,
         num_heads=args.heads,
         window_size=1
-    ).to(device)
+    )
+    if args.init_checkpoint:
+        load_initial_checkpoint(model, args.init_checkpoint)
+        print(f"[*] Initialized model weights from: {args.init_checkpoint}")
+    model = model.to(device)
     
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)

@@ -1,10 +1,14 @@
 from types import SimpleNamespace
+import subprocess
+import sys
 
+import numpy as np
 import pytest
 import torch
 
 from axomeme.model import PhyloAxialTransformer, decode_soft_ordinal_lrt
-from train import iter_site_indices, train_epoch
+from axomeme.training_data import TRAINING_SCHEMA_VERSION
+from train import iter_site_indices, load_initial_checkpoint, train_epoch
 
 
 def make_gene(site_count, taxon_count, targets=None, eligible=None, gene_name="gene"):
@@ -132,3 +136,90 @@ def test_batch_size_larger_than_gene_uses_one_step():
     )
 
     assert model.batch_sizes == [3]
+
+
+@pytest.mark.parametrize("wrapped", [True, False])
+def test_load_initial_checkpoint_strictly_loads_weights(tmp_path, wrapped):
+    source = PhyloAxialTransformer(
+        embed_dim=8, num_layers=1, num_heads=1, window_size=1
+    )
+    checkpoint = (
+        {"model_state_dict": source.state_dict()} if wrapped else source.state_dict()
+    )
+    path = tmp_path / "initial.pt"
+    torch.save(checkpoint, path)
+    target = PhyloAxialTransformer(
+        embed_dim=8, num_layers=1, num_heads=1, window_size=1
+    )
+
+    load_initial_checkpoint(target, str(path))
+
+    for expected, actual in zip(source.parameters(), target.parameters()):
+        assert torch.equal(expected, actual)
+
+
+def test_load_initial_checkpoint_rejects_incompatible_model(tmp_path):
+    source = PhyloAxialTransformer(
+        embed_dim=8, num_layers=1, num_heads=1, window_size=1
+    )
+    path = tmp_path / "initial.pt"
+    torch.save({"model_state_dict": source.state_dict()}, path)
+    incompatible = PhyloAxialTransformer(
+        embed_dim=16, num_layers=1, num_heads=1, window_size=1
+    )
+
+    with pytest.raises(ValueError, match="architecture is incompatible"):
+        load_initial_checkpoint(incompatible, str(path))
+
+
+def test_training_cli_runs_two_epochs_from_checkpoint(tmp_path):
+    data_dir = tmp_path / "npz"
+    output_dir = tmp_path / "weights"
+    data_dir.mkdir()
+    np.savez_compressed(
+        data_dir / "gene.npz",
+        c=np.zeros((2, 3, 1), dtype=np.int64),
+        a=np.zeros((2, 3, 1), dtype=np.int64),
+        d=np.zeros((3, 3), dtype=np.float32),
+        z=np.zeros((3, 4), dtype=np.float32),
+        target_lrt=np.asarray([1.0, 2.0], dtype=np.float32),
+        eligible_mask=np.asarray([True, True], dtype=np.bool_),
+        taxa=np.asarray(["a", "b", "c"]),
+        gene_name=np.asarray("gene"),
+        schema_version=np.asarray(TRAINING_SCHEMA_VERSION, dtype=np.int64),
+    )
+    model = PhyloAxialTransformer(
+        embed_dim=8, num_layers=1, num_heads=1, window_size=1
+    )
+    checkpoint = tmp_path / "initial.pt"
+    torch.save({"model_state_dict": model.state_dict()}, checkpoint)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "train.py",
+            "--data_dir",
+            str(data_dir),
+            "--init_checkpoint",
+            str(checkpoint),
+            "--epochs",
+            "2",
+            "--batch_size",
+            "1",
+            "--embed_dim",
+            "8",
+            "--layers",
+            "1",
+            "--heads",
+            "1",
+            "--output_dir",
+            str(output_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Epoch [ 1/ 2]" in result.stdout
+    assert "Epoch [ 2/ 2]" in result.stdout
+    assert (output_dir / "axomeme_best.pt").exists()
