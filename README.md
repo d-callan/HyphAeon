@@ -24,15 +24,29 @@ pip install -e .
 
 ---
 
-## 🔬 Walkthrough Examples from the Manuscript
+## 📂 Included Benchmark Datasets
+
+All example alignments and phylogenetic trees required to reproduce these analyses are bundled directly in the `examples/` directory:
+
+| Dataset | Alignment File | Tree File | Taxa ($N$) | Codons ($L$) | Description & Biological Domain |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **HIV-1 RT** | [`examples/HIV1_RT.fasta`](examples/HIV1_RT.fasta) | [`examples/HIV1_RT.nwk`](examples/HIV1_RT.nwk) | 476 | 335 | Retroviral Reverse Transcriptase polymerase domain (drug resistance & epistasis). |
+| **Rhodopsin** | [`examples/RHO.fasta`](examples/RHO.fasta) | Embedded / Auto | 710 | 349 | Mammalian Rhodopsin visual pigments (deep-sea diving sensory adaptation). |
+| **Smc6** | [`examples/Smc6.fasta`](examples/Smc6.fasta) | [`examples/Smc6.nwk`](examples/Smc6.nwk) | 20 | 1,097 | Primate Smc6 structural maintenance of chromosomes (antiviral host restriction). |
+| **Bat OAS1** | [`examples/bat_oas1.fasta`](examples/bat_oas1.fasta) | [`examples/bat_oas1.nwk`](examples/bat_oas1.nwk) | 18 | 351 | Chiropteran OAS1 2'-5'-oligoadenylate synthetase (innate immunity escape). |
+| **Camelid VHH** | [`examples/camelid.fasta`](examples/camelid.fasta) | [`examples/camelid.nwk`](examples/camelid.nwk) | 212 | 96 | Camelid single-domain antibody heavy-chain variable domain (antigenic diversity). |
+
+---
+
+## 🔬 Reproducible Benchmark Examples
 
 ### Example 1: Inter-Site Epistasis & Selection DMS in HIV-1 Reverse Transcriptase
 
-AxoMEME evaluates phylogenetic branch attribution, pairwise co-selection networks, and in silico Selection Deep Mutational Scanning (ESSM) across all codons of the HIV-1 RT polymerase domain ($N = 476$ taxa, $L = 335$ codons):
+Evaluate phylogenetic branch attribution, pairwise co-selection networks, and in silico Selection Deep Mutational Scanning (ESSM) across all codons of the HIV-1 RT polymerase domain ($N = 476$ taxa, $L = 335$ codons):
 
 ```bash
 # Run branch co-selection, Selection DMS, and epistatic sector mining
-axomeme epistasis -a examples/HIV1_RT.fasta -t examples/HIV1_RT.nwk -o hiv_epistasis.json -c hiv_edges.csv
+axomeme epistasis -a examples/HIV1_RT.fasta -t examples/HIV1_RT.nwk -o examples/HIV1_RT_epistasis.json -c examples/HIV1_RT_edges.csv --graphml examples/HIV1_RT_coselection.graphml
 ```
 
 #### Key Biological Discoveries:
@@ -54,7 +68,7 @@ PhyloWAS maps directional selection shifts across vertebrate visual pigments (RH
 
 ```bash
 # Run PhyloWAS for marine diving mammal visual adaptation
-axomeme phenotype -a examples/RHO.fasta -fg "turTru,balMus,balPhys,orcOrc,delDelp,phyCat,phoVit,halGryp,mirLeo,zalCali,odoRos" -o rho_marine.json
+axomeme phenotype -a examples/RHO.fasta -fg "turTru,balMus,balPhys,orcOrc,delDelp,phyCat,phoVit,halGryp,mirLeo,zalCali,odoRos" -o examples/RHO_marine_phenotype.json -c examples/RHO_marine_sites.csv
 ```
 
 #### Key Biological Discoveries:
@@ -73,10 +87,13 @@ axomeme phenotype -a examples/RHO.fasta -fg "turTru,balMus,balPhys,orcOrc,delDel
 
 ```bash
 # Infer episodic selection on primate Smc6 antiviral restriction factor
-axomeme predict -a examples/Smc6.fasta -t examples/Smc6.nwk -o smc6_results.json -c smc6_results.csv
+axomeme predict -a examples/Smc6.fasta -t examples/Smc6.nwk -o examples/Smc6_results.json -c examples/Smc6_results.csv
 
 # Infer episodic selection on bat OAS1 interferon-stimulated antiviral factor
-axomeme predict -a examples/bat_oas1.fasta -t examples/bat_oas1.nwk -c bat_oas1_results.csv
+axomeme predict -a examples/bat_oas1.fasta -t examples/bat_oas1.nwk -c examples/bat_oas1_results.csv
+
+# Infer episodic selection on camelid antibody repertoire (auto branch-length estimation)
+axomeme predict -a examples/camelid.fasta -t examples/camelid.nwk -c examples/camelid_results.csv
 ```
 
 * **Throughput**: Processes $>1,000$ codon positions across hundreds of species in **$<0.15\text{ seconds}$** ($397\times$ speedup over numerical MLE).
@@ -106,7 +123,7 @@ axomeme phenotype -a <alignment> -pf traits.tsv --trait-col BodyMass --continuou
 
 ### 3. `axomeme epistasis` (ESSM / Branch Co-Selection)
 ```bash
-# Full analysis (Co-Selection + Selection DMS + Epistatic Sectors)
+# Full analysis (Co-Selection + Selection DMS + Epistatic Sectors + GraphML)
 axomeme epistasis -a <alignment> -t <tree> --min-sim 0.30 --min-shared 2 --max-fdr 0.05 --graphml network.graphml
 
 # Fast co-selection graph without 19-amino-acid DMS sweep
@@ -115,15 +132,6 @@ axomeme epistasis -a <alignment> -t <tree> --no-dms
 
 ---
 
-## 📜 Citation
+## 📜 License
 
-If you use AxoMEME, PhyloWAS, or ESSM in your research, please cite:
-
-```bibtex
-@article{axomeme2026,
-  title={AxoMEME: Geometric Phenotype Projection, Neural Episodic Selection, and Epistatic Sector Mining in Molecular Evolution},
-  author={Pond, Sergei L. Kosakovsky and DeepMind Antigravity Team},
-  journal={bioRxiv},
-  year={2026}
-}
-```
+MIT License. Copyright (c) 2026 Sergei L. Kosakovsky Pond.
