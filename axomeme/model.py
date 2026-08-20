@@ -5,14 +5,11 @@ Core Neural Architecture: PhyloAxialTransformer with Multi-Scale 4D Tree-RoPE
 for ultra-fast episodic positive selection inference.
 """
 
-import os
 import math
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-DEFAULT_WEIGHTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "weights", "axomeme_v1.pt")
 
 class BlockLinear(nn.Module):
     """

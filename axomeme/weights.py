@@ -4,9 +4,9 @@ axomeme/weights.py
 Handles discovery, download, and caching of AxoMEME model weights from Hugging Face.
 
 Weights are hosted at https://huggingface.co/datamonkey/axomeme and that repo is
-the source of truth. On first use, weights are downloaded and cached locally to
-~/.cache/axomeme/ (or the platform-appropriate HF cache directory). Subsequent
-runs use the cached copy.
+the source of truth. On first use, weights are downloaded and cached locally
+in the Hugging Face cache directory (~/.cache/huggingface/ by default).
+Subsequent runs use the cached copy.
 
 The repo may contain multiple model variants (e.g. general, viral). Available
 variants are enumerated dynamically from the HF Hub API so new variants appear
@@ -26,15 +26,6 @@ DEFAULT_CONFIG_FILENAME = "config.json"
 
 # Local cache directory for downloaded weights
 CACHE_DIR = Path(os.environ.get("AXOMEME_CACHE", str(Path.home() / ".cache" / "axomeme")))
-
-
-def _is_gated() -> bool:
-    """Check if the HF repo requires authentication."""
-    try:
-        list_repo_files(HF_REPO_ID)
-        return False
-    except Exception:
-        return True
 
 
 def list_available_variants() -> List[Dict[str, str]]:
@@ -84,7 +75,7 @@ def resolve_weights_path(
 
     Resolution order:
     1. If `weights` is an explicit path to an existing file, use it directly.
-    2. If `variant` is specified (or default), check the local cache.
+    2. If `variant` is specified (or default), check the HF cache.
     3. If not cached, download from HF and cache locally.
 
     Returns the local path to the weights file.
@@ -96,13 +87,8 @@ def resolve_weights_path(
     # 2. Determine which variant to use
     v = variant or DEFAULT_VARIANT
     filename = get_variant_filename(v)
-    cache_path = CACHE_DIR / filename
 
-    # 3. Check cache
-    if cache_path.exists():
-        return str(cache_path)
-
-    # 4. Also check HF's own cache (from prior hf_hub_download calls)
+    # 3. Check HF cache (from prior hf_hub_download calls)
     try:
         from huggingface_hub import try_to_load_from_cache
         hf_cache_path = try_to_load_from_cache(
@@ -114,7 +100,7 @@ def resolve_weights_path(
     except Exception:
         pass
 
-    # 5. Download from HF
+    # 4. Download from HF
     print(f"[*] Downloading AxoMEME weights ({v} variant) from Hugging Face...")
     try:
         downloaded = hf_hub_download(
@@ -188,3 +174,45 @@ def load_weights(
     if isinstance(ckpt, dict) and "state_dict" in ckpt:
         return ckpt["state_dict"]
     return ckpt
+
+
+# Default architecture parameters, used when no config is available.
+_DEFAULT_ARCH = {"embed_dim": 384, "num_layers": 6, "num_heads": 12, "window_size": 1}
+
+
+def load_arch_config(
+    weights: Optional[str] = None,
+    variant: Optional[str] = None,
+) -> Dict:
+    """Load model architecture config from a checkpoint or Hugging Face.
+
+    For .pt files: reads the embedded ``args`` dict (uses weights_only=True).
+    For .safetensors or HF variant: fetches config.json from the HF repo.
+    Falls back to architecture defaults if no config is found.
+
+    Returns a dict with keys: embed_dim, num_layers, num_heads, window_size.
+    """
+    path = resolve_weights_path(weights=weights, variant=variant)
+
+    if path.endswith(".pt"):
+        import torch
+        ckpt = torch.load(path, map_location="cpu", weights_only=True)
+        a = ckpt.get("args", {}) if isinstance(ckpt, dict) else {}
+        return {
+            "embed_dim": a.get("embed_dim", _DEFAULT_ARCH["embed_dim"]),
+            "num_layers": a.get("num_layers", a.get("layers", _DEFAULT_ARCH["num_layers"])),
+            "num_heads": a.get("num_heads", a.get("heads", _DEFAULT_ARCH["num_heads"])),
+            "window_size": a.get("window_size", _DEFAULT_ARCH["window_size"]),
+        }
+
+    # .safetensors: fetch config from HF
+    try:
+        cfg = load_model_config(variant=variant)
+        return {
+            "embed_dim": cfg.get("embed_dim", _DEFAULT_ARCH["embed_dim"]),
+            "num_layers": cfg.get("num_layers", cfg.get("layers", _DEFAULT_ARCH["num_layers"])),
+            "num_heads": cfg.get("num_heads", cfg.get("heads", _DEFAULT_ARCH["num_heads"])),
+            "window_size": cfg.get("window_size", _DEFAULT_ARCH["window_size"]),
+        }
+    except Exception:
+        return dict(_DEFAULT_ARCH)

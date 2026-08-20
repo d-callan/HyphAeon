@@ -28,7 +28,7 @@ from .dataset import (
     get_aa_token
 )
 from .model import PhyloAxialTransformer
-from .weights import resolve_weights_path, load_weights, load_model_config
+from .weights import load_weights, load_arch_config
 
 REV_AA_MAP = {v: k for k, v in AA_MAP.items()}
 
@@ -449,17 +449,12 @@ def run_epistasis_analysis(
         tree_obj = extract_tree_from_string_or_file(tree_path if tree_path else alignment_path)
         
     # 2. Load Model
-    resolved = resolve_weights_path(weights=weights_path)
-    config = load_model_config() if not (weights_path and weights_path.endswith('.pt')) else {}
-    if weights_path and weights_path.endswith('.pt'):
-        ckpt = torch.load(weights_path, map_location=device, weights_only=False)
-        ckpt_args = ckpt.get('args', {}) if isinstance(ckpt, dict) else {}
-        config = ckpt_args
+    config = load_arch_config(weights=weights_path)
     model = PhyloAxialTransformer(
-        embed_dim=config.get('embed_dim', 384),
-        num_layers=config.get('layers', 6),
-        num_heads=config.get('heads', 12),
-        window_size=config.get('window_size', 1),
+        embed_dim=config['embed_dim'],
+        num_layers=config['num_layers'],
+        num_heads=config['num_heads'],
+        window_size=config['window_size'],
     ).to(device)
     state_dict = load_weights(weights=weights_path, map_location=device)
     model.load_state_dict(state_dict)

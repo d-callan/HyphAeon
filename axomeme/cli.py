@@ -22,7 +22,7 @@ from .model import PhyloAxialTransformer
 from .dataset import load_alignment_and_tree
 from .weights import (
     resolve_weights_path,
-    load_model_config,
+    load_arch_config,
     load_weights,
     list_available_variants,
     DEFAULT_VARIANT,
@@ -85,28 +85,12 @@ def cmd_predict(args):
         sys.exit(1)
     print(f"[*] Loading AxoMEME model from: {weights_path}")
 
-    # Load architecture config.
-    # If using an explicit local --weights path, try to read config from the checkpoint
-    # (legacy .pt files store args inline). If using HF variant download, fetch config.json from HF.
-    config = {}
-    if args.weights and os.path.exists(args.weights) and args.weights.endswith(".pt"):
-        ckpt = torch.load(args.weights, map_location="cpu", weights_only=True)
-        if isinstance(ckpt, dict) and "args" in ckpt:
-            config = ckpt["args"]
-        elif isinstance(ckpt, dict):
-            # Legacy .pt without 'args' dict — extract known keys
-            config = {k: ckpt[k] for k in ("embed_dim", "num_layers", "num_heads", "window_size") if k in ckpt}
-    else:
-        try:
-            config = load_model_config(variant=args.model_variant)
-        except Exception:
-            pass  # Fall back to defaults
-
+    config = load_arch_config(weights=args.weights, variant=args.model_variant)
     model = PhyloAxialTransformer(
-        embed_dim=config.get('embed_dim', 384),
-        num_layers=config.get('num_layers', config.get('layers', 6)),
-        num_heads=config.get('num_heads', config.get('heads', 12)),
-        window_size=config.get('window_size', 1),
+        embed_dim=config['embed_dim'],
+        num_layers=config['num_layers'],
+        num_heads=config['num_heads'],
+        window_size=config['window_size'],
     ).to(device)
 
     state_dict = load_weights(weights=weights_path, variant=args.model_variant, map_location=device)
@@ -323,11 +307,10 @@ def cmd_epistasis(args):
     
     t0 = time.time()
     try:
-        from .epistasis import run_epistasis_analysis
         res = run_epistasis_analysis(
             alignment_path=args.alignment,
             tree_path=args.tree,
-            weights_path=getattr(args, "weights", DEFAULT_WEIGHTS_ENV),
+            weights_path=args.weights,
             focal_taxon=getattr(args, "focal_taxon", None),
             min_sim=getattr(args, "min_sim", 0.30),
             min_shared=getattr(args, "min_shared", 2),

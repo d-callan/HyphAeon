@@ -14,7 +14,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-import torch
 
 # Make the package and this directory importable.
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -32,7 +31,7 @@ ARTIFACTS_DIR.mkdir(exist_ok=True)
 # default, AXOMEME_WEIGHTS env var for local .pt/.safetensors files).
 # This mirrors the CLI's behavior: CI downloads from HF; local devs can
 # point at a working checkpoint while iterating before pushing to HF.
-from axomeme.weights import resolve_weights_path, load_weights, load_model_config
+from axomeme.weights import resolve_weights_path, load_weights, load_arch_config
 
 
 # ---------------------------------------------------------------------------
@@ -67,33 +66,10 @@ WEIGHTS_AVAILABLE = _WEIGHTS_PATH is not None
 def _load_model_from(path):
     """Load a checkpoint and return an eval-mode PhyloAxialTransformer.
 
-    Uses axomeme.weights.load_weights for state_dict extraction (handles
-    both .pt and .safetensors). For .pt files with embedded args, reads
-    architecture config from the checkpoint. For .safetensors, fetches
-    config from Hugging Face.
+    Uses axomeme.weights.load_arch_config for architecture config (handles
+    both .pt and .safetensors) and load_weights for state_dict extraction.
     """
-    if path.endswith(".pt"):
-        ck = torch.load(path, map_location="cpu", weights_only=False)
-        a = ck.get("args", {}) if isinstance(ck, dict) else {}
-        config = {
-            "embed_dim": a.get("embed_dim", 384),
-            "num_layers": a.get("layers", 6),
-            "num_heads": a.get("heads", 12),
-            "window_size": a.get("window_size", 1),
-        }
-    else:
-        # .safetensors: fetch config from HF, fall back to defaults
-        try:
-            cfg = load_model_config()
-            config = {
-                "embed_dim": cfg.get("embed_dim", 384),
-                "num_layers": cfg.get("num_layers", cfg.get("layers", 6)),
-                "num_heads": cfg.get("num_heads", cfg.get("heads", 12)),
-                "window_size": cfg.get("window_size", 1),
-            }
-        except Exception:
-            config = {"embed_dim": 384, "num_layers": 6, "num_heads": 12, "window_size": 1}
-
+    config = load_arch_config(weights=path)
     state_dict = load_weights(weights=path, map_location="cpu")
     m = PhyloAxialTransformer(
         embed_dim=config["embed_dim"],

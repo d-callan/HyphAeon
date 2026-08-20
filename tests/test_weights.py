@@ -8,9 +8,8 @@ HF_TOKEN is not set or the repo is unreachable.
 
 import os
 import json
-import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 import torch
@@ -21,6 +20,7 @@ from axomeme.weights import (
     get_variant_filename,
     resolve_weights_path,
     load_model_config,
+    load_arch_config,
     load_weights,
     list_available_variants,
     CACHE_DIR,
@@ -50,20 +50,20 @@ class TestResolveWeightsPath:
         """If --weights points to a nonexistent file, fall through to variant resolution."""
         nonexistent = str(tmp_path / "does_not_exist.pt")
         with patch("axomeme.weights.hf_hub_download") as mock_dl, \
-             patch("axomeme.weights.CACHE_DIR", tmp_path), \
-             patch("builtins.__import__", wraps=__import__):
+             patch("axomeme.weights.CACHE_DIR", tmp_path):
             mock_dl.return_value = "/fake/cache/model.safetensors"
             result = resolve_weights_path(weights=nonexistent, variant="general")
             mock_dl.assert_called_once()
 
     def test_cached_variant_skips_download(self, tmp_path):
-        """If the variant is already cached, don't download."""
+        """If the variant is already in the HF cache, don't download."""
+        cache_file = str(tmp_path / "model.safetensors")
+        Path(cache_file).write_text("cached")
         with patch("axomeme.weights.CACHE_DIR", tmp_path), \
+             patch("huggingface_hub.try_to_load_from_cache", return_value=cache_file), \
              patch("axomeme.weights.hf_hub_download") as mock_dl:
-            cache_file = tmp_path / "model.safetensors"
-            cache_file.write_text("cached")
             result = resolve_weights_path(weights=None, variant="general")
-            assert result == str(cache_file)
+            assert result == cache_file
             mock_dl.assert_not_called()
 
     def test_download_failure_raises_error(self, tmp_path):
@@ -192,6 +192,44 @@ class TestLoadWeights:
 
         result = load_weights(weights=str(pt_path), variant="general")
         assert "weight" in result
+
+
+class TestLoadArchConfig:
+    def test_load_from_pt_checkpoint(self, tmp_path):
+        """Should extract architecture config from a .pt checkpoint's args dict."""
+        state_dict = {"weight": torch.ones(2, 2)}
+        ckpt = {"args": {"embed_dim": 512, "layers": 8, "heads": 16, "window_size": 2},
+                "model_state_dict": state_dict}
+        pt_path = tmp_path / "model.pt"
+        torch.save(ckpt, str(pt_path))
+
+        config = load_arch_config(weights=str(pt_path))
+        assert config["embed_dim"] == 512
+        assert config["num_layers"] == 8
+        assert config["num_heads"] == 16
+        assert config["window_size"] == 2
+
+    def test_pt_with_num_layers_key(self, tmp_path):
+        """Should handle checkpoints that use 'num_layers' instead of 'layers'."""
+        state_dict = {"weight": torch.ones(2, 2)}
+        ckpt = {"args": {"embed_dim": 256, "num_layers": 4, "num_heads": 8, "window_size": 1},
+                "model_state_dict": state_dict}
+        pt_path = tmp_path / "model.pt"
+        torch.save(ckpt, str(pt_path))
+
+        config = load_arch_config(weights=str(pt_path))
+        assert config["num_layers"] == 4
+        assert config["num_heads"] == 8
+
+    def test_pt_without_args_uses_defaults(self, tmp_path):
+        """Should fall back to architecture defaults if .pt has no args dict."""
+        state_dict = {"weight": torch.ones(2, 2)}
+        pt_path = tmp_path / "model.pt"
+        torch.save(state_dict, str(pt_path))
+
+        config = load_arch_config(weights=str(pt_path))
+        assert config["embed_dim"] == 384
+        assert config["num_layers"] == 6
 
 
 @pytest.mark.skipif(not os.environ.get("HF_TOKEN"), reason="HF_TOKEN not set")
