@@ -8,9 +8,9 @@
 
 AxoMEME integrates three complementary phylogenetic deep learning and geometric projection engines:
 
-1. **`axomeme predict`**: Neural episodic positive selection inference ($>100\times$ faster than standard codon-MCMC and likelihood models like MEME / HyPhy) using Tree-RoPE 4D geometric branch embeddings and axial tree attention.
+1. **`axomeme predict`**: Neural episodic positive selection inference ($>100\times$ faster than standard numerical MLE and codon-MCMC models like HyPhy MEME) using Tree-RoPE 4D geometric branch embeddings and axial tree attention.
 2. **`axomeme phenotype` (PhyloWAS)**: Directional phenotype-genotype association mapping on the unit hypersphere $\mathbb{S}^{M-1}$. Computes spectral trait energies ($\Psi_{\text{Spectral}}$), exact sequenced-taxa null scaling $p$-values, Benjamini-Hochberg FDR $q$-values, and **Phenotype-Associated Residue Signatures (PARS)**.
-3. **`axomeme epistasis` (ESSM / TSE)**: Multi-scale epistatic sector mining implementing the Two-Stage Seed-and-Extend (TSE) algorithm to discover cooperative allosteric sectors, spectral coherence $C(\mathcal{S})$, and co-selection network topologies.
+3. **`axomeme epistasis` (ESSM / Branch Co-Selection)**: Multi-scale epistatic sector mining implementing phylogenetic branch attribution, exact tree hypergeometric tests, in silico Selection Deep Mutational Scanning (Selection DMS), and the Two-Stage Seed-and-Extend (TSE) sector discovery algorithm.
 
 ---
 
@@ -24,39 +24,93 @@ pip install -e .
 
 ---
 
-## ⚡ CLI Usage
+## 🔬 Walkthrough Examples from the Manuscript
 
-### 1. Episodic Positive Selection Inference (`predict`)
+### Example 1: Inter-Site Epistasis & Selection DMS in HIV-1 Reverse Transcriptase
+
+AxoMEME evaluates phylogenetic branch attribution, pairwise co-selection networks, and in silico Selection Deep Mutational Scanning (ESSM) across all codons of the HIV-1 RT polymerase domain ($N = 476$ taxa, $L = 335$ codons):
+
 ```bash
-# Infer episodic selection from an in-frame codon alignment and tree
-axomeme predict -a data/alignment.fasta -t data/tree.nwk -o results.json -c results.csv
+# Run branch co-selection, Selection DMS, and epistatic sector mining
+axomeme epistasis -a examples/HIV1_RT.fasta -t examples/HIV1_RT.nwk -o hiv_epistasis.json -c hiv_edges.csv
 ```
 
-### 2. Directional Phenotype-Genotype Association (`phenotype` / `phylowas`)
+#### Key Biological Discoveries:
+1. **Unsupervised Discovery of Multi-Drug Catalytic Complexes (Q151M MDR Complex)**:
+   * AxoMEME places the co-evolution of residue 116 with residue 151 at **#1 overall** across all candidate pairs:
+     $$\text{F116} \longleftrightarrow \text{Q151} \quad (\text{Co-Sel} = 0.8660, \; p_{\text{hyper}} = 7.02 \times 10^{-9}, \; \text{FDR } q = 1.17 \times 10^{-7})$$
+   * In clinical antiretroviral genetics, the Q151M mutation coordinates directly with F116Y in the catalytic dNTP-binding cleft to confer broad cross-resistance across the entire NRTI class (AZT, ddI, ddC, d4T, ABC).
+2. **Autonomous Dissection of Mutually Exclusive Pathways (TAM-1 vs. TAM-2)**:
+   * AxoMEME's branch co-selection metric autonomously isolates the **TAM-1 triad** (`M41L + L210W + T215Y`, $\text{Sim} = 0.53\text{--}0.61, q < 10^{-7}$) from the mutually antagonistic **TAM-2 cluster** (`D67N + K70R + K219Q`, $q < 10^{-3}$), mirroring clinical fitness landscapes without any pre-existing pharmacological knowledge.
+3. **In Silico Selection Deep Mutational Scanning (ESSM)**:
+   * **Strict Catalytic Invariance**: The active triad ($\text{Asp110}, \text{Asp185}, \text{Asp186}$) exhibits low baseline selection ($\widehat{\text{LRT}} \le 1.08, p \ge 0.14$) but triggers massive selection shocks under in silico perturbation ($\Delta\text{LRT} \approx 2.65\text{--}3.13$).
+   * **Permissive Drug Escape**: Clinical resistance positions ($\text{Lys103}, \text{Tyr181}, \text{Thr215}$) exhibit low perturbation shifts ($\Delta\text{LRT} \approx 0.15\text{--}0.47$), reflecting high intrinsic mutational tolerance.
+
+---
+
+### Example 2: Convergent Sensory Adaptation & Spectral Tuning in Rhodopsin
+
+PhyloWAS maps directional selection shifts across vertebrate visual pigments (RHO / RH1, $N = 710$ mammalian taxa, $L = 349$ codons) to identify convergent spectral tuning substitutions in deep-sea diving marine mammals (cetaceans, pinnipeds, sirenians):
+
 ```bash
-# Using a built-in curated macroevolutionary preset
-axomeme phenotype -a msa/SLC26A5.gz -p echolocation -o echoloc_results.json
-
-# Using inline comma-separated or glob pattern of foreground species
-axomeme phenotype -a msa/TMC1.gz -fg "rhi*,myo*,turTru,balMys" -c tmc1_assoc.csv
-
-# Using a phenotypic metadata table (TSV / CSV)
-axomeme phenotype -a msa/GHR.gz -pf metadata/mammalian_traits.tsv --trait-col AdultBodyMass_g --continuous
-
-# Other available presets:
-# - echolocation, marine, fossorial, hibernation, longevity, high_altitude, cardenolide, dim_light
+# Run PhyloWAS for marine diving mammal visual adaptation
+axomeme phenotype -a examples/RHO.fasta -fg "turTru,balMus,balPhys,orcOrc,delDelp,phyCat,phoVit,halGryp,mirLeo,zalCali,odoRos" -o rho_marine.json
 ```
 
-### 3. Inter-Site Epistasis, Branch Co-Selection & Selection DMS (`epistasis` / `essm`)
+#### Key Biological Discoveries:
+* **Site 292 (A292S Spectral Blue-Shift)**:
+  $$\text{Ala292Ser} \quad (\rho = 0.2948, \; p = 2.11 \times 10^{-5}, \; \text{FDR } q = 3.06 \times 10^{-3})$$
+  * Reaches **58.3% frequency** in marine diving lineages vs. only **5.8%** across terrestrial background mammals. Site 292 is the primary molecular mechanism responsible for the $-10\text{ nm}$ blue-shift tuning required for vision in deep-sea blue-green oceanic water.
+* **Site 83 (D83N Spectral Shift)**:
+  $$\text{Asp83Asn} \quad (\rho = 0.2324, \; p = 3.74 \times 10^{-4}, \; \text{FDR } q = 0.019)$$
+  * Reaches **75.0% frequency** in marine foreground taxa vs. 16.8% in background.
+* **Site 101 (G101A)**:
+  $$\text{Gly101Ala} \quad (\rho = 0.2357, \; p = 3.89 \times 10^{-4}, \; \text{FDR } q = 0.019)$$
+
+---
+
+### Example 3: Ultra-Fast Episodic Positive Selection (`predict`)
+
 ```bash
-# Mine phylogenetic branch co-selection networks, Selection DMS (ESSM), and epistatic sectors
-axomeme epistasis -a examples/bat_oas1.fasta -t examples/bat_oas1.nwk -o epistasis.json -c epistasis.csv --graphml coselection.graphml
+# Infer episodic selection on primate Smc6 antiviral restriction factor
+axomeme predict -a examples/Smc6.fasta -t examples/Smc6.nwk -o smc6_results.json -c smc6_results.csv
 
-# High-depth filtering with custom FDR cutoff
-axomeme epistasis -a examples/Smc6.fasta -t examples/Smc6.nwk --min-shared 3 --min-sim 0.40 --max-fdr 0.01
+# Infer episodic selection on bat OAS1 interferon-stimulated antiviral factor
+axomeme predict -a examples/bat_oas1.fasta -t examples/bat_oas1.nwk -c bat_oas1_results.csv
+```
 
-# Fast co-selection graph extraction without full DMS sweep
-axomeme epistasis -a examples/Smc6.fasta -t examples/Smc6.nwk --no-dms
+* **Throughput**: Processes $>1,000$ codon positions across hundreds of species in **$<0.15\text{ seconds}$** ($397\times$ speedup over numerical MLE).
+* **Automatic Tree Inference**: Automatically estimates HKY85 maximum-likelihood branch lengths via HyPhy when omitted.
+* **Haplotype Compression**: Automatically detects and prunes 100% identical sequence duplicates by default to enforce strict mathematical invariance.
+
+---
+
+## ⚡ CLI Reference Summary
+
+### 1. `axomeme predict`
+```bash
+axomeme predict -a <alignment> [-t <tree>] [-w <weights>] [-s <max_species>] [--cpu] [-o <out.json>] [-c <out.csv>]
+```
+
+### 2. `axomeme phenotype` (PhyloWAS)
+```bash
+# Using curated presets (echolocation, marine, fossorial, hibernation, longevity, high_altitude, cardenolide, dim_light)
+axomeme phenotype -a <alignment> -p echolocation
+
+# Using inline regex or species lists
+axomeme phenotype -a <alignment> -fg "turTru,balMus,orcOrc"
+
+# Using quantitative continuous trait tables (e.g. body mass, longevity quotient)
+axomeme phenotype -a <alignment> -pf traits.tsv --trait-col BodyMass --continuous
+```
+
+### 3. `axomeme epistasis` (ESSM / Branch Co-Selection)
+```bash
+# Full analysis (Co-Selection + Selection DMS + Epistatic Sectors)
+axomeme epistasis -a <alignment> -t <tree> --min-sim 0.30 --min-shared 2 --max-fdr 0.05 --graphml network.graphml
+
+# Fast co-selection graph without 19-amino-acid DMS sweep
+axomeme epistasis -a <alignment> -t <tree> --no-dms
 ```
 
 ---
