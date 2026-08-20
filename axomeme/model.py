@@ -5,11 +5,14 @@ Core Neural Architecture: PhyloAxialTransformer with Multi-Scale 4D Tree-RoPE
 for ultra-fast episodic positive selection inference.
 """
 
+import os
 import math
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+DEFAULT_WEIGHTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "weights", "axomeme_v1.pt")
 
 class BlockLinear(nn.Module):
     """
@@ -321,7 +324,7 @@ class PhyloAxialTransformer(nn.Module):
             "num_species": mds_coords.shape[1]
         }
 
-    def forward_cached(self, msa_codons, msa_aas, tree_cache, padding_mask=None):
+    def forward_cached(self, msa_codons, msa_aas, tree_cache, padding_mask=None, return_attentions=False):
         """
         Fast forward pass using pre-cached static tree kernels.
         Eliminates repeated matrix exponentials and trigonometric rotations.
@@ -329,14 +332,19 @@ class PhyloAxialTransformer(nn.Module):
         batch_size, num_species, window_size = msa_codons.shape
         central_idx = window_size // 2
 
+        # 1. Embeddings
         codon_emb = self.codon_embedding(msa_codons)
         aa_emb = self.aa_embedding(msa_aas)
-        x = torch.cat([codon_emb, aa_emb], dim=-1) + self.pos_embedding.unsqueeze(1) + tree_cache["mds_pos_static"].unsqueeze(2)
+        x = torch.cat([codon_emb, aa_emb], dim=-1)
+        x = x + self.pos_embedding.unsqueeze(1)
+        phylo_pos = tree_cache.get("mds_pos_static", tree_cache.get("static_phylo_pos"))
+        if phylo_pos.dim() == 3:
+            x = x + phylo_pos.unsqueeze(2)
+        else:
+            x = x + phylo_pos.unsqueeze(0).unsqueeze(2)
 
-        # 1. Prepend [ROOT] Token at Index 0
-        root_x = self.root_token.expand(batch_size, 1, window_size, -1)
-        x_full = torch.cat([root_x, x], dim=1)  # [batch_size, num_species + 1, window_size, embed_dim]
-
+        root = self.root_token.expand(batch_size, 1, window_size, -1)
+        x_full = torch.cat([root, x], dim=1)
         num_nodes = num_species + 1
 
         # 2. Padding Mask
@@ -358,6 +366,8 @@ class PhyloAxialTransformer(nn.Module):
         static_biases = tree_cache["static_phylo_biases"]
         static_coss = tree_cache["static_rope_coss"]
         static_sins = tree_cache["static_rope_sins"]
+
+        layer_attns = [] if return_attentions else None
 
         for i, layer in enumerate(self.row_layers):
             row_in = x_full.transpose(1, 2).contiguous().view(batch_size * window_size, num_nodes, self.embed_dim)
@@ -384,25 +394,31 @@ class PhyloAxialTransformer(nn.Module):
             else:
                 attn_weights = torch.softmax(scores, dim=-1)
 
+            if return_attentions:
+                # Extract root -> leaf attention weights: [B*W, num_heads, num_species]
+                layer_attns.append(attn_weights[:, :, 0, 1:].detach())
+
             attn_weights = layer.dropout(attn_weights).to(v.dtype)
             out = torch.matmul(attn_weights, v)
             out = out.transpose(1, 2).contiguous().view(batch_size * window_size, num_nodes, layer.embed_dim)
             out = layer.out_proj(out) + layer.alpha_skip * x0_dup
             row_out = self.row_norms[i](row_in + out)
-            x_full = row_out.reshape(batch_size, window_size, num_nodes, layer.embed_dim).transpose(1, 2)
+            x_full = row_out.reshape(batch_size, window_size, num_nodes, self.embed_dim).transpose(1, 2)
 
         root_repr = x_full[:, 0, central_idx, :]
         logits_lrt_ordinal = self.lrt_ordinal_head(root_repr)
+        y_lrt_soft, _ = decode_soft_ordinal_lrt(logits_lrt_ordinal)
 
-        if self.training:
-            return logits_lrt_ordinal
-        else:
-            y_lrt_soft, _ = decode_soft_ordinal_lrt(logits_lrt_ordinal)
-            return y_lrt_soft.view(batch_size), logits_lrt_ordinal
+        if return_attentions:
+            all_attns = torch.stack(layer_attns, dim=0) # [num_layers, B*W, num_heads, num_species]
+            mean_root_attns = all_attns.mean(dim=(0, 2)).view(batch_size, num_species) # [batch_size, num_species]
+            return y_lrt_soft.view(batch_size), logits_lrt_ordinal, mean_root_attns
+            
+        return y_lrt_soft.view(batch_size), logits_lrt_ordinal
 
-    def forward(self, msa_codons, msa_aas, dist_matrix=None, mds_coords=None, padding_mask=None, tree_cache=None):
+    def forward(self, msa_codons, msa_aas, dist_matrix=None, mds_coords=None, padding_mask=None, tree_cache=None, return_attentions=False):
         if tree_cache is not None:
-            return self.forward_cached(msa_codons, msa_aas, tree_cache, padding_mask=padding_mask)
+            return self.forward_cached(msa_codons, msa_aas, tree_cache, padding_mask=padding_mask, return_attentions=return_attentions)
 
         batch_size, num_species, window_size = msa_codons.shape
         central_idx = window_size // 2
@@ -467,12 +483,8 @@ class PhyloAxialTransformer(nn.Module):
         
         # 16-Bin Ordinal LRT Logits directly from [ROOT] representation
         logits_lrt_ordinal = self.lrt_ordinal_head(root_repr)
-        
-        if self.training:
-            return logits_lrt_ordinal
-        else:
-            y_lrt_soft, _ = decode_soft_ordinal_lrt(logits_lrt_ordinal)
-            return y_lrt_soft.view(batch_size), logits_lrt_ordinal
+        y_lrt_soft, _ = decode_soft_ordinal_lrt(logits_lrt_ordinal)
+        return y_lrt_soft.view(batch_size), logits_lrt_ordinal
 
 
 

@@ -1,0 +1,71 @@
+name: model_eval
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'model_eval/**'
+      - 'axomeme/model.py'
+      - 'axomeme/dataset.py'
+  pull_request:
+    paths:
+      - 'model_eval/**'
+      - 'axomeme/model.py'
+      - 'axomeme/dataset.py'
+
+jobs:
+  model_eval:
+    runs-on: ubuntu-latest
+    # Not a release gate for the package, but failures here ARE real
+    # signals — the model has a behavior problem worth investigating.
+    # All known issues are left as FAILED (not xfailed) so they're
+    # visible in CI. See model_eval/README.md for the full results table.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install CPU torch
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install package and test dependencies
+        run: pip install -e .[model_eval]
+
+      # Pinned to the exact versions the committed model_eval/_cache/
+      # HyPhy MEME results were generated with. The cache key includes the
+      # hyphy version string, so any drift here causes cache misses (CI
+      # would then re-run MEME live instead of using the cache — slow, and
+      # not necessarily reproducing the exact same numbers). Bump both the
+      # pin and the cache together; see model_eval/README.md.
+      - name: Install HyPhy and seq-gen
+        run: |
+          mamba create -n model_eval_tools -c bioconda -c conda-forge \
+            hyphy=2.5.101 seq-gen=1.3.5 -y
+          echo "$CONDA/envs/model_eval_tools/bin" >> $GITHUB_PATH
+        continue-on-error: true
+
+      - name: Run model behavior tests
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: pytest model_eval/ -v -rs
+
+      - name: Upload report artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model_eval_reports
+          path: model_eval/_artifacts/
+          if-no-files-found: ignore
+
+      - name: Upload MEME cache
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meme_cache
+          path: model_eval/_cache/
+          if-no-files-found: ignore

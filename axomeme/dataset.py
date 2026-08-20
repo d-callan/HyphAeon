@@ -76,12 +76,14 @@ def parse_alignment_sequences(filepath: str) -> Dict[str, str]:
 
         seq_dict = {}
         for record in SeqIO.parse(StringIO(clean_fasta), 'fasta'):
-            seq_dict[record.id.strip()] = str(record.seq).upper().strip()
+            seq_str = str(record.seq).upper().strip().replace('U', 'T')
+            seq_dict[record.id.strip()] = seq_str
         return seq_dict
 
     # NEXUS format parsing
+    clean_nexus_text = re.sub(r'\[[^\]]*\]', '', full_text)
     taxlabels = []
-    tax_match = re.search(r'taxlabels\s+(.*?)\s*;', full_text, re.IGNORECASE | re.DOTALL)
+    tax_match = re.search(r'taxlabels\s+(.*?)\s*;', clean_nexus_text, re.IGNORECASE | re.DOTALL)
     if tax_match:
         tokens = re.findall(r"'([^']+)'|\"([^\"]+)\"|(\S+)", tax_match.group(1))
         for t in tokens:
@@ -89,36 +91,36 @@ def parse_alignment_sequences(filepath: str) -> Dict[str, str]:
             if name:
                 taxlabels.append(name.strip())
 
-    format_match = re.search(r'format\s+(.*?)\s*;', full_text, re.IGNORECASE | re.DOTALL)
+    format_match = re.search(r'format\s+(.*?)\s*;', clean_nexus_text, re.IGNORECASE | re.DOTALL)
     is_nolabels = bool(format_match and 'nolabels' in format_match.group(1).lower())
 
-    matrix_match = re.search(r'matrix\s+(.*?)\s*;', full_text, re.IGNORECASE | re.DOTALL)
+    matrix_match = re.search(r'matrix\s+(.*?)\s*;', clean_nexus_text, re.IGNORECASE | re.DOTALL)
     seq_dict = {}
     if matrix_match:
         matrix_lines = [l.strip() for l in matrix_match.group(1).splitlines() if l.strip()]
         if is_nolabels and taxlabels:
             for idx, line in enumerate(matrix_lines):
                 if idx < len(taxlabels):
-                    seq = line.replace(' ', '').replace('\t', '').upper()
+                    seq = line.replace(' ', '').replace('\t', '').upper().replace('U', 'T')
                     seq_dict[taxlabels[idx]] = seq
         else:
             for line in matrix_lines:
                 parts = line.split(None, 1)
                 if len(parts) == 2:
                     name = parts[0].replace("'", "").replace('"', '').strip()
-                    seq = parts[1].replace(' ', '').replace('\t', '').strip().upper()
+                    seq = parts[1].replace(' ', '').replace('\t', '').strip().upper().replace('U', 'T')
                     if name in seq_dict:
                         seq_dict[name] += seq
                     else:
                         seq_dict[name] = seq
     else:
         # Fallback for plain matrices without explicit block wrapper
-        for line in full_text.splitlines():
+        for line in clean_nexus_text.splitlines():
             line_clean = line.strip()
             parts = line_clean.split(None, 1)
             if len(parts) == 2 and len(parts[1].replace(' ', '')) > 20:
                 name = parts[0].replace("'", "").replace('"', '').strip()
-                seq_dict[name] = parts[1].replace(' ', '').upper()
+                seq_dict[name] = parts[1].replace(' ', '').upper().replace('U', 'T')
 
     return seq_dict
 
@@ -354,10 +356,34 @@ def downsample_taxa_faith_pd(dist_mat: np.ndarray, taxa: List[str], max_species:
     sub_dist_mat = dist_mat[np.ix_(selected_indices, selected_indices)]
     return sub_dist_mat, selected_taxa
 
-def load_alignment_and_tree(fa_path: str, nwk_path: Optional[str] = None, max_species: Optional[int] = None):
+def prune_identical_sequences(seq_dict: Dict[str, str], taxa: List[str]) -> Tuple[List[str], Dict[str, List[str]], int]:
+    """
+    Identifies and collapses 100% identical sequence duplicates among matching taxa.
+    Retains 1 representative taxon per unique haplotype and prunes redundant duplicate leaves.
+    Returns (unique_taxa, dup_map, num_pruned).
+    """
+    seen_seqs = {}
+    unique_taxa = []
+    dup_map = {}
+    
+    for t in taxa:
+        seq = seq_dict[t]
+        if seq not in seen_seqs:
+            seen_seqs[seq] = t
+            unique_taxa.append(t)
+            dup_map[t] = []
+        else:
+            rep = seen_seqs[seq]
+            dup_map[rep].append(t)
+            
+    num_pruned = len(taxa) - len(unique_taxa)
+    return unique_taxa, dup_map, num_pruned
+
+def load_alignment_and_tree(fa_path: str, nwk_path: Optional[str] = None, max_species: Optional[int] = None, prune_duplicates: bool = True):
     """
     Parses alignment (FASTA or NEXUS) and phylogenetic tree (from nwk_path or embedded in alignment).
     Enforces non-zero branch lengths (estimating them via HyPhy if available and missing).
+    Automatically prunes identical sequence duplicates and trims tree accordingly if prune_duplicates=True.
     Optionally applies greedy Faith's PD species downsampling if max_species is specified.
     Returns PyTorch tensors (c, a, d, z), invariable mask, taxa list, and codon length L.
     """
@@ -413,11 +439,36 @@ def load_alignment_and_tree(fa_path: str, nwk_path: Optional[str] = None, max_sp
                 f"and alignment sequences ({list(seq_dict.keys())[:5]}...)."
             )
 
-    n_taxa = len(taxa)
+    dropped_aln = len(seq_dict) - len(taxa)
+    dropped_tree = len(tree_taxa) - len(taxa)
+    if dropped_aln > 0 or dropped_tree > 0:
+        print(f"[*] Taxon Matching: Retained {len(taxa)} shared taxa ({dropped_aln} alignment sequences, {dropped_tree} tree terminals unshared).")
+    else:
+        print(f"[*] Taxon Matching: 100% concordance ({len(taxa)} shared taxa).")
+
+    # Automated Duplicate Sequence & Tree Pruning
+    if prune_duplicates and len(taxa) > 1:
+        unique_taxa, dup_map, num_pruned = prune_identical_sequences(seq_dict, taxa)
+        if num_pruned > 0:
+            print(f"[*] Duplicate Taxon Pruning: Collapsed {num_pruned} identical duplicate sequence(s) ({len(taxa)} -> {len(unique_taxa)} unique haplotypes).")
+            taxa = unique_taxa
+
+    # Sequence length & reading frame validation
+    seq_lengths = {sp: len(seq_dict[sp]) for sp in taxa}
+    unique_lens = set(seq_lengths.values())
+    if len(unique_lens) > 1:
+        print(f"[!] Warning: Unequal sequence lengths detected in alignment: {unique_lens}. Padding shorter sequences with gaps.")
+
     first_seq = seq_dict[taxa[0]]
-    L = len(first_seq) // 3
-    if L == 0:
-        raise ValueError(f"Alignment sequence length {len(first_seq)} bp is less than 1 codon (3 bp).")
+    raw_len = len(first_seq)
+    if raw_len < 3:
+        raise ValueError(f"Alignment sequence length ({raw_len} bp) is less than 1 codon (3 bp).")
+
+    if raw_len % 3 != 0:
+        print(f"[!] Notice: Alignment length ({raw_len} bp) is not divisible by 3. Trimming {raw_len % 3} trailing nucleotide(s).")
+    
+    L = raw_len // 3
+    n_taxa = len(taxa)
 
     # 5. Compute distance matrix & optional Max-PD downsampling
     dist_mat = compute_fast_dist_matrix(tree_obj, taxa)
@@ -436,12 +487,31 @@ def load_alignment_and_tree(fa_path: str, nwk_path: Optional[str] = None, max_sp
 
     c_all = np.zeros((L, n_taxa, 1), dtype=np.int64)
     a_all = np.zeros((L, n_taxa, 1), dtype=np.int64)
+    unknown_codons = 0
+    stop_codons = 0
+    total_codons = L * n_taxa
+
     for i, sp in enumerate(taxa):
         seq = seq_dict.get(sp, '-' * (L * 3))
         for site in range(L):
             codon = seq[site*3 : (site+1)*3].upper()
-            c_all[site, i, 0] = get_codon_token(codon)
-            a_all[site, i, 0] = get_aa_token(codon)
+            c_tok = get_codon_token(codon)
+            a_tok = get_aa_token(codon)
+            if c_tok == 64:
+                if codon in ('TAA', 'TAG', 'TGA'):
+                    stop_codons += 1
+                else:
+                    unknown_codons += 1
+            c_all[site, i, 0] = c_tok
+            a_all[site, i, 0] = a_tok
+
+    if unknown_codons > 0:
+        frac_unk = unknown_codons / max(1, total_codons)
+        if frac_unk > 0.05:
+            print(f"[!] Diagnostic Notice: {unknown_codons}/{total_codons} ({frac_unk:.1%}) codons contain gaps, ambiguities, or unrecognized bases.")
+
+    if stop_codons > 0:
+        print(f"[!] Notice: Found {stop_codons} in-frame stop codon(s) across alignment matrix.")
 
     is_aa_invariable = np.zeros(L, dtype=bool)
     for site in range(L):

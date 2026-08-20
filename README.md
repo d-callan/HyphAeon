@@ -1,26 +1,21 @@
-# AxoMEME: Ultra-Fast Neural Inference of Episodic Positive Selection in Molecular Sequences
+# AxoMEME
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
-
-**AxoMEME** is a deep phylogenomic foundation model that performs **instantaneous site-level detection of episodic diversifying positive selection** ($\mathrm{d}N/\mathrm{d}S > 1$) across arbitrary codon alignments and phylogenetic trees.
-
-By replacing numerical Maximum Likelihood Estimation (MLE) with an axial geometric transformer equipped with **Continuous 4D Tree Rotary Position Embeddings (Tree-RoPE)**, AxoMEME achieves a **$100\times\text{--}1,000\times$ speedup** over classical methods (HyPhy MEME / PAML CodeML) while matching or exceeding empirical statistical power and strictly controlling false positive rates.
+**Ultra-Fast Neural Inference of Episodic Selection, Directional Phenotype-Genotype Mapping, In Silico Selection Deep Mutational Scanning (Digital DMS), and Multi-Scale Epistatic Sector Mining.**
 
 ---
 
-## 🌟 Key Features
+## 🚀 Key Capabilities
 
-* ⚡ **Ultra-Fast Inference**: Evaluates an entire gene alignment (e.g., 1,000+ codons across 20–200 species) in **$< 1$ second** on standard CPU / Apple Silicon, and milliseconds on GPU.
-* 🌲 **Continuous 4D Tree-RoPE**: Natively encodes arbitrary phylogenetic branch lengths and continuous topological distances via rotary embedding in a 4-dimensional geometric manifold.
-* 🎯 **Smooth Boundary Resolution**: Eliminates numerical boundary traps that cause standard MLE optimizers to collapse to tied zero statistics on weak episodic signals.
-* 📦 **HyPhy-Compatible Outputs**: Generates standard JSON and CSV reports with site-level Likelihood Ratio Test ($\mathrm{LRT}$) statistics, asymptotic $p$-values, and significance flags ($p \le 0.10, p \le 0.05$).
-* 🧬 **Zero Setup / Pretrained Weights**: Ready to run out-of-the-box on FASTA alignments and Newick trees.
+AxoMEME integrates four complementary phylogenetic deep learning and geometric projection engines:
+
+1. **`axomeme predict`**: Neural episodic positive selection inference ($>100\times$ faster than standard numerical MLE and codon-MCMC models like HyPhy MEME) using Tree-RoPE 4D geometric branch embeddings and axial tree attention.
+2. **`axomeme phenotype` (PhyloWAS)**: Directional phenotype-genotype association mapping on the unit hypersphere $\mathbb{S}^{M-1}$. Computes spectral trait energies ($\Psi_{\text{Spectral}}$), exact sequenced-taxa null scaling $p$-values, Benjamini-Hochberg FDR $q$-values, and **Phenotype-Associated Residue Signatures (PARS)**.
+3. **`axomeme dms` (Digital DMS / ESSM)**: In silico Selection Deep Mutational Scanning. Performs high-throughput sweeps of all 19 alternative amino acids across every codon position in seconds, calculating the **Epistatic Selection Sensitivity Matrix (ESSM)**, Intrinsic Mutational Plasticity ($\mathbf{E}_{i,i}$), and allosteric selection shifts ($\Delta \text{LRT}$).
+4. **`axomeme epistasis` (Branch Co-Selection & Sectors)**: Multi-scale epistatic sector mining implementing phylogenetic branch attribution, exact tree hypergeometric tests, Jaccard overlap suppression, and the Two-Stage Seed-and-Extend (TSE) sector discovery algorithm.
 
 ---
 
-## 🚀 Quickstart Installation
+## 📦 Installation
 
 ```bash
 git clone https://github.com/veg/axomeme.git
@@ -30,52 +25,37 @@ pip install -e .
 
 ---
 
-## 💻 CLI Usage
+## 🧠 Model Weights
 
-### 1. Basic Site Selection Scan
+Weights are hosted on **Hugging Face**: https://huggingface.co/datamonkey/axomeme
+
+On first use, weights are downloaded automatically (~7 MB, ~1 second) and cached
+locally. Subsequent runs use the cached copy.
+
+### Choosing a Model Variant
+
 ```bash
-# Standard inference with separate alignment and tree
-axomeme predict \
-  --alignment examples/Smc6.fasta \
-  --tree examples/Smc6.nwk \
-  --output results/Smc6_selection.json \
-  --csv results/Smc6_selection.csv
-
-# Or run directly on alignments with embedded trees (NEXUS or FASTA), omitting --tree:
-axomeme predict \
-  --alignment alignment_with_tree.nex \
-  --output results/selection.json
-```
-> [!NOTE]
-> When `--tree` is omitted, AxoMEME automatically extracts the embedded phylogenetic tree from the alignment file. If the tree contains uncalibrated topology or zero branch lengths, AxoMEME automatically estimates branch lengths via HyPhy (HKY85) or enforces strictly positive lower bounds ($10^{-4}$).
-
-### 2. Choosing a Model Variant
-
-AxoMEME supports multiple model variants hosted on Hugging Face. On first use,
-weights are downloaded automatically (~7 MB, ~1 second) and cached locally.
-
-List available variants:
-```bash
+# List available variants
 axomeme list-models
-```
 
-Use a specific variant:
-```bash
 # General model (default — trained on diverse alignments)
 axomeme predict --alignment alignment.fa --tree tree.nwk
 
-# Viral fine-tuned variant (better for viral datasets)
+# Viral fine-tuned variant
 axomeme predict --alignment alignment.fa --tree tree.nwk --model-variant viral
 ```
 
-Use a local weights file (bypasses HF download):
+### Using Local Weights
+
+Bypass HF download with `--weights` or `AXOMEME_WEIGHTS` (supports both `.pt`
+and `.safetensors`):
+
 ```bash
-# Supports both .pt and .safetensors formats
 axomeme predict --alignment alignment.fa --tree tree.nwk --weights /path/to/model.pt
 axomeme predict --alignment alignment.fa --tree tree.nwk --weights /path/to/model.safetensors
 ```
 
-### 3. Configuration via Environment Variables
+### Environment Variables
 
 | Variable | Description | Default |
 |---|---|---|
@@ -84,114 +64,141 @@ axomeme predict --alignment alignment.fa --tree tree.nwk --weights /path/to/mode
 | `AXOMEME_WEIGHTS` | Path to local weights file (overrides HF download) | — |
 | `AXOMEME_CACHE` | Cache directory for downloaded weights | `~/.cache/axomeme` |
 
-See [`.env.example`](.env.example) for details. Copy it to `.env` and fill in
-as needed.
+See [`.env.example`](.env.example) for details.
 
 > [!NOTE]
 > While the model repo is gated, set `HF_TOKEN` to authenticate. Get a token at
 > https://huggingface.co/settings/tokens (read access is sufficient). Once the
 > repo is made public, the token will no longer be required.
 
-### 4. Output Preview
-```
-===========================================================================
-🎉 AxoMEME Inference Complete in 0.842 seconds!
-   Taxa: 20 | Codon Sites: 1097 | Total Invariable: 1000
-   Significant Sites (p <= 0.10): 14 | (p <= 0.05): 5
-===========================================================================
+---
 
-Top Candidate Sites for Episodic Positive Selection:
-Codon    LRT Score    p-value      Status         
---------------------------------------------------
-697      6.903        4.3020e-03   p <= 0.05      
-930      4.068        2.1850e-02   p <= 0.05      
-628      3.732        2.6697e-02   p <= 0.05      
-365      3.401        3.2580e-02   p <= 0.05      
-279      3.291        3.4822e-02   p <= 0.05      
-```
+## 📂 Included Benchmark Datasets
+
+All example alignments and phylogenetic trees required to reproduce these analyses are bundled directly in the `examples/` directory:
+
+| Dataset | Alignment File | Tree File | Taxa ($N$) | Codons ($L$) | Description & Biological Domain |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **HIV-1 RT** | [`examples/HIV1_RT.fasta`](examples/HIV1_RT.fasta) | [`examples/HIV1_RT.nwk`](examples/HIV1_RT.nwk) | 476 | 335 | Retroviral Reverse Transcriptase polymerase domain (drug resistance & epistasis). |
+| **Rhodopsin** | [`examples/RHO.fasta`](examples/RHO.fasta) | Embedded / Auto | 710 | 349 | Mammalian Rhodopsin visual pigments (deep-sea diving sensory adaptation). |
+| **Smc6** | [`examples/Smc6.fasta`](examples/Smc6.fasta) | [`examples/Smc6.nwk`](examples/Smc6.nwk) | 20 | 1,097 | Primate Smc6 structural maintenance of chromosomes (antiviral host restriction). |
+| **Bat OAS1** | [`examples/bat_oas1.fasta`](examples/bat_oas1.fasta) | [`examples/bat_oas1.nwk`](examples/bat_oas1.nwk) | 18 | 351 | Chiropteran OAS1 2'-5'-oligoadenylate synthetase (innate immunity escape). |
+| **Camelid VHH** | [`examples/camelid.fasta`](examples/camelid.fasta) | [`examples/camelid.nwk`](examples/camelid.nwk) | 212 | 96 | Camelid single-domain antibody heavy-chain variable domain (antigenic diversity). |
 
 ---
 
-## 📊 Benchmark Summary: HyPhy MEME vs. AxoMEME
+## 🔬 Reproducible Benchmark Examples
 
-Taking **HyPhy MEME** ($p \le 0.10$ / asymptotic $\text{LRT} \ge 4.605$) as ground truth across **84 empirical datasets from 9 independent literature studies** (43,302 codons across up to 476 taxa):
+### Example 1: Inter-Site Epistasis & Branch Co-Selection in HIV-1 Reverse Transcriptase
 
-| Literature Study & System | Genes / Datasets | Codons | ROC-AUC | PR-AUC | PPV | FPR | Spearman $\rho$ | Runtime (HyPhy MLE) | Runtime (AxoMEME CPU) | Throughput Speedup |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Abdul et al. (2018)** *SMC5/6 Complex* | 9 | 7,073 | **0.990** | **0.752** | **100.0%** | **0.00%** | **0.874** | 561.0 s | **3.84 s** | **171.3×** |
-| **Nisson et al. (2025)** *CCDC137 (HIV Vpr)* | 1 | 290 | **0.940** | **0.650** | **75.0%** | **0.35%** | **0.833** | 80.0 s | **0.21 s** | **380.9×** |
-| **Le Corf et al. (2026)** *GBP5 GTPase* | 2 | 1,223 | **0.958** | **0.584** | **68.2%** | **0.49%** | **0.782** | 1,174.0 s | **1.68 s** | **693.3×** |
-| **D'Oliviera et al. (2025)** *TRMT1 Cleavage* | 2 | 1,613 | **0.945** | **0.512** | **62.5%** | **0.31%** | **0.671** | 723.0 s | **1.30 s** | **543.9×** |
-| **Lytras et al. (2023)** *Bat OAS1 Factor* | 1 | 351 | **0.904** | **0.628** | **87.5%** | **0.35%** | **0.675** | 352.0 s | **0.22 s** | **1,566.3×** |
-| **Wisotsky et al. (2020)** *Benchmark Suite* | 12 | 4,290 | **0.965** | **0.618** | **68.8%** | **0.58%** | **0.615** | 8,603.0 s | **55.49 s** | **608.8×** |
-| **Hilbert & Elde (2023)** *Siglec / C-Lectins* | 57 | 28,462 | **0.892** | **0.224** | **44.8%** | **0.17%** | **0.376** | 14,203.0 s | **16.12 s** | **859.1×** |
-| **GLOBAL AGGREGATE** | **84** | **43,302** | **0.914** | **0.286** *(8.8× base)* | **50.6%** | **0.191%** | **0.489** | **25,696.0 s (7.14 h)** | **78.87 s (1.31 m)** | **325.8×** |
-
----
-
-## 🗄️ Training Data & Model Checkpoints
-
-The foundation model was trained across thousands of mammalian genome alignments (TOGA 241-mammal corpus) and verified against extensive null and episodic Pyvolve simulations.
-
-### Model Weights
-
-Weights are hosted on **Hugging Face**: https://huggingface.co/datamonkey/axomeme
-
-See [CLI Usage](#-cli-usage) above for instructions on listing variants,
-selecting a model, and configuring download behavior. Key points:
-
-- Weights download automatically on first use (~7 MB, ~1 second) and cache locally
-- Use `axomeme list-models` to see available variants
-- Use `--model-variant viral` or `AXOMEME_VARIANT` env var to select a variant
-- Use `--weights /path/to/file` or `AXOMEME_WEIGHTS` env var to use a local file
-- Set `HF_TOKEN` while the repo is gated (see [`.env.example`](.env.example))
-
-### Training Data
-
-* **Mammalian Training Database (TOGA SQLite, 37 GB)**: Available on Google Drive ([`Google Drive Link: TOGA_MEME_DB`](https://drive.google.com/drive/folders/axomeme-training-data)).
-* **Pre-extracted `.npz` Alignment Tensors (18,253 Genes)**: Available on Google Drive ([`Google Drive Link: NPZ_Tensors_Archive`](https://drive.google.com/drive/folders/axomeme-tensors)).
-
----
-
-## 🛠️ Retraining AxoMEME
-
-To train the model from scratch or fine-tune on custom alignment tensors:
+Evaluate phylogenetic branch attribution, pairwise co-selection networks, and non-redundant epistatic sectors across all codons of the HIV-1 RT polymerase domain ($N = 476$ taxa, $L = 335$ codons):
 
 ```bash
-python train.py \
-  --data_dir /path/to/extracted_npz_tensors/ \
-  --epochs 30 \
-  --batch_size 1 \
-  --lr 3e-4 \
-  --embed_dim 384 \
-  --layers 6 \
-  --heads 12 \
-  --fp16 \
-  --output_dir weights/
+# Run branch co-selection, sector mining, and export co-selection network
+axomeme epistasis -a examples/HIV1_RT.fasta -t examples/HIV1_RT.nwk -o examples/HIV1_RT_epistasis.json -c examples/HIV1_RT_edges.csv --graphml examples/HIV1_RT_coselection.graphml
+```
+
+#### Key Biological Discoveries:
+1. **Unsupervised Discovery of Multi-Drug Catalytic Complexes (Q151M MDR Complex)**:
+   * AxoMEME places the co-evolution of residue 116 with residue 151 at **#1 overall** across all candidate pairs:
+     $$\text{F116} \longleftrightarrow \text{Q151} \quad (\text{Co-Sel} = 0.8660, \; p_{\text{hyper}} = 7.02 \times 10^{-9}, \; \text{FDR } q = 1.17 \times 10^{-7})$$
+   * In clinical antiretroviral genetics, the Q151M mutation coordinates directly with F116Y in the catalytic dNTP-binding cleft to confer broad cross-resistance across the entire NRTI class (AZT, ddI, ddC, d4T, ABC).
+2. **Autonomous Dissection of Mutually Exclusive Pathways (TAM-1 vs. TAM-2)**:
+   * AxoMEME's branch co-selection metric autonomously isolates the **TAM-1 triad** (`M41L + L210W + T215Y`, $\text{Sim} = 0.53\text{--}0.61, q < 10^{-7}$) from the mutually antagonistic **TAM-2 cluster** (`D67N + K70R + K219Q`, $q < 10^{-3}$), mirroring clinical fitness landscapes without any pre-existing pharmacological knowledge.
+
+---
+
+### Example 2: In Silico Selection Deep Mutational Scanning (Digital DMS / ESSM)
+
+Perform an exhaustive 19-amino-acid in silico mutational sweep across every site to calculate the Epistatic Selection Sensitivity Matrix (ESSM) and measure Intrinsic Mutational Plasticity ($\mathbf{E}_{i,i}$):
+
+```bash
+# Run digital DMS sweep on HIV-1 RT
+axomeme dms -a examples/HIV1_RT.fasta -t examples/HIV1_RT.nwk -o examples/HIV1_RT_dms.json -c examples/HIV1_RT_dms.csv
+```
+
+#### Key Biological Discoveries:
+* **Strict Catalytic Invariance**: The active triad ($\text{Asp110}, \text{Asp185}, \text{Asp186}$) exhibits low baseline selection ($\widehat{\text{LRT}} \le 1.08, p \ge 0.14$) but triggers massive selection shocks under in silico perturbation ($\Delta\text{LRT} \approx 2.65\text{--}3.13$), confirming rigid purifying constraint.
+* **Permissive Drug Escape**: Known clinical resistance positions ($\text{Lys103}, \text{Tyr181}, \text{Thr215}$) exhibit low perturbation shifts ($\Delta\text{LRT} \approx 0.15\text{--}0.47$), reflecting high intrinsic mutational tolerance.
+
+---
+
+### Example 3: Convergent Sensory Adaptation & Spectral Tuning in Rhodopsin
+
+PhyloWAS maps directional selection shifts across vertebrate visual pigments (RHO / RH1, $N = 710$ mammalian taxa, $L = 349$ codons) to identify convergent spectral tuning substitutions in deep-sea diving marine mammals (cetaceans, pinnipeds, sirenians):
+
+```bash
+# Run PhyloWAS for marine diving mammal visual adaptation
+axomeme phenotype -a examples/RHO.fasta -fg "turTru,balMus,balPhys,orcOrc,delDelp,phyCat,phoVit,halGryp,mirLeo,zalCali,odoRos" -o examples/RHO_marine_phenotype.json -c examples/RHO_marine_sites.csv
+```
+
+#### Key Biological Discoveries:
+* **Site 292 (A292S Spectral Blue-Shift)**:
+  $$\text{Ala292Ser} \quad (\rho = 0.2948, \; p = 2.11 \times 10^{-5}, \; \text{FDR } q = 3.06 \times 10^{-3})$$
+  * Reaches **58.3% frequency** in marine diving lineages vs. only **5.8%** across terrestrial background mammals. Site 292 is the primary molecular mechanism responsible for the $-10\text{ nm}$ blue-shift tuning required for vision in deep-sea blue-green oceanic water.
+* **Site 83 (D83N Spectral Shift)**:
+  $$\text{Asp83Asn} \quad (\rho = 0.2324, \; p = 3.74 \times 10^{-4}, \; \text{FDR } q = 0.019)$$
+  * Reaches **75.0% frequency** in marine foreground taxa vs. 16.8% in background.
+* **Site 101 (G101A)**:
+  $$\text{Gly101Ala} \quad (\rho = 0.2357, \; p = 3.89 \times 10^{-4}, \; \text{FDR } q = 0.019)$$
+
+---
+
+### Example 4: Ultra-Fast Episodic Positive Selection (`predict`)
+
+```bash
+# Infer episodic selection on primate Smc6 antiviral restriction factor
+axomeme predict -a examples/Smc6.fasta -t examples/Smc6.nwk -o examples/Smc6_results.json -c examples/Smc6_results.csv
+
+# Infer episodic selection on bat OAS1 interferon-stimulated antiviral factor
+axomeme predict -a examples/bat_oas1.fasta -t examples/bat_oas1.nwk -c examples/bat_oas1_results.csv
+
+# Infer episodic selection on camelid antibody repertoire (auto branch-length estimation)
+axomeme predict -a examples/camelid.fasta -t examples/camelid.nwk -c examples/camelid_results.csv
+```
+
+* **Throughput**: Processes $>1,000$ codon positions across hundreds of species in **$<0.15\text{ seconds}$** ($397\times$ speedup over numerical MLE).
+* **Automatic Tree Inference**: Automatically estimates HKY85 maximum-likelihood branch lengths via HyPhy when omitted.
+* **Haplotype Compression**: Automatically detects and prunes 100% identical sequence duplicates by default to enforce strict mathematical invariance.
+
+---
+
+## ⚡ CLI Reference Summary
+
+### 1. `axomeme predict`
+```bash
+axomeme predict -a <alignment> [-t <tree>] [-w <weights>] [-s <max_species>] [--cpu] [-o <out.json>] [-c <out.csv>]
+```
+
+### 2. `axomeme phenotype` (PhyloWAS)
+```bash
+# Using curated presets (echolocation, marine, fossorial, hibernation, longevity, high_altitude, cardenolide, dim_light)
+axomeme phenotype -a <alignment> -p echolocation
+
+# Using inline regex or species lists
+axomeme phenotype -a <alignment> -fg "turTru,balMus,orcOrc"
+
+# Using quantitative continuous trait tables (e.g. body mass, longevity quotient)
+axomeme phenotype -a <alignment> -pf traits.tsv --trait-col BodyMass --continuous
+```
+
+### 3. `axomeme dms` (Digital DMS / ESSM)
+```bash
+# Exhaustive 19-amino-acid in silico Selection DMS sweep
+axomeme dms -a <alignment> -t <tree> [-o <out.json>] [-c <out.csv>]
+```
+
+### 4. `axomeme epistasis` (Branch Co-Selection & Sectors)
+```bash
+# Co-Selection network, Jaccard sector suppression, and GraphML export
+axomeme epistasis -a <alignment> -t <tree> --min-sim 0.30 --min-shared 2 --max-overlap 0.50 --max-fdr 0.05 --graphml network.graphml
+
+# Fast co-selection graph without 19-amino-acid DMS sweep
+axomeme epistasis -a <alignment> -t <tree> --no-dms
 ```
 
 ---
 
-## 📖 Architecture & Theory
+## 📜 License
 
-For a detailed theoretical and mathematical breakdown of the model architecture, see [ARCHITECTURE.md](ARCHITECTURE.md).
-
----
-
-## 📜 Citation
-
-If you use AxoMEME in your research, please cite:
-
-```bibtex
-@article{axomeme2026,
-  title={AxoMEME: Ultra-Fast Neural Inference of Episodic Positive Selection in Molecular Sequences},
-  author={Kosakovsky Pond, Sergei L. and Collaborators},
-  journal={Bioinformatics / Molecular Biology and Evolution},
-  year={2026}
-}
-```
-
----
-
-## ⚖️ License
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+MIT License. Copyright (c) 2026 Sergei L. Kosakovsky Pond.
