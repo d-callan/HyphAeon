@@ -353,7 +353,14 @@ def cmd_epistasis(args):
         ensure_parent_directory(args.graphml)
         G = nx.Graph()
         for e in edges:
-            G.add_edge(e["site_u"], e["site_v"], weight=e["similarity"], cesi=e["cesi"], shared=e["shared_branches"], fdr_q=e["fdr_q"])
+            G.add_edge(
+                str(e["site_u"]),
+                str(e["site_v"]),
+                weight=float(e["similarity"]),
+                cesi=float(e["cesi"]),
+                shared=int(e["shared_branches"]),
+                fdr_q=float(e["fdr_q"])
+            )
         nx.write_graphml(G, args.graphml)
         print(f"[✓] Co-selection network GraphML written to: {args.graphml}")
 
