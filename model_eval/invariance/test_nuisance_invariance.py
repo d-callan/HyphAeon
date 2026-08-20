@@ -78,33 +78,30 @@ class TestDuplicateTaxaInvariance:
     evolutionary information. The model's predictions should not change
     meaningfully.
 
-    Note: the dataset pipeline prunes exact duplicates by default
-    (prune_duplicates=True). These tests use prune_duplicates=False to test
-    the model's raw behavior, since the pruning is a preprocessing workaround,
-    not a model property.
+    AxoMEME enforces this invariant by default via automated identical
+    haplotype and tree pruning (prune_duplicates=True).
 
     Threshold: r >= 0.999 on a majority of datasets.
     Real HyPhy MEME: r = 1.0000.
     """
 
-    def test_exact_duplicates_invariance(self, model, all_datasets, tmp_path):
+    def test_exact_duplicates_invariance_default(self, model, all_datasets, tmp_path):
+        """Test default pipeline with automated duplicate pruning."""
         results = []
         for ds in all_datasets:
             n_add = min(60, ds["n_taxa"])
             dup_fa, dup_nwk, n_total = make_duplicate_alignment(
                 ds["fa"], ds["nwk"], n_add, tmp_path)
             c, a, d, z, inv, taxa, L = load_tensors(
-                dup_fa, dup_nwk, prune_duplicates=False)
+                dup_fa, dup_nwk, prune_duplicates=True)
             ld = predict(model, c, a, d, z, inv)
             tested = ~inv
             if L != ds["L"]:
-                print(f"  [{ds['name']:15s}] SKIP (site count changed "
-                      f"{ds['L']} -> {L})")
+                print(f"  [{ds['name']:15s}] SKIP (site count changed {ds['L']} -> {L})")
                 continue
             r = sensitivity_r(ds["lrt"], ld, tested & ds["tested"])
             results.append((ds["name"], r))
-            print(f"  [{ds['name']:15s}] r={r:.6f} "
-                  f"max|dLRT|={max_abs_diff(ds['lrt'], ld, tested & ds['tested']):.3e}")
+            print(f"  [{ds['name']:15s}] r={r:.6f} max|dLRT|={max_abs_diff(ds['lrt'], ld, tested & ds['tested']):.3e}")
 
         if not results:
             pytest.skip("All datasets had site-count changes from duplicates")

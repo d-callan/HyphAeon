@@ -27,7 +27,7 @@ import pytest
 
 from conftest import EXPECTED_DIR
 
-EXPECTED_COLUMNS = ["site", "axomeme_lrt", "p_value", "is_invariable"]
+EXPECTED_COLUMNS = ["site", "axomeme_lrt", "p_value", "q_value", "is_invariable"]
 
 
 def run_cli(fasta, tree, weights, csv_out, cpu=True):
