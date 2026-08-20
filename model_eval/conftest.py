@@ -28,10 +28,11 @@ EXAMPLES_DIR = REPO_ROOT / "examples"
 ARTIFACTS_DIR = Path(__file__).resolve().parent / "_artifacts"
 ARTIFACTS_DIR.mkdir(exist_ok=True)
 
-# Mirror the CLI's weight resolution: AXOMEME_WEIGHTS env var, then the
-# repo-local weights/axomeme_v1.pt. If a Hugging Face weights module is added
-# in the future, it can be inserted here.
-_REPO_WEIGHTS = REPO_ROOT / "weights" / "axomeme_v1.pt"
+# Weight resolution: use axomeme.weights module (Hugging Face download by
+# default, AXOMEME_WEIGHTS env var for local .pt/.safetensors files).
+# This mirrors the CLI's behavior: CI downloads from HF; local devs can
+# point at a working checkpoint while iterating before pushing to HF.
+from axomeme.weights import resolve_weights_path, load_weights, load_model_config
 
 
 # ---------------------------------------------------------------------------
@@ -39,16 +40,23 @@ _REPO_WEIGHTS = REPO_ROOT / "weights" / "axomeme_v1.pt"
 # ---------------------------------------------------------------------------
 
 def _resolve_weights():
-    """Return (path, source_label) or None if weights are unavailable."""
+    """Return (path, source_label) or None if weights are unavailable.
+
+    Resolution order (matches CLI):
+    1. AXOMEME_WEIGHTS env var → local file (if it exists)
+    2. Default variant from Hugging Face (downloads + caches on first use)
+    """
     explicit = os.environ.get("AXOMEME_WEIGHTS")
     if explicit and os.path.exists(explicit):
         return explicit, f"AXOMEME_WEIGHTS={explicit}"
-    if _REPO_WEIGHTS.exists():
-        return str(_REPO_WEIGHTS), f"repo weights ({_REPO_WEIGHTS})"
-    return None, (
-        "weights unavailable: set AXOMEME_WEIGHTS to a .pt checkpoint, "
-        f"or place weights at {_REPO_WEIGHTS}"
-    )
+    try:
+        path = resolve_weights_path(weights=None)
+        return path, f"Hugging Face (cached at {path})"
+    except Exception as e:
+        return None, (
+            f"weights unavailable: {e}. Set AXOMEME_WEIGHTS to a local "
+            f".pt/.safetensors checkpoint, or set HF_TOKEN for Hugging Face download."
+        )
 
 
 _WEIGHTS_PATH, _WEIGHTS_SOURCE = _resolve_weights()
@@ -57,28 +65,41 @@ WEIGHTS_AVAILABLE = _WEIGHTS_PATH is not None
 
 
 def _load_model_from(path):
-    """Load a checkpoint and return an eval-mode PhyloAxialTransformer."""
-    if path.endswith(".safetensors"):
-        from safetensors.torch import load_file
-        state_dict = load_file(path)
-        # safetensors has no embedded config; use architecture defaults.
-        # If a config mechanism is added later, load it here.
-        args = {"embed_dim": 384, "num_layers": 6, "num_heads": 12, "window_size": 1}
-    else:
+    """Load a checkpoint and return an eval-mode PhyloAxialTransformer.
+
+    Uses axomeme.weights.load_weights for state_dict extraction (handles
+    both .pt and .safetensors). For .pt files with embedded args, reads
+    architecture config from the checkpoint. For .safetensors, fetches
+    config from Hugging Face.
+    """
+    if path.endswith(".pt"):
         ck = torch.load(path, map_location="cpu", weights_only=False)
         a = ck.get("args", {}) if isinstance(ck, dict) else {}
-        state_dict = ck["model_state_dict"] if isinstance(ck, dict) and "model_state_dict" in ck else ck
-        args = {
+        config = {
             "embed_dim": a.get("embed_dim", 384),
             "num_layers": a.get("layers", 6),
             "num_heads": a.get("heads", 12),
             "window_size": a.get("window_size", 1),
         }
+    else:
+        # .safetensors: fetch config from HF, fall back to defaults
+        try:
+            cfg = load_model_config()
+            config = {
+                "embed_dim": cfg.get("embed_dim", 384),
+                "num_layers": cfg.get("num_layers", cfg.get("layers", 6)),
+                "num_heads": cfg.get("num_heads", cfg.get("heads", 12)),
+                "window_size": cfg.get("window_size", 1),
+            }
+        except Exception:
+            config = {"embed_dim": 384, "num_layers": 6, "num_heads": 12, "window_size": 1}
+
+    state_dict = load_weights(weights=path, map_location="cpu")
     m = PhyloAxialTransformer(
-        embed_dim=args["embed_dim"],
-        num_layers=args["num_layers"],
-        num_heads=args["num_heads"],
-        window_size=args["window_size"],
+        embed_dim=config["embed_dim"],
+        num_layers=config["num_layers"],
+        num_heads=config["num_heads"],
+        window_size=config["window_size"],
     )
     m.load_state_dict(state_dict)
     m.eval()
