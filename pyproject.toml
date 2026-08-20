@@ -28,6 +28,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+# model_eval/ additionally needs scikit-learn (concordance metrics) and two
+# external (non-pip) binaries: hyphy>=2.5.40 and seq-gen. See
+# model_eval/README.md for the exact versions the MEME result cache was
+# built with.
+model_eval = ["pytest>=7.0", "scikit-learn>=1.0"]
 
 [project.scripts]
 axomeme = "axomeme.cli:main"
