@@ -348,11 +348,12 @@ def extract_epistatic_sectors(
     lrts: np.ndarray,
     consensus_aas: List[str],
     min_clique_size: int = 3,
-    max_sectors: int = 15
+    max_sectors: int = 15,
+    max_overlap: float = 0.50
 ) -> List[Dict[str, Any]]:
     """
-    Extracts densely connected epistatic sectors from the co-selection graph
-    using maximal clique decomposition and spectral coherence evaluation.
+    Extracts distinct, non-redundant epistatic sectors from the co-selection graph
+    using maximal clique decomposition, Jaccard overlap suppression, and spectral coherence.
     """
     if G.number_of_nodes() == 0 or G.number_of_edges() == 0:
         return []
@@ -362,16 +363,23 @@ def extract_epistatic_sectors(
     cliques.sort(key=lambda c: len(c), reverse=True)
     
     sectors = []
-    seen_sets = set()
     
     for clq in cliques:
         if len(sectors) >= max_sectors:
             break
         clq_sorted = sorted(clq)
-        clq_key = tuple(clq_sorted)
-        if clq_key in seen_sets:
+        clq_set = set(clq_sorted)
+        
+        # Jaccard Overlap Suppression: filter redundant permutations of already discovered sectors
+        is_redundant = False
+        for sec in sectors:
+            sec_set = set(sec["sites"])
+            jaccard = len(clq_set & sec_set) / max(1, len(clq_set | sec_set))
+            if jaccard > max_overlap:
+                is_redundant = True
+                break
+        if is_redundant:
             continue
-        seen_sets.add(clq_key)
         
         site_0based = [s - 1 for s in clq_sorted]
         sub_B = branch_attributions[site_0based, :] # [k, M]
@@ -416,6 +424,7 @@ def run_epistasis_analysis(
     max_fdr: float = 0.05,
     min_lrt: float = 1.0,
     min_clique_size: int = 3,
+    max_overlap: float = 0.50,
     run_dms: bool = True,
     cpu: bool = False
 ) -> Dict[str, Any]:
@@ -467,7 +476,7 @@ def run_epistasis_analysis(
     
     # 5. Extract Epistatic Sectors
     sectors = extract_epistatic_sectors(
-        G, branch_attr, lrts, cons_aas, min_clique_size=min_clique_size
+        G, branch_attr, lrts, cons_aas, min_clique_size=min_clique_size, max_overlap=max_overlap
     )
     
     # 6. Optional In Silico Selection DMS (ESSM)

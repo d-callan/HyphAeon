@@ -273,11 +273,12 @@ def cmd_epistasis(args):
             tree_path=args.tree,
             weights_path=getattr(args, "weights", DEFAULT_WEIGHTS),
             focal_taxon=getattr(args, "focal_taxon", None),
-            min_sim=args.min_sim,
+            min_sim=getattr(args, "min_sim", 0.30),
             min_shared=getattr(args, "min_shared", 2),
             max_fdr=getattr(args, "max_fdr", 0.05),
             min_lrt=getattr(args, "min_lrt", 1.0),
-            min_clique_size=args.min_clique_size,
+            min_clique_size=getattr(args, "min_clique_size", 3),
+            max_overlap=getattr(args, "max_overlap", 0.50),
             run_dms=not getattr(args, "no_dms", False),
             cpu=getattr(args, "cpu", False)
         )
@@ -295,7 +296,8 @@ def cmd_epistasis(args):
     print("\n" + "=" * 82)
     print(f"🎉 Epistatic Analysis Complete in {elapsed:.3f} seconds!")
     print(f"   Taxa: {res['taxa_count']} | Codons: {res['codon_count']} | Evaluated Branches: {res['branch_count']}")
-    print(f"   Co-Selection Edges (FDR q <= {args.max_fdr}): {res['coevolution_edges_count']} | Discovered Sectors: {res['sectors_discovered']}")
+    max_fdr = getattr(args, "max_fdr", 0.05)
+    print(f"   Co-Selection Edges (FDR q <= {max_fdr}): {res['coevolution_edges_count']} | Discovered Sectors: {res['sectors_discovered']}")
     print("=" * 82)
     
     # 1. Top Co-Selection Pairs
@@ -332,15 +334,17 @@ def cmd_epistasis(args):
         for _, r in top_rigid.iterrows():
             print(f"    • Site {int(r['site']):<4d} ({r['wt_aa']}): Plasticity = {r['intrinsic_plasticity']:.3f} | Baseline LRT = {r['baseline_lrt']:.2f} (p = {r['p_value']:.3e})")
 
-    if args.output:
+    if getattr(args, "output", None):
         ensure_parent_directory(args.output)
         with open(args.output, "w") as f:
             json.dump(res, f, indent=2)
         print(f"\n[✓] JSON results written to: {args.output}")
 
-    if args.csv:
+    if getattr(args, "csv", None):
         ensure_parent_directory(args.csv)
-        if edges:
+        if getattr(args, "command", "") in ["dms", "essm", "digital-dms"] and plasticity:
+            df_out = pd.DataFrame(plasticity)
+        elif edges:
             df_out = pd.DataFrame(edges)
         elif plasticity:
             df_out = pd.DataFrame(plasticity)
@@ -349,7 +353,7 @@ def cmd_epistasis(args):
         df_out.to_csv(args.csv, index=False)
         print(f"[✓] CSV results written to: {args.csv}")
 
-    if args.graphml:
+    if getattr(args, "graphml", None):
         ensure_parent_directory(args.graphml)
         G = nx.Graph()
         for e in edges:
@@ -399,8 +403,8 @@ def main():
     pheno_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     pheno_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
 
-    # 3. Epistasis Subcommand (ESSM / Branch Co-Selection / Sectors)
-    epi_parser = subparsers.add_parser("epistasis", aliases=["essm", "coselection", "sector"], help="Run phylogenetic branch co-selection, Selection DMS (ESSM), and epistatic sector mining")
+    # 3. Epistasis Subcommand (Branch Co-Selection & Sectors)
+    epi_parser = subparsers.add_parser("epistasis", aliases=["coselection", "sector", "network"], help="Run phylogenetic branch co-selection and epistatic sector mining")
     epi_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
     epi_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded)")
     epi_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS, help="Path to pretrained model checkpoint")
@@ -410,18 +414,31 @@ def main():
     epi_parser.add_argument("--max-fdr", type=float, default=0.05, help="Benjamini-Hochberg FDR q-value threshold")
     epi_parser.add_argument("--min-lrt", type=float, default=1.0, help="Minimum site selection drive (LRT threshold)")
     epi_parser.add_argument("--min-clique-size", type=int, default=3, help="Minimum clique seed size for epistatic sectors")
+    epi_parser.add_argument("--max-overlap", type=float, default=0.50, help="Maximum Jaccard overlap allowed between discovered sectors")
     epi_parser.add_argument("--no-dms", action="store_true", help="Skip 19-amino-acid in silico Selection DMS sweep")
     epi_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
     epi_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     epi_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
     epi_parser.add_argument("--graphml", help="Export co-selection network to GraphML for Cytoscape/Gephi")
 
+    # 4. Digital DMS / ESSM Subcommand
+    dms_parser = subparsers.add_parser("dms", aliases=["essm", "digital-dms"], help="Run in silico Selection Deep Mutational Scanning (Digital DMS / ESSM)")
+    dms_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
+    dms_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded)")
+    dms_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS, help="Path to pretrained model checkpoint")
+    dms_parser.add_argument("--focal-taxon", help="Focal taxon for in silico Selection DMS sweep (default: auto/consensus)")
+    dms_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
+    dms_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
+    dms_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
+
     args = parser.parse_args()
     if args.command == "predict":
         cmd_predict(args)
     elif args.command in ["phenotype", "phylowas", "trait"]:
         cmd_phenotype(args)
-    elif args.command in ["epistasis", "essm", "coselection", "sector"]:
+    elif args.command in ["epistasis", "coselection", "sector", "network"]:
+        cmd_epistasis(args)
+    elif args.command in ["dms", "essm", "digital-dms"]:
         cmd_epistasis(args)
     else:
         parser.print_help()
