@@ -258,39 +258,79 @@ def cmd_phenotype(args):
         print(f"[✓] CSV results written to: {args.csv}")
 
 def cmd_epistasis(args):
-    print(f"[*] Executing Multi-Scale Epistatic Sector Mining (ESSM / TSE)...")
+    print(f"[*] Executing Phylogenetic Branch Attribution, Co-Selection Networks & Selection DMS (ESSM)...")
     print(f"[*] Alignment: {args.alignment}")
+    if args.tree:
+        print(f"[*] Tree:      {args.tree}")
+    else:
+        print(f"[*] Tree:      (extracting from alignment)")
     
     t0 = time.time()
     try:
-        res = run_epistatic_sector_mining(
+        from .epistasis import run_epistasis_analysis
+        res = run_epistasis_analysis(
             alignment_path=args.alignment,
             tree_path=args.tree,
-            min_clique_size=args.min_clique_size,
+            weights_path=getattr(args, "weights", DEFAULT_WEIGHTS),
+            focal_taxon=getattr(args, "focal_taxon", None),
             min_sim=args.min_sim,
-            max_p_pair=args.max_p_pair,
-            min_mutations=args.min_mutations,
-            max_sectors=args.max_sectors
+            min_shared=getattr(args, "min_shared", 2),
+            max_fdr=getattr(args, "max_fdr", 0.05),
+            min_lrt=getattr(args, "min_lrt", 1.0),
+            min_clique_size=args.min_clique_size,
+            run_dms=not getattr(args, "no_dms", False),
+            cpu=getattr(args, "cpu", False)
         )
     except Exception as e:
         print(f"\n[!] Epistasis / ESSM Error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
     elapsed = time.time() - t0
+    edges = res["edges"]
     sectors = res["sectors"]
+    plasticity = res["plasticity"]
     
-    print("\n" + "=" * 80)
-    print(f"🎉 Epistatic Sector Mining Complete in {elapsed:.3f} seconds!")
-    print(f"   Taxa: {res['taxa_count']} | Codons: {res['codon_count']} | Polymorphic Sites: {res['active_sites_count']}")
-    print(f"   Co-Selection Edges: {res['coevolution_edges_count']} | Discovered Sectors: {res['sectors_discovered']}")
-    print("=" * 80)
+    print("\n" + "=" * 82)
+    print(f"🎉 Epistatic Analysis Complete in {elapsed:.3f} seconds!")
+    print(f"   Taxa: {res['taxa_count']} | Codons: {res['codon_count']} | Evaluated Branches: {res['branch_count']}")
+    print(f"   Co-Selection Edges (FDR q <= {args.max_fdr}): {res['coevolution_edges_count']} | Discovered Sectors: {res['sectors_discovered']}")
+    print("=" * 82)
     
+    # 1. Top Co-Selection Pairs
+    if edges:
+        print("\nTop Phylogenetic Branch Co-Selection Pairs (Ranked by CESI):")
+        print(f"{'Rank':<5} {'Residue Pair':<16} {'LRT 1/2':<12} {'Co-Sel':<9} {'Shared':<8} {'CESI':<10} {'FDR q-val':<12}")
+        print("-" * 76)
+        for idx, e in enumerate(edges[:12]):
+            pair_str = f"{e['ref_u']}{e['site_u']} <-> {e['ref_v']}{e['site_v']}"
+            lrt_str = f"{e['lrt_u']:.1f} / {e['lrt_v']:.1f}"
+            q_str = f"{e['fdr_q']:.2e}" if e['fdr_q'] < 0.01 else f"{e['fdr_q']:.3f}"
+            print(f"#{idx+1:<4d} {pair_str:<16s} {lrt_str:<12s} {e['similarity']:<9.4f} {e['shared_branches']:<8d} {e['cesi']:<10.3f} {q_str:<12s}")
+
+    # 2. Epistatic Sectors
     if sectors:
-        print("\nDiscovered Cooperative Epistatic Sectors (TSE Algorithm 1):")
-        for sec in sectors[:10]:
+        print("\nDiscovered Epistatic Sectors (Two-Stage Seed-and-Extend):")
+        for sec in sectors[:8]:
             print(f"\nSector #{sec['sector_id']} (Size K = {sec['size']} residues): Sites {sec['sites']}")
-            print(f"  • Spectral Coherence C(S): {sec['coherence']:.4f} | Multi-way Joint p: {sec['multi_way_p_value']:.2e} | Shared Taxa: {sec['simultaneous_taxa']}")
-            print(f"  • PARS Signature: {sec['pars_signature']}")
+            print(f"  • Spectral Coherence C(S): {sec['spectral_coherence']:.4f} | Mean LRT: {sec['mean_lrt']:.2f} | Shared Branches: {sec['shared_branches']}")
+            print(f"  • Signature: {sec['pars_signature']}")
+
+    # 3. Selection DMS Mutational Plasticity
+    if plasticity:
+        df_plas = pd.DataFrame(plasticity)
+        top_plastic = df_plas.sort_values(by="intrinsic_plasticity", ascending=False).head(5)
+        top_rigid = df_plas.sort_values(by="intrinsic_plasticity", ascending=True).head(5)
+        
+        print("\nSelection Deep Mutational Scanning (ESSM Intrinsic Plasticity):")
+        print("  Top Permissive / Evolvable Sites (High Plasticity):")
+        for _, r in top_plastic.iterrows():
+            print(f"    • Site {int(r['site']):<4d} ({r['wt_aa']}): Plasticity = {r['intrinsic_plasticity']:.3f} | Baseline LRT = {r['baseline_lrt']:.2f} (p = {r['p_value']:.3e})")
+            
+        print("  Top Rigid / Catalytic Backbone Sites (Low Plasticity):")
+        for _, r in top_rigid.iterrows():
+            print(f"    • Site {int(r['site']):<4d} ({r['wt_aa']}): Plasticity = {r['intrinsic_plasticity']:.3f} | Baseline LRT = {r['baseline_lrt']:.2f} (p = {r['p_value']:.3e})")
 
     if args.output:
         ensure_parent_directory(args.output)
@@ -300,16 +340,20 @@ def cmd_epistasis(args):
 
     if args.csv:
         ensure_parent_directory(args.csv)
-        df_sec = pd.DataFrame(sectors)
-        df_sec.to_csv(args.csv, index=False)
-        print(f"[✓] Sector CSV results written to: {args.csv}")
+        if edges:
+            df_out = pd.DataFrame(edges)
+        elif plasticity:
+            df_out = pd.DataFrame(plasticity)
+        else:
+            df_out = pd.DataFrame(sectors)
+        df_out.to_csv(args.csv, index=False)
+        print(f"[✓] CSV results written to: {args.csv}")
 
     if args.graphml:
         ensure_parent_directory(args.graphml)
-        import networkx as nx
         G = nx.Graph()
-        for e in res["edges"]:
-            G.add_edge(e["site_u"], e["site_v"], weight=e["similarity"], p_value=e["p_value"], shared=e["shared_taxa"])
+        for e in edges:
+            G.add_edge(e["site_u"], e["site_v"], weight=e["similarity"], cesi=e["cesi"], shared=e["shared_branches"], fdr_q=e["fdr_q"])
         nx.write_graphml(G, args.graphml)
         print(f"[✓] Co-selection network GraphML written to: {args.graphml}")
 
@@ -348,15 +392,19 @@ def main():
     pheno_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     pheno_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
 
-    # 3. Epistasis Subcommand (ESSM / TSE)
-    epi_parser = subparsers.add_parser("epistasis", aliases=["essm", "coselection", "sector"], help="Run multi-scale epistatic sector mining (Two-Stage Seed-and-Extend)")
+    # 3. Epistasis Subcommand (ESSM / Branch Co-Selection / Sectors)
+    epi_parser = subparsers.add_parser("epistasis", aliases=["essm", "coselection", "sector"], help="Run phylogenetic branch co-selection, Selection DMS (ESSM), and epistatic sector mining")
     epi_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
-    epi_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree")
+    epi_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded)")
+    epi_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS, help="Path to pretrained model checkpoint")
+    epi_parser.add_argument("--focal-taxon", help="Focal taxon for in silico Selection DMS sweep (default: auto/consensus)")
+    epi_parser.add_argument("--min-sim", type=float, default=0.30, help="Pairwise cosine similarity threshold for co-selection edges")
+    epi_parser.add_argument("--min-shared", type=int, default=2, help="Minimum shared mutated phylogenetic branches")
+    epi_parser.add_argument("--max-fdr", type=float, default=0.05, help="Benjamini-Hochberg FDR q-value threshold")
+    epi_parser.add_argument("--min-lrt", type=float, default=1.0, help="Minimum site selection drive (LRT threshold)")
     epi_parser.add_argument("--min-clique-size", type=int, default=3, help="Minimum clique seed size for epistatic sectors")
-    epi_parser.add_argument("--min-sim", type=float, default=0.50, help="Pairwise cosine similarity threshold for co-selection edges")
-    epi_parser.add_argument("--max-p-pair", type=float, default=0.05, help="Pairwise Poisson/hypergeometric p-value threshold")
-    epi_parser.add_argument("--min-mutations", type=int, default=2, help="Minimum mutations required per active site")
-    epi_parser.add_argument("--max-sectors", type=int, default=15, help="Maximum number of epistatic sectors to extract")
+    epi_parser.add_argument("--no-dms", action="store_true", help="Skip 19-amino-acid in silico Selection DMS sweep")
+    epi_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
     epi_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     epi_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
     epi_parser.add_argument("--graphml", help="Export co-selection network to GraphML for Cytoscape/Gephi")

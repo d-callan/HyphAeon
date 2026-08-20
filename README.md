@@ -47,10 +47,16 @@ axomeme phenotype -a msa/GHR.gz -pf metadata/mammalian_traits.tsv --trait-col Ad
 # - echolocation, marine, fossorial, hibernation, longevity, high_altitude, cardenolide, dim_light
 ```
 
-### 3. Epistatic Sector Mining (`epistasis` / `essm`)
+### 3. Inter-Site Epistasis, Branch Co-Selection & Selection DMS (`epistasis` / `essm`)
 ```bash
-# Mine cooperative allosteric sectors and co-evolutionary networks
-axomeme epistasis -a msa/SLC26A5.gz --min-clique-size 3 --min-sim 0.50 --graphml network.graphml
+# Mine phylogenetic branch co-selection networks, Selection DMS (ESSM), and epistatic sectors
+axomeme epistasis -a examples/bat_oas1.fasta -t examples/bat_oas1.nwk -o epistasis.json -c epistasis.csv --graphml coselection.graphml
+
+# High-depth filtering with custom FDR cutoff
+axomeme epistasis -a examples/Smc6.fasta -t examples/Smc6.nwk --min-shared 3 --min-sim 0.40 --max-fdr 0.01
+
+# Fast co-selection graph extraction without full DMS sweep
+axomeme epistasis -a examples/Smc6.fasta -t examples/Smc6.nwk --no-dms
 ```
 
 ---
