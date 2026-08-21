@@ -25,7 +25,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from conftest import EXPECTED_DIR
+EXAMPLES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "examples")
+EXPECTED_DIR = os.path.join(EXAMPLES_DIR, "expected_results")
 
 EXPECTED_COLUMNS = ["site", "axomeme_lrt", "p_value", "q_value", "is_invariable"]
 

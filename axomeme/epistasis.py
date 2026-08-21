@@ -171,54 +171,64 @@ def compute_branch_coselection_network(
     for s in range(L):
         G.add_node(s + 1, ref=consensus_aas[s], lrt=float(lrts[s]))
         
-    # Evaluate all pairs among active sites
-    for i_idx, s1 in enumerate(active_sites):
-        b1 = branch_attributions[s1, :]
-        norm1 = np.linalg.norm(b1)
-        if norm1 == 0:
-            continue
-        k1 = int(np.sum(b1 > 0))
+    # Vectorized computation of pairwise dot products and shared branch intersections
+    norms = np.linalg.norm(branch_attributions, axis=1)  # [L]
+    k_counts = np.sum(branch_attributions > 0, axis=1)   # [L]
+    
+    active_mask = (norms > 0)
+    valid_sites = np.where(active_mask)[0]
+    if len(valid_sites) < 2:
+        return [], G
         
-        for s2 in active_sites[i_idx + 1:]:
-            b2 = branch_attributions[s2, :]
-            norm2 = np.linalg.norm(b2)
-            if norm2 == 0:
-                continue
-            k2 = int(np.sum(b2 > 0))
-            
-            shared = int(np.sum((b1 > 0) & (b2 > 0)))
-            if shared < min_shared:
-                continue
-                
-            sim = float((b1 @ b2) / (norm1 * norm2))
-            if sim < min_sim:
-                continue
-                
-            # Selection Gate: at least one site should exhibit non-neutral evolutionary drive
-            if max(lrts[s1], lrts[s2]) < min_lrt:
-                continue
-                
-            # Exact Tree Hypergeometric Null Distribution: hypergeom.sf(x - 1, M, K_i, K_j)
-            p_hyper = float(stats.hypergeom.sf(shared - 1, M, k1, k2))
-            
-            # Composite Epistatic Selection Index (CESI)
-            cesi = sim * math.sqrt(max(float(lrts[s1]), 0.1) * max(float(lrts[s2]), 0.1)) * math.log10(1.0 + shared)
-            
-            candidate_pairs.append({
-                "site_u": s1 + 1,
-                "site_v": s2 + 1,
-                "ref_u": consensus_aas[s1],
-                "ref_v": consensus_aas[s2],
-                "lrt_u": float(lrts[s1]),
-                "lrt_v": float(lrts[s2]),
-                "similarity": sim,
-                "shared_branches": shared,
-                "branches_u": k1,
-                "branches_v": k2,
-                "cesi": float(cesi),
-                "p_hyper": p_hyper
-            })
-            
+    B_active = branch_attributions[valid_sites]  # [V, M]
+    B_bin = (B_active > 0).astype(np.float32)    # [V, M]
+    norms_active = norms[valid_sites]            # [V]
+    k_active = k_counts[valid_sites]             # [V]
+    
+    dot_matrix = B_active @ B_active.T           # [V, V]
+    shared_matrix = B_bin @ B_bin.T              # [V, V]
+    norm_outer = np.outer(norms_active, norms_active)
+    sim_matrix = dot_matrix / np.maximum(norm_outer, 1e-9)
+    
+    tri_i, tri_j = np.triu_indices(len(valid_sites), k=1)
+    shared_arr = shared_matrix[tri_i, tri_j]
+    sim_arr = sim_matrix[tri_i, tri_j]
+    s1_arr = valid_sites[tri_i]
+    s2_arr = valid_sites[tri_j]
+    
+    lrt_s1 = lrts[s1_arr]
+    lrt_s2 = lrts[s2_arr]
+    max_lrt_arr = np.maximum(lrt_s1, lrt_s2)
+    
+    pass_filter = (shared_arr >= min_shared) & (sim_arr >= min_sim) & (max_lrt_arr >= min_lrt)
+    pass_indices = np.where(pass_filter)[0]
+    
+    for idx in pass_indices:
+        s1 = int(s1_arr[idx])
+        s2 = int(s2_arr[idx])
+        shared = int(shared_arr[idx])
+        sim = float(sim_arr[idx])
+        k1 = int(k_active[tri_i[idx]])
+        k2 = int(k_active[tri_j[idx]])
+        
+        p_hyper = float(stats.hypergeom.sf(shared - 1, M, k1, k2))
+        cesi = sim * math.sqrt(max(float(lrts[s1]), 0.1) * max(float(lrts[s2]), 0.1)) * math.log10(1.0 + shared)
+        
+        candidate_pairs.append({
+            "site_u": s1 + 1,
+            "site_v": s2 + 1,
+            "ref_u": consensus_aas[s1],
+            "ref_v": consensus_aas[s2],
+            "lrt_u": float(lrts[s1]),
+            "lrt_v": float(lrts[s2]),
+            "similarity": sim,
+            "shared_branches": shared,
+            "branches_u": k1,
+            "branches_v": k2,
+            "cesi": float(cesi),
+            "p_hyper": p_hyper
+        })
+        
     if not candidate_pairs:
         return [], G
         
@@ -286,7 +296,7 @@ def compute_selection_dms_essm(
             c_chunk = c_tensor[start_idx:end_idx].to(device)
             a_chunk = a_tensor[start_idx:end_idx].to(device)
             y_soft, _ = model.forward_cached(c_chunk, a_chunk, tree_cache)
-            baseline_lrts[start_idx:end_idx] = torch.clamp(y_soft, min=0.0).cpu().numpy().flatten()
+            baseline_lrts[start_idx:end_idx] = torch.clamp(y_soft.squeeze(-1), min=0.0).cpu().numpy().flatten()
             
     # 2. Epistatic Sensitivity Matrix E [len(target_sites), L]
     n_targets = len(target_sites)
@@ -295,49 +305,63 @@ def compute_selection_dms_essm(
     
     standard_aas = list(CANONICAL_AA_TO_CODON.keys())
     
+    # Batch site perturbations in chunks for maximum GPU acceleration
+    chunk_sites_num = max(1, batch_size // 19)
     with torch.no_grad():
-        for t_idx, site in enumerate(target_sites):
-            orig_c = int(c_tensor[site, focal_taxon_idx, 0])
-            orig_a = int(a_tensor[site, focal_taxon_idx, 0])
-            wt_aa = REV_AA_MAP.get(orig_a, 'A')
+        for chunk_start in range(0, n_targets, chunk_sites_num):
+            chunk_target_sites = target_sites[chunk_start:chunk_start + chunk_sites_num]
             
-            alt_aas = [aa for aa in standard_aas if aa != wt_aa]
-            n_alts = len(alt_aas)
+            c_batch_list = []
+            a_batch_list = []
+            meta_list = []
             
-            # Prepare batch of 19 perturbed single-site columns
-            c_batch = c_tensor[site:site+1].repeat(n_alts, 1, 1).clone()
-            a_batch = a_tensor[site:site+1].repeat(n_alts, 1, 1).clone()
-            
-            for m_idx, alt_aa in enumerate(alt_aas):
-                alt_codon = CANONICAL_AA_TO_CODON[alt_aa]
-                c_batch[m_idx, focal_taxon_idx, 0] = get_codon_token(alt_codon)
-                a_batch[m_idx, focal_taxon_idx, 0] = get_aa_token(alt_codon)
+            for site in chunk_target_sites:
+                orig_c = int(c_tensor[site, focal_taxon_idx, 0])
+                orig_a = int(a_tensor[site, focal_taxon_idx, 0])
+                wt_aa = REV_AA_MAP.get(orig_a, 'A')
+                alt_aas = [aa for aa in standard_aas if aa != wt_aa]
                 
-            c_batch = c_batch.to(device)
-            a_batch = a_batch.to(device)
+                c_site = c_tensor[site:site+1].repeat(len(alt_aas), 1, 1).clone()
+                a_site = a_tensor[site:site+1].repeat(len(alt_aas), 1, 1).clone()
+                
+                for m_idx, alt_aa in enumerate(alt_aas):
+                    alt_codon = CANONICAL_AA_TO_CODON[alt_aa]
+                    c_site[m_idx, focal_taxon_idx, 0] = get_codon_token(alt_codon)
+                    a_site[m_idx, focal_taxon_idx, 0] = get_aa_token(alt_codon)
+                    
+                c_batch_list.append(c_site)
+                a_batch_list.append(a_site)
+                meta_list.append((site, wt_aa, len(alt_aas)))
+                
+            c_batch = torch.cat(c_batch_list, dim=0).to(device)
+            a_batch = torch.cat(a_batch_list, dim=0).to(device)
             
             y_soft_pert, _ = model.forward_cached(c_batch, a_batch, tree_cache)
-            pert_lrts = torch.clamp(y_soft_pert, min=0.0).cpu().numpy().flatten()
+            all_pert_lrts = torch.clamp(y_soft_pert.squeeze(-1), min=0.0).cpu().numpy().flatten()
             
-            # Self-shift Delta LRT at position i
-            self_shifts = np.abs(pert_lrts - baseline_lrts[site])
-            intrinsic_plasticity = float(np.mean(self_shifts))
-            max_self_shift = float(np.max(self_shifts))
-            
-            # Record in diagonal of ESSM
-            E_matrix[t_idx, site] = intrinsic_plasticity
-            
-            p_val = float(0.5 * stats.chi2.sf(baseline_lrts[site], df=1)) if baseline_lrts[site] > 0 else 1.0
-            
-            plasticity_records.append({
-                "site": site + 1,
-                "wt_aa": wt_aa,
-                "focal_taxon": taxa[focal_taxon_idx],
-                "baseline_lrt": float(baseline_lrts[site]),
-                "p_value": p_val,
-                "intrinsic_plasticity": intrinsic_plasticity,
-                "max_shift": max_self_shift
-            })
+            offset = 0
+            for s_idx, (site, wt_aa, n_alts) in enumerate(meta_list):
+                pert_lrts = all_pert_lrts[offset:offset + n_alts]
+                offset += n_alts
+                
+                self_shifts = np.abs(pert_lrts - baseline_lrts[site])
+                intrinsic_plasticity = float(np.mean(self_shifts))
+                max_self_shift = float(np.max(self_shifts))
+                
+                t_idx = chunk_start + s_idx
+                E_matrix[t_idx, site] = intrinsic_plasticity
+                
+                p_val = float(0.5 * stats.chi2.sf(baseline_lrts[site], df=1)) if baseline_lrts[site] > 0 else 1.0
+                
+                plasticity_records.append({
+                    "site": site + 1,
+                    "wt_aa": wt_aa,
+                    "focal_taxon": taxa[focal_taxon_idx],
+                    "baseline_lrt": float(baseline_lrts[site]),
+                    "p_value": p_val,
+                    "intrinsic_plasticity": intrinsic_plasticity,
+                    "max_shift": max_self_shift
+                })
             
     df_plasticity = pd.DataFrame(plasticity_records)
     return df_plasticity, E_matrix
@@ -355,16 +379,35 @@ def extract_epistatic_sectors(
     Extracts distinct, non-redundant epistatic sectors from the co-selection graph
     using maximal clique decomposition, Jaccard overlap suppression, and spectral coherence.
     """
+    import itertools
     if G.number_of_nodes() == 0 or G.number_of_edges() == 0:
         return []
         
-    raw_cliques = list(nx.find_cliques(G))
-    cliques = [c for c in raw_cliques if len(c) >= min_clique_size]
-    cliques.sort(key=lambda c: len(c), reverse=True)
+    # Decompose dense graphs into modular communities to avoid exponential Bron-Kerbosch explosion
+    try:
+        communities = list(nx.community.greedy_modularity_communities(G))
+    except Exception:
+        communities = [set(c) for c in nx.connected_components(G)]
+        
+    candidate_cliques = []
+    for comm in communities:
+        if len(comm) < min_clique_size:
+            continue
+        subG = G.subgraph(comm)
+        for clq in itertools.islice(nx.find_cliques(subG), 500):
+            if len(clq) >= min_clique_size:
+                candidate_cliques.append(clq)
+                
+    if not candidate_cliques:
+        for clq in itertools.islice(nx.find_cliques(G), 1000):
+            if len(clq) >= min_clique_size:
+                candidate_cliques.append(clq)
+                
+    candidate_cliques.sort(key=lambda c: len(c), reverse=True)
     
     sectors = []
     
-    for clq in cliques:
+    for clq in candidate_cliques:
         if len(sectors) >= max_sectors:
             break
         clq_sorted = sorted(clq)
