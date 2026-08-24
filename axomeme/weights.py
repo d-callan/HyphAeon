@@ -163,9 +163,23 @@ def load_weights(
 
     path = resolve_weights_path(weights=weights, variant=variant)
 
+    # .safetensors format
     if path.endswith(".safetensors"):
         from safetensors.torch import load_file
-        return load_file(path, device=str(map_location))
+        raw_dict = load_file(path, device=str(map_location))
+        # If saved as a unified suite with backbone. prefix, map keys for standalone PhyloAxialTransformer
+        mapped_dict = {}
+        has_prefixed = any(k.startswith("backbone.") for k in raw_dict.keys())
+        if has_prefixed:
+            for k, v in raw_dict.items():
+                if k.startswith("backbone."):
+                    mapped_dict[k.replace("backbone.", "")] = v
+                elif k.startswith("head_meme."):
+                    mapped_dict[k.replace("head_meme.", "lrt_ordinal_head.")] = v
+                else:
+                    mapped_dict[k] = v
+            return mapped_dict
+        return raw_dict
 
     # .pt format (legacy or explicit path)
     try:

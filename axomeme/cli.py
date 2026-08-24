@@ -94,7 +94,7 @@ def cmd_predict(args):
     ).to(device)
 
     state_dict = load_weights(weights=weights_path, variant=args.model_variant, map_location=device)
-    model.load_state_dict(state_dict)
+    model.load_state_dict(state_dict, strict=False)
     model.eval()
     
     print(f"[*] Parsing Alignment: {args.alignment}")
@@ -237,7 +237,7 @@ def cmd_busted(args):
         num_layers=arch_config["num_layers"],
         num_heads=arch_config["num_heads"],
     )
-    model.load_state_dict(state_dict)
+    model.load_state_dict(state_dict, strict=False)
     model.to(device)
     model.eval()
 
