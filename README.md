@@ -44,54 +44,6 @@ pip install -e .
 
 ---
 
-## 🧠 Model Weights
-
-Weights are hosted on **Hugging Face**: https://huggingface.co/datamonkey/axomeme
-
-On first use, weights are downloaded automatically (~7 MB, ~1 second) and cached
-locally. Subsequent runs use the cached copy.
-
-### Choosing a Model Variant
-
-```bash
-# List available variants
-axomeme list-models
-
-# General model (default — trained on diverse alignments)
-axomeme predict --alignment alignment.fa --tree tree.nwk
-
-# Viral fine-tuned variant
-axomeme predict --alignment alignment.fa --tree tree.nwk --model-variant viral
-```
-
-### Using Local Weights
-
-Bypass HF download with `--weights` or `AXOMEME_WEIGHTS` (supports both `.pt`
-and `.safetensors`):
-
-```bash
-axomeme predict --alignment alignment.fa --tree tree.nwk --weights /path/to/model.pt
-axomeme predict --alignment alignment.fa --tree tree.nwk --weights /path/to/model.safetensors
-```
-
-### Environment Variables
-
-| Variable | Description | Default |
-|---|---|---|
-| `HF_TOKEN` | Hugging Face token (required while repo is gated) | — |
-| `AXOMEME_VARIANT` | Model variant to download | `general` |
-| `AXOMEME_WEIGHTS` | Path to local weights file (overrides HF download) | — |
-| `AXOMEME_CACHE` | Cache directory for downloaded weights | `~/.cache/axomeme` |
-
-See [`.env.example`](.env.example) for details.
-
-> [!NOTE]
-> While the model repo is gated, set `HF_TOKEN` to authenticate. Get a token at
-> https://huggingface.co/settings/tokens (read access is sufficient). Once the
-> repo is made public, the token will no longer be required.
-
----
-
 ## 📂 Included Benchmark Datasets
 
 All example alignments and phylogenetic trees required to reproduce these analyses are bundled directly in the `examples/` directory:
@@ -147,6 +99,37 @@ hyphaeon phenotype -a examples/RHO.fasta -fg "turTru,balMus,balPhys,orcOrc,delDe
 ```bash
 # Infer episodic selection on primate Smc6 antiviral restriction factor
 hyphaeon predict -a examples/Smc6.fasta -t examples/Smc6.nwk -o examples/Smc6_results.json -c examples/Smc6_results.csv
+```
+
+---
+
+## 🛠️ Retraining & Fine-Tuning HyphAeon
+
+### 1. Build per-gene training tensors
+
+Prepare one alignment and one official HyPhy MEME JSON result per gene. Trees may be supplied as matching Newick files or embedded in the alignments:
+
+```bash
+python scripts/build_training_npz.py \
+  --alignment_dir /path/to/training_alignments/ \
+  --tree_dir /path/to/trees/ \
+  --meme_dir /path/to/meme_results/ \
+  --output_dir /path/to/training_npz/
+```
+
+### 2. Fine-tune the foundation model
+
+```bash
+python train.py \
+  --data_dir /path/to/training_npz/ \
+  --epochs 30 \
+  --batch_size 1 \
+  --lr 3e-4 \
+  --embed_dim 384 \
+  --layers 6 \
+  --heads 12 \
+  --fp16 \
+  --output_dir /path/to/run_weights/
 ```
 
 ---
