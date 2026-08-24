@@ -341,7 +341,7 @@ class PhyloAxialTransformer(nn.Module):
             "num_species": mds_coords.shape[1]
         }
 
-    def forward_cached(self, msa_codons, msa_aas, tree_cache, padding_mask=None, return_attentions=False):
+    def forward_cached(self, msa_codons, msa_aas, tree_cache, padding_mask=None, return_attentions=False, return_hidden=False):
         """
         Fast forward pass using pre-cached static tree kernels.
         Eliminates repeated matrix exponentials and trigonometric rotations.
@@ -436,6 +436,9 @@ class PhyloAxialTransformer(nn.Module):
         logits_lrt_ordinal = self.lrt_ordinal_head(root_repr)
         y_lrt_soft, _ = decode_soft_ordinal_lrt(logits_lrt_ordinal)
 
+        if return_hidden:
+            return y_lrt_soft.view(batch_size), logits_lrt_ordinal, root_repr
+
         if return_attentions:
             all_attns = torch.stack(layer_attns, dim=0) # [num_layers, B*W, num_heads, num_species]
             mean_root_attns = all_attns.mean(dim=(0, 2)).view(batch_size, num_species) # [batch_size, num_species]
@@ -443,9 +446,9 @@ class PhyloAxialTransformer(nn.Module):
             
         return y_lrt_soft.view(batch_size), logits_lrt_ordinal
 
-    def forward(self, msa_codons, msa_aas, dist_matrix=None, mds_coords=None, padding_mask=None, tree_cache=None, return_attentions=False):
+    def forward(self, msa_codons, msa_aas, dist_matrix=None, mds_coords=None, padding_mask=None, tree_cache=None, return_attentions=False, return_hidden=False):
         if tree_cache is not None:
-            return self.forward_cached(msa_codons, msa_aas, tree_cache, padding_mask=padding_mask, return_attentions=return_attentions)
+            return self.forward_cached(msa_codons, msa_aas, tree_cache, padding_mask=padding_mask, return_attentions=return_attentions, return_hidden=return_hidden)
 
         batch_size, num_species, window_size = msa_codons.shape
         central_idx = window_size // 2
@@ -511,7 +514,91 @@ class PhyloAxialTransformer(nn.Module):
         # 16-Bin Ordinal LRT Logits directly from [ROOT] representation
         logits_lrt_ordinal = self.lrt_ordinal_head(root_repr)
         y_lrt_soft, _ = decode_soft_ordinal_lrt(logits_lrt_ordinal)
+        if return_hidden:
+            return y_lrt_soft.view(batch_size), logits_lrt_ordinal, root_repr
         return y_lrt_soft.view(batch_size), logits_lrt_ordinal
+
+
+# ==============================================================================
+# DOWNSTREAM FOUNDATION READOUT HEADS (PILLARS 4 & 5)
+# ==============================================================================
+
+class BustedMultiTaskHead(nn.Module):
+    """
+    Pillar 4: Alignment-Wide Omnibus Selection Head (BUSTED & BUSTED+S Emulation).
+    Uses Multi-Query Cross-Attention Pooling to combine site-level representations
+    into whole-gene episodic selection statistics.
+    """
+    def __init__(self, embed_dim=384, num_queries=4, num_heads=4, hidden_dim=128, dropout=0.1):
+        super().__init__()
+        self.num_queries = num_queries
+        self.embed_dim = embed_dim
+        self.queries = nn.Parameter(torch.randn(1, num_queries, embed_dim) * 0.02)
+        self.cross_attn = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
+        self.norm = nn.LayerNorm(embed_dim)
+        self.mlp_shared = nn.Sequential(
+            nn.Linear(num_queries * embed_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout)
+        )
+        self.head_sqrt_lrt = nn.Linear(hidden_dim, 1)
+        self.head_logp = nn.Linear(hidden_dim, 1)
+        self.head_cls = nn.Linear(hidden_dim, 1)
+        self.head_glob_logp = nn.Linear(hidden_dim, 1)
+        self.head_syn_var = nn.Linear(hidden_dim, 1)
+        self.head_omega = nn.Linear(hidden_dim, 3)
+        self.head_prop = nn.Linear(hidden_dim, 3)
+
+    def forward(self, x):
+        """
+        x: [B, L, D] or [1, L, D] site embeddings.
+        """
+        if x.dim() == 2:
+            x = x.unsqueeze(0)
+        B = x.shape[0]
+        q = self.queries.expand(B, -1, -1)
+        attn_out, _ = self.cross_attn(q, x, x)
+        h = self.norm(attn_out).reshape(B, -1)
+        feat = self.mlp_shared(h)
+        return {
+            "sqrt_lrt": torch.clamp(self.head_sqrt_lrt(feat), min=0.0),
+            "logp": self.head_logp(feat),
+            "cls_prob": torch.sigmoid(self.head_cls(feat)),
+            "glob_logp": self.head_glob_logp(feat),
+            "syn_var": torch.clamp(self.head_syn_var(feat), min=0.0),
+            "omega_vals": F.softplus(self.head_omega(feat)),
+            "omega_prop": torch.softmax(self.head_prop(feat), dim=-1)
+        }
+
+
+class aBSRELBranchHead(nn.Module):
+    """
+    Pillar 5: Branch-Site Episodic Selection Head (aBSREL Emulation).
+    Predicts lineage-specific selection bursts along phylogenetic branches.
+    """
+    def __init__(self, embed_dim=384, hidden_dim=128, dropout=0.1):
+        super().__init__()
+        self.norm = nn.LayerNorm(embed_dim)
+        self.mlp = nn.Sequential(
+            nn.Linear(embed_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout)
+        )
+        self.head_p_branch = nn.Linear(hidden_dim, 1)
+        self.head_omega_branch = nn.Linear(hidden_dim, 1)
+        self.head_prop_branch = nn.Linear(hidden_dim, 1)
+
+    def forward(self, h_branch):
+        """
+        h_branch: [..., embed_dim] branch transition embeddings (h_child - h_parent).
+        """
+        feat = self.mlp(self.norm(h_branch))
+        return {
+            "p_burst": torch.sigmoid(self.head_p_branch(feat)),
+            "omega_burst": F.softplus(self.head_omega_branch(feat)) + 1.0,
+            "prop_burst": torch.sigmoid(self.head_prop_branch(feat))
+        }
+
 
 
 

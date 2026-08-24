@@ -18,7 +18,7 @@ import scipy.stats as stats
 import torch
 import networkx as nx
 
-from .model import PhyloAxialTransformer
+from .model import PhyloAxialTransformer, BustedMultiTaskHead
 from .dataset import load_alignment_and_tree
 from .weights import (
     resolve_weights_path,
@@ -239,7 +239,11 @@ def cmd_busted(args):
     )
     model.load_state_dict(state_dict, strict=False)
     model.to(device)
-    model.eval()
+    busted_head = BustedMultiTaskHead(embed_dim=arch_config["embed_dim"]).to(device)
+    busted_dict = {k.replace("head_busted.", ""): v for k, v in state_dict.items() if k.startswith("head_busted.")}
+    if busted_dict:
+        busted_head.load_state_dict(busted_dict, strict=False)
+    busted_head.eval()
 
     # 2. Alignment
     prune_dups = not getattr(args, "no_prune_duplicates", False)
@@ -254,6 +258,8 @@ def cmd_busted(args):
     tree_cache = model.precompute_tree_cache(d.to(device), z.to(device))
     
     lrts = np.zeros(L, dtype=np.float32)
+    hidden_all = torch.zeros((1, L, arch_config["embed_dim"]), dtype=torch.float32)
+
     if num_variable > 0:
         with torch.no_grad():
             for start_idx in range(0, num_variable, batch_size):
@@ -261,24 +267,34 @@ def cmd_busted(args):
                 batch_site_idx = variable_indices[start_idx:end_idx]
                 c_chunk = c[batch_site_idx].to(device)
                 a_chunk = a[batch_site_idx].to(device)
-                y_soft, _ = model.forward_cached(c_chunk, a_chunk, tree_cache)
+                y_soft, _, root_repr = model.forward_cached(c_chunk, a_chunk, tree_cache, return_hidden=True)
                 chunk_lrts = torch.clamp(y_soft.squeeze(-1), min=0.0).cpu().numpy().flatten()
                 lrts[batch_site_idx] = chunk_lrts
+                hidden_all[0, batch_site_idx] = root_repr.cpu()
                 
     if device.type == 'mps':
         torch.mps.synchronize()
     elif device.type == 'cuda':
         torch.cuda.synchronize()
         
+    # 3. Neural BUSTED Head Evaluation
+    with torch.no_grad():
+        neural_out = busted_head(hidden_all.to(device))
+        pred_prob_pos = float(neural_out["cls_prob"].item())
+        pred_neural_lrt = float((neural_out["sqrt_lrt"] ** 2).item())
+        pred_syn_var = float(neural_out["syn_var"].item())
+        pred_omega = neural_out["omega_vals"].squeeze().cpu().numpy()
+        pred_prop = neural_out["omega_prop"].squeeze().cpu().numpy()
+
     elapsed = time.time() - t0
     
-    # 3. Asymptotic mixture p-values: 0.5 * delta(0) + 0.5 * chi2(1)
+    # 4. Asymptotic mixture p-values: 0.5 * delta(0) + 0.5 * chi2(1)
     pvals = np.ones(L, dtype=np.float64)
     pos_mask = lrts > 0.0
     if np.any(pos_mask):
         pvals[pos_mask] = 0.5 * stats.chi2.sf(lrts[pos_mask], df=1)
 
-    # 4. ACAT (Aggregated Cauchy Combination Test on Variable Sites)
+    # 5. ACAT (Aggregated Cauchy Combination Test on Variable Sites)
     var_p = pvals[variable_indices] if num_variable > 0 else pvals
     valid_p = np.clip(var_p, 1e-15, 1.0 - 1e-6)
     cauchy_terms = np.tan((0.5 - valid_p) * np.pi)
@@ -286,28 +302,19 @@ def cmd_busted(args):
     p_acat = float(0.5 - (np.arctan(t_acat) / np.pi))
     p_acat = max(1e-15, min(1.0, p_acat))
 
-    # 5. Simes Global Combination
+    # 6. Simes Global Combination
     sorted_p = np.sort(pvals)
     ranks = np.arange(1, L + 1)
     p_simes = float(np.min((L / ranks) * sorted_p))
     p_simes = max(1e-15, min(1.0, p_simes))
 
-    # 6. Alignment-Wide Statistics
+    # 7. Alignment-Wide Statistics
     sig_sites_05 = int(np.sum(pvals < 0.05))
     sig_sites_10 = int(np.sum(pvals < 0.10))
     total_selection_energy = float(np.sum(lrts))
     omnibus_lrt = float(np.sum(np.maximum(0.0, lrts - 3.841)))
     
-    # 7. 3-Rate Mixture Distribution (Emulating BUSTED Rate Classes)
-    p3 = max(0.001, min(0.50, sig_sites_05 / L))
-    p1 = max(0.10, (1.0 - p3) * 0.70)
-    p2 = 1.0 - p1 - p3
-    
-    w1 = 0.05
-    w2 = 1.00
-    w3 = max(1.50, float(np.mean(lrts[pvals < 0.05])) if sig_sites_05 > 0 else 1.0)
-    
-    is_significant = bool(p_acat < 0.05)
+    is_significant = bool(p_acat < 0.05 or pred_prob_pos > 0.50)
 
     print("\n" + "=" * 78)
     print("                HYPHAEON BUSTED SELECTION INFERENCE RESULTS")
@@ -317,20 +324,23 @@ def cmd_busted(args):
     print(f"  Codon Sites:               {L} ({num_variable} variable)")
     print(f"  Throughput:                {L / elapsed:.1f} sites/s ({elapsed * 1000:.1f} ms total)")
     print("-" * 78)
-    print(f"  ACAT Omnibus p-value:      {p_acat:.4e}")
-    print(f"  Simes Omnibus p-value:     {p_simes:.4e}")
-    print(f"  Omnibus Selection LRT:     {omnibus_lrt:.2f}")
-    print(f"  Total Selection Energy:    {total_selection_energy:.2f}")
-    print(f"  Significant Sites (p<0.05): {sig_sites_05} / {L} ({sig_sites_05/L*100:.1f}%)")
-    print(f"  Significant Sites (p<0.10): {sig_sites_10} / {L} ({sig_sites_10/L*100:.1f}%)")
+    print(f"  [Neural BUSTED Head]")
+    print(f"    Positive Selection Prob: {pred_prob_pos * 100:.1f}%")
+    print(f"    Predicted Gene LRT:      {pred_neural_lrt:.2f}")
+    print(f"    Synonymous Variation:    Var(alpha) = {pred_syn_var:.4f}")
+    print(f"  [Statistical Bridge (ACAT / Simes)]")
+    print(f"    ACAT Omnibus p-value:    {p_acat:.4e}")
+    print(f"    Simes Omnibus p-value:   {p_simes:.4e}")
+    print(f"    Total Selection Energy:  {total_selection_energy:.2f}")
+    print(f"    Significant Sites:       {sig_sites_05}/{L} (p<0.05), {sig_sites_10}/{L} (p<0.10)")
     print("-" * 78)
     print("  Inferred 3-Class Omega Mixture Distribution:")
-    print(f"    Class 1 (Purifying):     omega_1 = {w1:.4f}  (proportion = {p1*100:.1f}%)")
-    print(f"    Class 2 (Neutral):       omega_2 = {w2:.4f}  (proportion = {p2*100:.1f}%)")
-    print(f"    Class 3 (Positive):      omega_3 = {w3:.4f}  (proportion = {p3*100:.1f}%)")
+    print(f"    Class 1 (Purifying):     omega_1 = {pred_omega[0]:.4f}  (proportion = {pred_prop[0]*100:.1f}%)")
+    print(f"    Class 2 (Neutral):       omega_2 = {pred_omega[1]:.4f}  (proportion = {pred_prop[1]*100:.1f}%)")
+    print(f"    Class 3 (Positive):      omega_3 = {pred_omega[2]:.4f}  (proportion = {pred_prop[2]*100:.1f}%)")
     print("-" * 78)
     if is_significant:
-        print("  VERDICT: POSITIVE SELECTION DETECTED (p < 0.05)")
+        print(f"  VERDICT: POSITIVE SELECTION DETECTED (Confidence: {max(pred_prob_pos*100, (1-p_acat)*100):.1f}%)")
     else:
         print("  VERDICT: No Evidence of Positive Selection (p >= 0.05)")
     print("=" * 78 + "\n")
@@ -342,13 +352,16 @@ def cmd_busted(args):
         "p_value_acat": p_acat,
         "p_value_simes": p_simes,
         "omnibus_lrt": omnibus_lrt,
+        "predicted_gene_lrt": pred_neural_lrt,
+        "selection_probability": pred_prob_pos,
+        "synonymous_rate_variation": pred_syn_var,
         "total_selection_energy": total_selection_energy,
         "sig_sites_p05": sig_sites_05,
         "sig_sites_p10": sig_sites_10,
         "rate_distributions": {
-            "omega_1": w1, "proportion_1": p1,
-            "omega_2": w2, "proportion_2": p2,
-            "omega_3": w3, "proportion_3": p3,
+            "omega_1": float(pred_omega[0]), "proportion_1": float(pred_prop[0]),
+            "omega_2": float(pred_omega[1]), "proportion_2": float(pred_prop[1]),
+            "omega_3": float(pred_omega[2]), "proportion_3": float(pred_prop[2]),
         },
         "positive_selection_detected": is_significant,
         "elapsed_seconds": elapsed
@@ -368,9 +381,11 @@ def cmd_busted(args):
             "Sites": L,
             "p_ACAT": p_acat,
             "p_Simes": p_simes,
+            "Selection_Prob": pred_prob_pos,
+            "Pred_Gene_LRT": pred_neural_lrt,
             "Omnibus_LRT": omnibus_lrt,
-            "Omega_3": w3,
-            "Prop_Positive": p3,
+            "Omega_3": float(pred_omega[2]),
+            "Prop_Positive": float(pred_prop[2]),
             "Sig_Sites_p05": sig_sites_05,
             "Selected": is_significant
         }])
