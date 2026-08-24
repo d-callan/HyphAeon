@@ -14,6 +14,12 @@ import torch.nn.functional as F
 
 DEFAULT_WEIGHTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "weights", "axomeme_v1.pt")
 
+# Stationary background frequency floor (1/20 amino acids).
+# Used by the continuous-time Markov transition probability tree kernel in both
+# the inline and pre-cached forward paths. Shared constant ensures both paths
+# stay in sync.
+EPS0 = 0.05
+
 class BlockLinear(nn.Module):
     """
     Block-Diagonal Linear Projection.
@@ -81,48 +87,63 @@ class PhyloRowAttention(nn.Module):
         self.out_proj = BlockLinear(embed_dim, embed_dim)
         self.dropout = nn.Dropout(dropout)
         
-    def forward(self, x, dist_matrix, mds_coords=None, padding_mask=None, x0=None):
+    def forward(self, x, dist_matrix=None, mds_coords=None, padding_mask=None, x0=None,
+                cos=None, sin=None, phylo_bias=None):
+        """
+        Row attention with optional pre-cached tree kernels.
+
+        When cos/sin/phylo_bias are provided (from precompute_tree_cache), skips
+        inline RoPE and Markov bias computation. This is the single attention
+        code path used by both forward() and forward_cached().
+        """
         batch_size, num_species, _ = x.shape
-        
+
         q = self.q_proj(x).view(batch_size, num_species, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.k_proj(x).view(batch_size, num_species, self.num_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).view(batch_size, num_species, self.num_heads, self.head_dim).transpose(1, 2)
-        
+
         # Tree-RoPE: Apply 4D MDS Rotary Position Phase Rotations to Query & Key
-        if mds_coords is not None:
-            half_dim = self.head_dim // 2
-            m_exp = mds_coords.unsqueeze(1).unsqueeze(3) # [batch_size, 1, num_species, 1, 4]
-            f_exp = self.rope_freqs.unsqueeze(0).unsqueeze(2) # [1, num_heads, 1, half_dim, 4]
-            angles = (m_exp * f_exp).sum(dim=-1) # [batch_size, num_heads, num_species, half_dim]
-            cos = torch.cos(angles).to(q.dtype)
-            sin = torch.sin(angles).to(q.dtype)
-            
+        half_dim = self.head_dim // 2
+        if cos is None or sin is None:
+            # Compute rotations inline from mds_coords
+            if mds_coords is not None:
+                m_exp = mds_coords.unsqueeze(1).unsqueeze(3) # [batch_size, 1, num_species, 1, 4]
+                f_exp = self.rope_freqs.unsqueeze(0).unsqueeze(2) # [1, num_heads, 1, half_dim, 4]
+                angles = (m_exp * f_exp).sum(dim=-1) # [batch_size, num_heads, num_species, half_dim]
+                cos = torch.cos(angles).to(q.dtype)
+                sin = torch.sin(angles).to(q.dtype)
+
+        if cos is not None and sin is not None:
             q1, q2 = q[..., :half_dim], q[..., half_dim:]
             k1, k2 = k[..., :half_dim], k[..., half_dim:]
-            
             q = torch.cat([q1 * cos - q2 * sin, q1 * sin + q2 * cos], dim=-1)
             k = torch.cat([k1 * cos - k2 * sin, k1 * sin + k2 * cos], dim=-1)
-            
+
         scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
-        
+
         # Sequence Density Invariant Softmax Normalization
         if padding_mask is not None:
             active_counts = (~padding_mask).sum(dim=-1, keepdim=True).clamp(min=1.0).float()
             density_scale = torch.log(active_counts / 256.0).unsqueeze(-1).unsqueeze(-1)
             scores = scores + density_scale
-        
+
         # Pure Continuous-Time Markov Transition Probability Tree Kernel
         # P_ij(d) = eps0 + (1 - eps0) * exp(-lambda_h * d_ij)
-        # Reflects exact continuous-time Markov substitution process where transition probability asymptotes to eps0 (1/20) as d -> inf.
-        dist_1d = dist_matrix[..., 0] if dist_matrix.dim() == 4 or (dist_matrix.dim() == 3 and dist_matrix.shape[-1] == 3) else dist_matrix
-        bias_1d = dist_1d.unsqueeze(1) if dist_1d.dim() == 3 else dist_1d.unsqueeze(0).unsqueeze(1)
-        decay_rate = F.softplus(self.phylo_w1)  # [num_heads, 1, 1] learnable rate per attention head
-        eps0 = 0.05  # Stationary background frequency floor (1/20 amino acids)
-        markov_kernel = eps0 + (1.0 - eps0) * torch.exp(-decay_rate * bias_1d)
-        
-        # Pure log-space Markov transition probability kernel (Zero unphysical linear subtraction)
-        scores = scores + torch.log(markov_kernel.clamp(min=1e-5))
-            
+        # Reflects exact continuous-time Markov substitution process where transition
+        # probability asymptotes to eps0 (1/20 amino acids) as d -> inf.
+        if phylo_bias is None:
+            # Compute bias inline from dist_matrix
+            if dist_matrix is not None:
+                dist_1d = dist_matrix[..., 0] if dist_matrix.dim() == 4 or (dist_matrix.dim() == 3 and dist_matrix.shape[-1] == 3) else dist_matrix
+                bias_1d = dist_1d.unsqueeze(1) if dist_1d.dim() == 3 else dist_1d.unsqueeze(0).unsqueeze(1)
+                decay_rate = F.softplus(self.phylo_w1)  # [num_heads, 1, 1] learnable rate per attention head
+                markov_kernel = EPS0 + (1.0 - EPS0) * torch.exp(-decay_rate * bias_1d)
+                # Pure log-space Markov transition probability kernel
+                phylo_bias = torch.log(markov_kernel.clamp(min=1e-5))
+
+        if phylo_bias is not None:
+            scores = scores + phylo_bias
+
         if padding_mask is not None:
             mask = padding_mask.unsqueeze(1).unsqueeze(2)
             scores = scores.masked_fill(mask, -1e4)
@@ -131,7 +152,7 @@ class PhyloRowAttention(nn.Module):
         else:
             attn_weights = torch.softmax(scores, dim=-1)
         attn_weights = self.dropout(attn_weights).to(v.dtype)
-        
+
         out = torch.matmul(attn_weights, v)
         out = out.transpose(1, 2).contiguous().view(batch_size, num_species, self.embed_dim)
         out = self.out_proj(out)
@@ -300,7 +321,7 @@ class PhyloAxialTransformer(nn.Module):
         static_rope_coss = []
         static_rope_sins = []
 
-        eps0 = 0.05
+        eps0 = EPS0
         with torch.no_grad():
             for layer in self.row_layers:
                 decay_rate = F.softplus(layer.phylo_w1)  # [num_heads, 1, 1]
@@ -372,38 +393,48 @@ class PhyloAxialTransformer(nn.Module):
         for i, layer in enumerate(self.row_layers):
             row_in = x_full.transpose(1, 2).contiguous().view(batch_size * window_size, num_nodes, self.embed_dim)
 
-            q = layer.q_proj(row_in).view(batch_size * window_size, num_nodes, layer.num_heads, layer.head_dim).transpose(1, 2)
-            k = layer.k_proj(row_in).view(batch_size * window_size, num_nodes, layer.num_heads, layer.head_dim).transpose(1, 2)
-            v = layer.v_proj(row_in).view(batch_size * window_size, num_nodes, layer.num_heads, layer.head_dim).transpose(1, 2)
-
-            cos, sin = static_coss[i], static_sins[i]
-            half_dim = layer.head_dim // 2
-            q1, q2 = q[..., :half_dim], q[..., half_dim:]
-            k1, k2 = k[..., :half_dim], k[..., half_dim:]
-            q = torch.cat([q1 * cos - q2 * sin, q1 * sin + q2 * cos], dim=-1)
-            k = torch.cat([k1 * cos - k2 * sin, k1 * sin + k2 * cos], dim=-1)
-
-            scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(layer.head_dim)
-            scores = scores + static_biases[i]
-
-            if padding_mask_dup is not None:
-                mask = padding_mask_dup.unsqueeze(1).unsqueeze(2)
-                scores = scores.masked_fill(mask, -1e4)
-                attn_weights = torch.softmax(scores, dim=-1)
-                attn_weights = torch.where(mask, torch.zeros_like(attn_weights), attn_weights)
-            else:
-                attn_weights = torch.softmax(scores, dim=-1)
-
             if return_attentions:
-                # Extract root -> leaf attention weights: [B*W, num_heads, num_species]
+                q = layer.q_proj(row_in).view(batch_size * window_size, num_nodes, layer.num_heads, layer.head_dim).transpose(1, 2)
+                k = layer.k_proj(row_in).view(batch_size * window_size, num_nodes, layer.num_heads, layer.head_dim).transpose(1, 2)
+                v = layer.v_proj(row_in).view(batch_size * window_size, num_nodes, layer.num_heads, layer.head_dim).transpose(1, 2)
+
+                cos, sin = static_coss[i], static_sins[i]
+                half_dim = layer.head_dim // 2
+                q1, q2 = q[..., :half_dim], q[..., half_dim:]
+                k1, k2 = k[..., :half_dim], k[..., half_dim:]
+                q = torch.cat([q1 * cos - q2 * sin, q1 * sin + q2 * cos], dim=-1)
+                k = torch.cat([k1 * cos - k2 * sin, k1 * sin + k2 * cos], dim=-1)
+
+                scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(layer.head_dim)
+                scores = scores + static_biases[i]
+
+                if padding_mask_dup is not None:
+                    mask = padding_mask_dup.unsqueeze(1).unsqueeze(2)
+                    scores = scores.masked_fill(mask, -1e4)
+                    attn_weights = torch.softmax(scores, dim=-1)
+                    attn_weights = torch.where(mask, torch.zeros_like(attn_weights), attn_weights)
+                else:
+                    attn_weights = torch.softmax(scores, dim=-1)
+
                 layer_attns.append(attn_weights[:, :, 0, 1:].detach())
 
-            attn_weights = layer.dropout(attn_weights).to(v.dtype)
-            out = torch.matmul(attn_weights, v)
-            out = out.transpose(1, 2).contiguous().view(batch_size * window_size, num_nodes, layer.embed_dim)
-            out = layer.out_proj(out) + layer.alpha_skip * x0_dup
-            row_out = self.row_norms[i](row_in + out)
-            x_full = row_out.reshape(batch_size, window_size, num_nodes, self.embed_dim).transpose(1, 2)
+                attn_weights = layer.dropout(attn_weights).to(v.dtype)
+                out = torch.matmul(attn_weights, v)
+                out = out.transpose(1, 2).contiguous().view(batch_size * window_size, num_nodes, layer.embed_dim)
+                out = layer.out_proj(out) + layer.alpha_skip * x0_dup
+                row_out = self.row_norms[i](row_in + out)
+                x_full = row_out.reshape(batch_size, window_size, num_nodes, self.embed_dim).transpose(1, 2)
+            else:
+                row_out = layer(
+                    row_in,
+                    padding_mask=padding_mask_dup,
+                    x0=x0_dup,
+                    cos=static_coss[i],
+                    sin=static_sins[i],
+                    phylo_bias=static_biases[i],
+                )
+                row_out = self.row_norms[i](row_in + row_out)
+                x_full = row_out.reshape(batch_size, window_size, num_nodes, layer.embed_dim).transpose(1, 2)
 
         root_repr = x_full[:, 0, central_idx, :]
         logits_lrt_ordinal = self.lrt_ordinal_head(root_repr)
