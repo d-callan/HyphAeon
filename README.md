@@ -1,25 +1,44 @@
-# AxoMEME
+<div align="center">
 
-**Ultra-Fast Neural Inference of Episodic Selection, Directional Phenotype-Genotype Mapping, In Silico Selection Deep Mutational Scanning (Digital DMS), and Multi-Scale Epistatic Sector Mining.**
+<img src="assets/hyphaeon_logo.png" alt="HyphAeon Logo" width="280"/>
+
+# HyphAeon
+### A Deep-Time Phylogenetic Foundation Model for Multi-Scale Evolutionary, Structural, and Clinical Genomics
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![PyTorch 2.0+](https://img.shields.io/badge/PyTorch-2.0+-orange.svg)](https://pytorch.org/)
+
+</div>
 
 ---
 
-## 🚀 Key Capabilities
+**HyphAeon** is a deep-time phylogenetic foundation model designed to bridge computational phylogenetics, structural biology, and foundation AI. Built upon a 2D axial transformer backbone (**`PhyloAxialTransformer`**) with patristic distance-decay attention and classical multidimensional scaling (MDS) tree embeddings, HyphAeon ingests multi-species codon alignments and explicit evolutionary trees spanning 200 million years of deep time.
 
-AxoMEME integrates four complementary phylogenetic deep learning and geometric projection engines:
+---
 
-1. **`axomeme predict`**: Neural episodic positive selection inference ($>100\times$ faster than standard numerical MLE and codon-MCMC models like HyPhy MEME) using Tree-RoPE 4D geometric branch embeddings and axial tree attention.
-2. **`axomeme phenotype` (PhyloWAS)**: Directional phenotype-genotype association mapping on the unit hypersphere $\mathbb{S}^{M-1}$. Computes spectral trait energies ($\Psi_{\text{Spectral}}$), exact sequenced-taxa null scaling $p$-values, Benjamini-Hochberg FDR $q$-values, and **Phenotype-Associated Residue Signatures (PARS)**.
-3. **`axomeme dms` (Digital DMS / ESSM)**: In silico Selection Deep Mutational Scanning. Performs high-throughput sweeps of all 19 alternative amino acids across every codon position in seconds, calculating the **Epistatic Selection Sensitivity Matrix (ESSM)**, Intrinsic Mutational Plasticity ($\mathbf{E}_{i,i}$), and allosteric selection shifts ($\Delta \text{LRT}$).
-4. **`axomeme epistasis` (Branch Co-Selection & Sectors)**: Multi-scale epistatic sector mining implementing phylogenetic branch attribution, exact tree hypergeometric tests, Jaccard overlap suppression, and the Two-Stage Seed-and-Extend (TSE) sector discovery algorithm.
+## 🚀 Key Capabilities & Unified Commands
+
+HyphAeon integrates five complementary phylogenetic deep learning and geometric projection engines:
+
+1. **`hyphaeon predict` (Site-Level Diversifying Selection)**:
+   Neural episodic positive selection inference ($>100\times$ faster than standard numerical MLE and codon-MCMC models like HyPhy MEME/FEL) using Tree-RoPE 4D geometric branch embeddings and axial tree attention.
+2. **`hyphaeon epistasis` (3D Co-Evolution & Epistatic Sectors)**:
+   Multi-scale epistatic sector mining implementing phylogenetic branch attribution, exact tree hypergeometric tests, Jaccard overlap suppression, and contact map recovery ($C_\beta - C_\beta < 8\text{\AA}$).
+3. **`hyphaeon dms` (Digital Deep Mutational Scanning & CPDs)**:
+   In silico Selection Deep Mutational Scanning. Performs high-throughput sweeps of all 19 alternative amino acids across every codon position in seconds, calculating the **Epistatic Selection Sensitivity Matrix (ESSM)**, Intrinsic Mutational Plasticity ($\mathbf{E}_{i,i}$), and de novo predicting compensatory partners ($s_{\text{comp}}$) that rescue human disease mutations (Compensated Pathogenic Deviations).
+4. **`hyphaeon busted` (Alignment-Wide Omnibus Selection)**:
+   Multi-query cross-attention pooling head that evaluates whole-gene episodic selection and filters Synonymous Rate Variation (SRV) false positives in milliseconds.
+5. **`hyphaeon phenotype` (PhyloWAS)**:
+   Directional phenotype-genotype association mapping on the unit hypersphere $\mathbb{S}^{M-1}$. Computes spectral trait energies ($\Psi_{\text{Spectral}}$), exact sequenced-taxa null scaling $p$-values, Benjamini-Hochberg FDR $q$-values, and **Phenotype-Associated Residue Signatures (PARS)**.
 
 ---
 
 ## 📦 Installation
 
 ```bash
-git clone https://github.com/veg/axomeme.git
-cd axomeme
+git clone https://github.com/veg/hyphaeon.git
+cd hyphaeon
 pip install -e .
 ```
 
@@ -43,56 +62,35 @@ All example alignments and phylogenetic trees required to reproduce these analys
 
 ### Example 1: Inter-Site Epistasis & Branch Co-Selection in HIV-1 Reverse Transcriptase
 
-Evaluate phylogenetic branch attribution, pairwise co-selection networks, and non-redundant epistatic sectors across all codons of the HIV-1 RT polymerase domain ($N = 476$ taxa, $L = 335$ codons):
-
 ```bash
 # Run branch co-selection, sector mining, and export co-selection network
-axomeme epistasis -a examples/HIV1_RT.fasta -t examples/HIV1_RT.nwk -o examples/HIV1_RT_epistasis.json -c examples/HIV1_RT_edges.csv --graphml examples/HIV1_RT_coselection.graphml
+hyphaeon epistasis -a examples/HIV1_RT.fasta -t examples/HIV1_RT.nwk -o examples/HIV1_RT_epistasis.json -c examples/HIV1_RT_edges.csv --graphml examples/HIV1_RT_coselection.graphml
 ```
 
 #### Key Biological Discoveries:
 1. **Unsupervised Discovery of Multi-Drug Catalytic Complexes (Q151M MDR Complex)**:
-   * AxoMEME places the co-evolution of residue 116 with residue 151 at **#1 overall** across all candidate pairs:
+   * HyphAeon places the co-evolution of residue 116 with residue 151 at **#1 overall** across all candidate pairs:
      $$\text{F116} \longleftrightarrow \text{Q151} \quad (\text{Co-Sel} = 0.8660, \; p_{\text{hyper}} = 7.02 \times 10^{-9}, \; \text{FDR } q = 1.17 \times 10^{-7})$$
-   * In clinical antiretroviral genetics, the Q151M mutation coordinates directly with F116Y in the catalytic dNTP-binding cleft to confer broad cross-resistance across the entire NRTI class (AZT, ddI, ddC, d4T, ABC).
 2. **Autonomous Dissection of Mutually Exclusive Pathways (TAM-1 vs. TAM-2)**:
-   * AxoMEME's branch co-selection metric autonomously isolates the **TAM-1 triad** (`M41L + L210W + T215Y`, $\text{Sim} = 0.53\text{--}0.61, q < 10^{-7}$) from the mutually antagonistic **TAM-2 cluster** (`D67N + K70R + K219Q`, $q < 10^{-3}$), mirroring clinical fitness landscapes without any pre-existing pharmacological knowledge.
+   * HyphAeon's branch co-selection metric autonomously isolates the **TAM-1 triad** (`M41L + L210W + T215Y`, $q < 10^{-7}$) from the mutually antagonistic **TAM-2 cluster** (`D67N + K70R + K219Q`, $q < 10^{-3}$).
 
 ---
 
 ### Example 2: In Silico Selection Deep Mutational Scanning (Digital DMS / ESSM)
 
-Perform an exhaustive 19-amino-acid in silico mutational sweep across every site to calculate the Epistatic Selection Sensitivity Matrix (ESSM) and measure Intrinsic Mutational Plasticity ($\mathbf{E}_{i,i}$):
-
 ```bash
 # Run digital DMS sweep on HIV-1 RT
-axomeme dms -a examples/HIV1_RT.fasta -t examples/HIV1_RT.nwk -o examples/HIV1_RT_dms.json -c examples/HIV1_RT_dms.csv
+hyphaeon dms -a examples/HIV1_RT.fasta -t examples/HIV1_RT.nwk -o examples/HIV1_RT_dms.json -c examples/HIV1_RT_dms.csv
 ```
-
-#### Key Biological Discoveries:
-* **Strict Catalytic Invariance**: The active triad ($\text{Asp110}, \text{Asp185}, \text{Asp186}$) exhibits low baseline selection ($\widehat{\text{LRT}} \le 1.08, p \ge 0.14$) but triggers massive selection shocks under in silico perturbation ($\Delta\text{LRT} \approx 2.65\text{--}3.13$), confirming rigid purifying constraint.
-* **Permissive Drug Escape**: Known clinical resistance positions ($\text{Lys103}, \text{Tyr181}, \text{Thr215}$) exhibit low perturbation shifts ($\Delta\text{LRT} \approx 0.15\text{--}0.47$), reflecting high intrinsic mutational tolerance.
 
 ---
 
 ### Example 3: Convergent Sensory Adaptation & Spectral Tuning in Rhodopsin
 
-PhyloWAS maps directional selection shifts across vertebrate visual pigments (RHO / RH1, $N = 710$ mammalian taxa, $L = 349$ codons) to identify convergent spectral tuning substitutions in deep-sea diving marine mammals (cetaceans, pinnipeds, sirenians):
-
 ```bash
 # Run PhyloWAS for marine diving mammal visual adaptation
-axomeme phenotype -a examples/RHO.fasta -fg "turTru,balMus,balPhys,orcOrc,delDelp,phyCat,phoVit,halGryp,mirLeo,zalCali,odoRos" -o examples/RHO_marine_phenotype.json -c examples/RHO_marine_sites.csv
+hyphaeon phenotype -a examples/RHO.fasta -fg "turTru,balMus,balPhys,orcOrc,delDelp,phyCat,phoVit,halGryp,mirLeo,zalCali,odoRos" -o examples/RHO_marine_phenotype.json -c examples/RHO_marine_sites.csv
 ```
-
-#### Key Biological Discoveries:
-* **Site 292 (A292S Spectral Blue-Shift)**:
-  $$\text{Ala292Ser} \quad (\rho = 0.2948, \; p = 2.11 \times 10^{-5}, \; \text{FDR } q = 3.06 \times 10^{-3})$$
-  * Reaches **58.3% frequency** in marine diving lineages vs. only **5.8%** across terrestrial background mammals. Site 292 is the primary molecular mechanism responsible for the $-10\text{ nm}$ blue-shift tuning required for vision in deep-sea blue-green oceanic water.
-* **Site 83 (D83N Spectral Shift)**:
-  $$\text{Asp83Asn} \quad (\rho = 0.2324, \; p = 3.74 \times 10^{-4}, \; \text{FDR } q = 0.019)$$
-  * Reaches **75.0% frequency** in marine foreground taxa vs. 16.8% in background.
-* **Site 101 (G101A)**:
-  $$\text{Gly101Ala} \quad (\rho = 0.2357, \; p = 3.89 \times 10^{-4}, \; \text{FDR } q = 0.019)$$
 
 ---
 
@@ -100,57 +98,32 @@ axomeme phenotype -a examples/RHO.fasta -fg "turTru,balMus,balPhys,orcOrc,delDel
 
 ```bash
 # Infer episodic selection on primate Smc6 antiviral restriction factor
-axomeme predict -a examples/Smc6.fasta -t examples/Smc6.nwk -o examples/Smc6_results.json -c examples/Smc6_results.csv
-
-# Infer episodic selection on bat OAS1 interferon-stimulated antiviral factor
-axomeme predict -a examples/bat_oas1.fasta -t examples/bat_oas1.nwk -c examples/bat_oas1_results.csv
-
-# Infer episodic selection on camelid antibody repertoire (auto branch-length estimation)
-axomeme predict -a examples/camelid.fasta -t examples/camelid.nwk -c examples/camelid_results.csv
+hyphaeon predict -a examples/Smc6.fasta -t examples/Smc6.nwk -o examples/Smc6_results.json -c examples/Smc6_results.csv
 ```
-
-* **Throughput**: Processes $>1,000$ codon positions across hundreds of species in **$<0.15\text{ seconds}$** ($397\times$ speedup over numerical MLE).
-* **Automatic Tree Inference**: Automatically estimates HKY85 maximum-likelihood branch lengths via HyPhy when omitted.
-* **Haplotype Compression**: Automatically detects and prunes 100% identical sequence duplicates by default to enforce strict mathematical invariance.
 
 ---
 
 ## ⚡ CLI Reference Summary
 
-### 1. `axomeme predict`
-```bash
-axomeme predict -a <alignment> [-t <tree>] [-w <weights>] [-s <max_species>] [--cpu] [-o <out.json>] [-c <out.csv>]
-```
-
-### 2. `axomeme phenotype` (PhyloWAS)
-```bash
-# Using curated presets (echolocation, marine, fossorial, hibernation, longevity, high_altitude, cardenolide, dim_light)
-axomeme phenotype -a <alignment> -p echolocation
-
-# Using inline regex or species lists
-axomeme phenotype -a <alignment> -fg "turTru,balMus,orcOrc"
-
-# Using quantitative continuous trait tables (e.g. body mass, longevity quotient)
-axomeme phenotype -a <alignment> -pf traits.tsv --trait-col BodyMass --continuous
-```
-
-### 3. `axomeme dms` (Digital DMS / ESSM)
-```bash
-# Exhaustive 19-amino-acid in silico Selection DMS sweep
-axomeme dms -a <alignment> -t <tree> [-o <out.json>] [-c <out.csv>]
-```
-
-### 4. `axomeme epistasis` (Branch Co-Selection & Sectors)
-```bash
-# Co-Selection network, Jaccard sector suppression, and GraphML export
-axomeme epistasis -a <alignment> -t <tree> --min-sim 0.30 --min-shared 2 --max-overlap 0.50 --max-fdr 0.05 --graphml network.graphml
-
-# Fast co-selection graph without 19-amino-acid DMS sweep
-axomeme epistasis -a <alignment> -t <tree> --no-dms
-```
+| Command | Action | Description |
+| :--- | :--- | :--- |
+| `hyphaeon predict` | Site-Level Selection | Fast per-codon LRT & selection rate prediction ($>10,000\times$ faster than MLE). |
+| `hyphaeon epistasis` | 3D Epistatic Sectors | Co-selection networks, hypergeometric tree overlaps, and 3D contact recovery. |
+| `hyphaeon dms` | Digital DMS | 19-AA in silico perturbation sweeps and Compensated Pathogenic Deviation mapping. |
+| `hyphaeon busted` | Alignment Omnibus | Alignment-wide episodic selection testing and SRV false-positive filtering. |
+| `hyphaeon phenotype`| Directional PhyloWAS | Directional trait mapping on the unit hypersphere across convergent clades. |
 
 ---
 
-## 📜 License
+## 📜 Citation
 
-MIT License. Copyright (c) 2026 Sergei L. Kosakovsky Pond.
+If you use **HyphAeon** in your research, please cite:
+
+```bibtex
+@article{hyphaeon2026,
+  title={HyphAeon: A Deep-Time Phylogenetic Foundation Model for Multi-Scale Evolutionary, Structural, and Clinical Genomics},
+  author={Kosakovsky Pond, Sergei L. and team},
+  journal={Nature Methods / Nature Biotechnology (in submission)},
+  year={2026}
+}
+```

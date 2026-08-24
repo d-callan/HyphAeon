@@ -3,12 +3,12 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "axomeme"
+name = "hyphaeon"
 version = "1.0.0"
 authors = [
   { name="Sergei L. Kosakovsky Pond", email="spond@temple.edu" },
 ]
-description = "AxoMEME: Ultra-Fast Neural Inference of Episodic Positive Selection in Molecular Sequences"
+description = "HyphAeon: A Deep-Time Phylogenetic Foundation Model for Multi-Scale Evolutionary, Structural, and Clinical Genomics"
 readme = "README.md"
 requires-python = ">=3.9"
 classifiers = [
@@ -28,21 +28,18 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
-# model_eval/ additionally needs scikit-learn (concordance metrics) and two
-# external (non-pip) binaries: hyphy>=2.5.40 and seq-gen. See
-# model_eval/README.md for the exact versions the MEME result cache was
-# built with.
 model_eval = ["pytest>=7.0", "scikit-learn>=1.0"]
 
 [project.scripts]
-axomeme = "axomeme.cli:main"
+hyphaeon = "hyphaeon.cli:main"
+axomeme = "hyphaeon.cli:main"
 
 [tool.setuptools]
-packages = ["axomeme"]
+packages = ["hyphaeon", "axomeme"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [project.urls]
-"Homepage" = "https://github.com/veg/axomeme"
-"Bug Tracker" = "https://github.com/veg/axomeme/issues"
+"Homepage" = "https://github.com/veg/hyphaeon"
+"Bug Tracker" = "https://github.com/veg/hyphaeon/issues"
