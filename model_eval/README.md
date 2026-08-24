@@ -62,9 +62,9 @@ per-branch output — output that the current model cannot produce reliably
 ## Prerequisites
 
 - Real AxoMEME weights, resolved in this order:
-  1. `AXOMEME_WEIGHTS` env var pointing to a local `.pt` checkpoint.
-  2. Repo-local `weights/axomeme_v1.pt`.
-  3. (Future: Hugging Face download if a weights module is added.)
+  1. `AXOMEME_WEIGHTS` env var pointing to a local `.pt` or `.safetensors` checkpoint.
+  2. Hugging Face download (`datamonkey/axomeme`, default variant). Requires
+     `HF_TOKEN` while the repo is gated. Cached locally after first download.
 - Python deps: `pip install -e .[model_eval]` (installs `pytest` and
   `scikit-learn`, on top of the base package's torch/biopython/numpy/scipy).
 - Example data in `examples/` (shipped with the repo).

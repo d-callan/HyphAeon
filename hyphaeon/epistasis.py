@@ -27,7 +27,8 @@ from .dataset import (
     get_codon_token,
     get_aa_token
 )
-from .model import PhyloAxialTransformer, DEFAULT_WEIGHTS
+from .model import PhyloAxialTransformer
+from .weights import load_weights, load_arch_config
 
 REV_AA_MAP = {v: k for k, v in AA_MAP.items()}
 
@@ -460,7 +461,7 @@ def extract_epistatic_sectors(
 def run_epistasis_analysis(
     alignment_path: str,
     tree_path: Optional[str] = None,
-    weights_path: str = DEFAULT_WEIGHTS,
+    weights_path: Optional[str] = None,
     focal_taxon: Optional[str] = None,
     min_sim: float = 0.30,
     min_shared: int = 2,
@@ -491,15 +492,15 @@ def run_epistasis_analysis(
         tree_obj = extract_tree_from_string_or_file(tree_path if tree_path else alignment_path)
         
     # 2. Load Model
-    ckpt = torch.load(weights_path, map_location=device, weights_only=False)
-    ckpt_args = ckpt.get('args', {}) if isinstance(ckpt, dict) else {}
+    config = load_arch_config(weights=weights_path)
     model = PhyloAxialTransformer(
-        embed_dim=ckpt_args.get('embed_dim', 384),
-        num_layers=ckpt_args.get('layers', 6),
-        num_heads=ckpt_args.get('heads', 12),
-        window_size=ckpt_args.get('window_size', 1),
+        embed_dim=config['embed_dim'],
+        num_layers=config['num_layers'],
+        num_heads=config['num_heads'],
+        window_size=config['window_size'],
     ).to(device)
-    model.load_state_dict(ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt)
+    state_dict = load_weights(weights=weights_path, map_location=device)
+    model.load_state_dict(state_dict)
     model.eval()
     
     d_dev = d.to(device)

@@ -5,21 +5,17 @@ Core Neural Architecture: PhyloAxialTransformer with Multi-Scale 4D Tree-RoPE
 for ultra-fast episodic positive selection inference.
 """
 
-import os
 import math
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-DEFAULT_WEIGHTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "weights", "axomeme_v1.pt")
-
 # Stationary background frequency floor (1/20 amino acids).
 # Used by the continuous-time Markov transition probability tree kernel in both
 # the inline and pre-cached forward paths. Shared constant ensures both paths
 # stay in sync.
 EPS0 = 0.05
-
 class BlockLinear(nn.Module):
     """
     Block-Diagonal Linear Projection.

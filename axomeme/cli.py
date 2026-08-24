@@ -16,14 +16,24 @@ import numpy as np
 import pandas as pd
 import scipy.stats as stats
 import torch
+import networkx as nx
 
 from .model import PhyloAxialTransformer
 from .dataset import load_alignment_and_tree
+from .weights import (
+    resolve_weights_path,
+    load_arch_config,
+    load_weights,
+    list_available_variants,
+    DEFAULT_VARIANT,
+    HF_REPO_ID,
+)
 from .phenotype import run_phenotype_association, PRESETS
 from .epistasis import run_epistatic_sector_mining
 
-_REPO_WEIGHTS = os.path.join(os.path.dirname(os.path.dirname(__file__)), "weights", "axomeme_v1.pt")
-DEFAULT_WEIGHTS = os.environ.get("AXOMEME_WEIGHTS", _REPO_WEIGHTS)
+DEFAULT_VARIANT_ENV = os.environ.get("AXOMEME_VARIANT", DEFAULT_VARIANT)
+# If set, AXOMEME_WEIGHTS points to a local weights file and bypasses HF download.
+DEFAULT_WEIGHTS_ENV = os.environ.get("AXOMEME_WEIGHTS")
 
 def ensure_parent_directory(path):
     if path:
@@ -63,22 +73,28 @@ def cmd_predict(args):
     else:
         device = torch.device('cpu')
     print(f"[*] Hardware device selected: {device.type.upper()}")
-    
-    if not os.path.exists(args.weights):
-        print(f"[!] Error: Model weights not found at '{args.weights}'.")
-        print("    Please download pretrained weights or specify --weights /path/to/axomeme_v1.pt")
+
+    # Resolve weights: explicit --weights path > --model-variant (download from HF) > default variant
+    try:
+        weights_path = resolve_weights_path(
+            weights=args.weights,
+            variant=args.model_variant,
+        )
+    except RuntimeError as e:
+        print(f"[!] {e}")
         sys.exit(1)
-        
-    print(f"[*] Loading AxoMEME model from: {args.weights}")
-    ckpt = torch.load(args.weights, map_location=device, weights_only=False)
-    ckpt_args = ckpt.get('args', {}) if isinstance(ckpt, dict) else {}
+    print(f"[*] Loading AxoMEME model from: {weights_path}")
+
+    config = load_arch_config(weights=args.weights, variant=args.model_variant)
     model = PhyloAxialTransformer(
-        embed_dim=ckpt_args.get('embed_dim', 384),
-        num_layers=ckpt_args.get('layers', 6),
-        num_heads=ckpt_args.get('heads', 12),
-        window_size=ckpt_args.get('window_size', 1),
+        embed_dim=config['embed_dim'],
+        num_layers=config['num_layers'],
+        num_heads=config['num_heads'],
+        window_size=config['window_size'],
     ).to(device)
-    model.load_state_dict(ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt)
+
+    state_dict = load_weights(weights=weights_path, variant=args.model_variant, map_location=device)
+    model.load_state_dict(state_dict)
     model.eval()
     
     print(f"[*] Parsing Alignment: {args.alignment}")
@@ -201,6 +217,30 @@ def cmd_predict(args):
         df.to_csv(args.csv, index=False)
         print(f"[✓] CSV results written to: {args.csv}")
 
+def list_models():
+    """List available model variants from Hugging Face."""
+    try:
+        variants = list_available_variants()
+    except Exception as e:
+        print(f"[!] Could not fetch model list from Hugging Face: {e}")
+        if "401" in str(e) or "Unauthorized" in str(e):
+            print("    The model repo may be gated. Set HF_TOKEN env var to authenticate.")
+            print("    Get a token at: https://huggingface.co/settings/tokens")
+        return
+
+    if not variants:
+        print("No model variants found on Hugging Face.")
+        return
+
+    print(f"Available AxoMEME model variants ({HF_REPO_ID}):")
+    print()
+    for v in variants:
+        default = " (default)" if v["variant"] == DEFAULT_VARIANT else ""
+        print(f"  {v['variant']:15s}  {v['description']}{default}")
+    print()
+    print("Use with:  axomeme predict -a alignment.fa --model-variant <variant>")
+    print(f"Default variant: {DEFAULT_VARIANT}")
+
 def cmd_phenotype(args):
     print(f"[*] Executing Directional Phenotype-Genotype Mapping (PhyloWAS)...")
     print(f"[*] Alignment: {args.alignment}")
@@ -267,11 +307,10 @@ def cmd_epistasis(args):
     
     t0 = time.time()
     try:
-        from .epistasis import run_epistasis_analysis
         res = run_epistasis_analysis(
             alignment_path=args.alignment,
             tree_path=args.tree,
-            weights_path=getattr(args, "weights", DEFAULT_WEIGHTS),
+            weights_path=args.weights,
             focal_taxon=getattr(args, "focal_taxon", None),
             min_sim=getattr(args, "min_sim", 0.30),
             min_shared=getattr(args, "min_shared", 2),
@@ -375,19 +414,20 @@ def main():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
-    
+
     # 1. Predict Subcommand
     pred_parser = subparsers.add_parser("predict", help="Run episodic positive selection inference (AxoMEME Transformer)")
     pred_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
     pred_parser.add_argument("-t", "--tree", required=False, default=None, help="Path to Newick/NEXUS phylogenetic tree (optional if embedded)")
-    pred_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS, help="Path to pretrained model checkpoint")
+    pred_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download). Can also be set via AXOMEME_WEIGHTS env var.")
+    pred_parser.add_argument("--model-variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from Hugging Face (default: {DEFAULT_VARIANT})")
     pred_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: auto-selected)")
     pred_parser.add_argument("-s", "--max-species", type=int, default=None, help="Maximum number of species to include (PD downsampling)")
     pred_parser.add_argument("--no-prune-duplicates", action="store_true", help="Disable automatic collapsing of 100% identical sequence duplicates")
     pred_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     pred_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
     pred_parser.add_argument("--cpu", action="store_true", help="Force CPU inference")
-    
+
     # 2. Phenotype Subcommand (PhyloWAS)
     pheno_parser = subparsers.add_parser("phenotype", aliases=["phylowas", "trait"], help="Run directional phenotype-genotype association & PARS signature extraction")
     pheno_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
@@ -407,7 +447,7 @@ def main():
     epi_parser = subparsers.add_parser("epistasis", aliases=["coselection", "sector", "network"], help="Run phylogenetic branch co-selection and epistatic sector mining")
     epi_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
     epi_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded)")
-    epi_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS, help="Path to pretrained model checkpoint")
+    epi_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
     epi_parser.add_argument("--focal-taxon", help="Focal taxon for in silico Selection DMS sweep (default: auto/consensus)")
     epi_parser.add_argument("--min-sim", type=float, default=0.30, help="Pairwise cosine similarity threshold for co-selection edges")
     epi_parser.add_argument("--min-shared", type=int, default=2, help="Minimum shared mutated phylogenetic branches")
@@ -425,11 +465,14 @@ def main():
     dms_parser = subparsers.add_parser("dms", aliases=["essm", "digital-dms"], help="Run in silico Selection Deep Mutational Scanning (Digital DMS / ESSM)")
     dms_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
     dms_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded)")
-    dms_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS, help="Path to pretrained model checkpoint")
+    dms_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
     dms_parser.add_argument("--focal-taxon", help="Focal taxon for in silico Selection DMS sweep (default: auto/consensus)")
     dms_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
     dms_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     dms_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
+
+    # 5. List-models Subcommand
+    list_parser = subparsers.add_parser("list-models", help="List available model variants from Hugging Face")
 
     args = parser.parse_args()
     if args.command == "predict":
@@ -440,6 +483,8 @@ def main():
         cmd_epistasis(args)
     elif args.command in ["dms", "essm", "digital-dms"]:
         cmd_epistasis(args)
+    elif args.command == "list-models":
+        list_models()
     else:
         parser.print_help()
 
