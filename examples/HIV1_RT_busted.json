@@ -1,0 +1,21 @@
+{
+  "alignment": "examples/HIV1_RT.fasta",
+  "taxa": 475,
+  "sites": 335,
+  "p_value_acat": 0.0012558284041784828,
+  "p_value_simes": 0.004984477786729592,
+  "omnibus_lrt": 153.30166625976562,
+  "total_selection_energy": 505.8420104980469,
+  "sig_sites_p05": 66,
+  "sig_sites_p10": 96,
+  "rate_distributions": {
+    "omega_1": 0.05,
+    "proportion_1": 0.5620895522388059,
+    "omega_2": 1.0,
+    "proportion_2": 0.2408955223880598,
+    "omega_3": 5.943446159362793,
+    "proportion_3": 0.19701492537313434
+  },
+  "positive_selection_detected": true,
+  "elapsed_seconds": 4.255860090255737
+}

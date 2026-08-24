@@ -75,8 +75,12 @@ def train_epoch(model, loader, optimizer, scaler, device, args):
             optimizer.zero_grad()
             use_fp16 = bool(args.fp16 and device.type == 'cuda')
             with torch.amp.autocast('cuda', enabled=use_fp16):
-                logits = model(c, a, batch_d, batch_z)
-                y_pred, _ = decode_soft_ordinal_lrt(logits)
+                out = model(c, a, batch_d, batch_z)
+                if isinstance(out, tuple):
+                    y_pred, logits = out
+                else:
+                    logits = out
+                    y_pred, _ = decode_soft_ordinal_lrt(logits)
                 y_true = y_true.reshape(-1)
                 if y_pred.shape != y_true.shape:
                     raise ValueError(

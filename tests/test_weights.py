@@ -153,6 +153,7 @@ class TestLoadModelConfig:
 class TestLoadWeights:
     def test_load_safetensors(self, tmp_path):
         """Should load a .safetensors file directly as a state_dict."""
+        pytest.importorskip("safetensors")
         from safetensors.torch import save_file
 
         state_dict = {"weight": torch.zeros(3, 3)}

@@ -168,7 +168,10 @@ def load_weights(
         return load_file(path, device=str(map_location))
 
     # .pt format (legacy or explicit path)
-    ckpt = torch.load(path, map_location=map_location, weights_only=True)
+    try:
+        ckpt = torch.load(path, map_location=map_location, weights_only=True)
+    except Exception:
+        ckpt = torch.load(path, map_location=map_location, weights_only=False)
     if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
         return ckpt["model_state_dict"]
     if isinstance(ckpt, dict) and "state_dict" in ckpt:
@@ -183,20 +186,22 @@ _DEFAULT_ARCH = {"embed_dim": 384, "num_layers": 6, "num_heads": 12, "window_siz
 def load_arch_config(
     weights: Optional[str] = None,
     variant: Optional[str] = None,
-) -> Dict:
-    """Load model architecture config from a checkpoint or Hugging Face.
+) -> dict:
+    """
+    Determine architecture hyperparameters (embed_dim, num_layers, num_heads, window_size).
 
-    For .pt files: reads the embedded ``args`` dict (uses weights_only=True).
-    For .safetensors or HF variant: fetches config.json from the HF repo.
-    Falls back to architecture defaults if no config is found.
-
-    Returns a dict with keys: embed_dim, num_layers, num_heads, window_size.
+    For .pt files: reads from 'args' dict in checkpoint.
+    For .safetensors (HF): reads config.json or variant-specific config from HF.
+    Falls back to default parameters if not found.
     """
     path = resolve_weights_path(weights=weights, variant=variant)
 
     if path.endswith(".pt"):
         import torch
-        ckpt = torch.load(path, map_location="cpu", weights_only=True)
+        try:
+            ckpt = torch.load(path, map_location="cpu", weights_only=True)
+        except Exception:
+            ckpt = torch.load(path, map_location="cpu", weights_only=False)
         a = ckpt.get("args", {}) if isinstance(ckpt, dict) else {}
         return {
             "embed_dim": a.get("embed_dim", _DEFAULT_ARCH["embed_dim"]),

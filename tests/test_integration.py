@@ -133,3 +133,36 @@ def test_batch_size_one_produces_same_structure(examples_dir, dummy_weights, tmp
     assert (actual["is_invariable"] == expected_df["is_invariable"]).all()
     for col in ("axomeme_lrt", "p_value"):
         assert np.isfinite(actual[col]).all(), f"{col} contains non-finite values"
+
+
+def test_busted_cli_runs_and_produces_valid_output(examples_dir, dummy_weights, tmp_path):
+    """Test that hyphaeon/axomeme busted subcommand runs end-to-end and creates JSON/CSV."""
+    fa = os.path.join(examples_dir, "Smc6.fasta")
+    nwk = os.path.join(examples_dir, "Smc6.nwk")
+    out_json = str(tmp_path / "busted.json")
+    out_csv = str(tmp_path / "busted.csv")
+
+    cmd = [
+        sys.executable, "-m", "hyphaeon.cli", "busted",
+        "-a", fa, "-t", nwk, "-w", dummy_weights,
+        "-o", out_json, "-c", out_csv,
+        "--cpu"
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    assert result.returncode == 0, f"busted CLI failed: {result.stderr}"
+    assert os.path.exists(out_json), "JSON output not created"
+    assert os.path.exists(out_csv), "CSV output not created"
+
+    with open(out_json) as f:
+        data = json.load(f)
+    assert "p_value_acat" in data
+    assert "p_value_simes" in data
+    assert "rate_distributions" in data
+    assert data["taxa"] == 20
+    assert data["sites"] == 1097
+
+    df = pd.read_csv(out_csv)
+    assert "p_ACAT" in df.columns
+    assert "p_Simes" in df.columns
+    assert "Omnibus_LRT" in df.columns
+    assert len(df) == 1
