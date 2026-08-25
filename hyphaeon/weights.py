@@ -81,8 +81,12 @@ def resolve_weights_path(
     Returns the local path to the weights file.
     """
     # 1. Explicit path takes precedence
-    if weights and os.path.exists(weights):
-        return weights
+    if weights:
+        if os.path.exists(weights):
+            return weights
+        pkg_root_weights = Path(__file__).resolve().parent.parent / weights
+        if pkg_root_weights.exists():
+            return str(pkg_root_weights)
 
     # 2. Determine which variant to use
     v = variant or DEFAULT_VARIANT
@@ -217,6 +221,8 @@ def load_arch_config(
         except Exception:
             ckpt = torch.load(path, map_location="cpu", weights_only=False)
         a = ckpt.get("args", {}) if isinstance(ckpt, dict) else {}
+        if not a and isinstance(ckpt, dict):
+            a = ckpt
         return {
             "embed_dim": a.get("embed_dim", _DEFAULT_ARCH["embed_dim"]),
             "num_layers": a.get("num_layers", a.get("layers", _DEFAULT_ARCH["num_layers"])),

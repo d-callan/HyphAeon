@@ -13,6 +13,7 @@ import time
 import json
 import glob
 import argparse
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import scipy.stats as stats
@@ -34,7 +35,8 @@ from .epistasis import run_epistasis_analysis, run_epistatic_sector_mining
 
 DEFAULT_VARIANT_ENV = os.environ.get("AXOMEME_VARIANT", DEFAULT_VARIANT)
 # If set, AXOMEME_WEIGHTS points to a local weights file and bypasses HF download.
-DEFAULT_WEIGHTS_ENV = os.environ.get("AXOMEME_WEIGHTS")
+_local_repo_weights = Path(__file__).resolve().parent.parent / "weights" / "axomeme_v1.pt"
+DEFAULT_WEIGHTS_ENV = os.environ.get("AXOMEME_WEIGHTS", str(_local_repo_weights) if _local_repo_weights.exists() else None)
 
 def ensure_parent_directory(path):
     if path:
@@ -492,46 +494,57 @@ def list_models():
 def cmd_phenotype(args):
     print(f"[*] Executing Directional Phenotype-Genotype Mapping (PhyloWAS)...")
     print(f"[*] Alignment: {args.alignment}")
+    if getattr(args, "tree", None):
+        print(f"[*] Tree:      {args.tree}")
+    else:
+        print(f"[*] Tree:      (extracting from alignment)")
     
     t0 = time.time()
     try:
         res = run_phenotype_association(
             alignment_path=args.alignment,
-            preset=args.preset,
-            foreground=args.foreground,
-            background=args.background,
-            phenotype_file=args.phenotype_file,
-            trait_col=args.trait_col,
-            species_col=args.species_col,
-            continuous=args.continuous,
-            min_taxa_per_site=args.min_taxa,
-            alpha=args.alpha
+            tree_path=getattr(args, "tree", None),
+            weights_path=getattr(args, "weights", DEFAULT_WEIGHTS_ENV),
+            variant=getattr(args, "variant", DEFAULT_VARIANT_ENV),
+            preset=getattr(args, "preset", None),
+            foreground=getattr(args, "foreground", None),
+            background=getattr(args, "background", None),
+            phenotype_file=getattr(args, "phenotype_file", None),
+            trait_col=getattr(args, "trait_col", None),
+            species_col=getattr(args, "species_col", None),
+            continuous=getattr(args, "continuous", False),
+            min_taxa_per_site=getattr(args, "min_taxa", 4),
+            alpha=getattr(args, "alpha", 0.05),
+            cpu=getattr(args, "cpu", False)
         )
     except Exception as e:
         print(f"\n[!] Phenotype Association Error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
         
     elapsed = time.time() - t0
     meta = res["phenotype_meta"]
     
-    print("\n" + "=" * 80)
-    print(f"🎉 PhyloWAS Phenotype Association Complete in {elapsed:.3f} seconds!")
+    print("\n" + "=" * 88)
+    print(f"🎉 PhyloWAS Directional Phenotype Association Complete in {elapsed:.3f} seconds!")
     print(f"   Target Trait: {meta['description']}")
     print(f"   Taxa: {res['taxa_count']} (Foreground: {meta.get('foreground_count', 'N/A')}) | Codon Sites: {res['codon_count']}")
-    print(f"   Spectral Energy (Psi): {res['spectral_energy']:.3f} | Normalized Ratio: {res['norm_spectral_ratio']:.4f}")
+    print(f"   Spectral Energy (Psi): {res['spectral_energy']:.4f} | Normalized Spectral Ratio: {res['norm_spectral_ratio']:.4f}")
     print(f"   Significant Sites (FDR q <= {args.alpha}): {res['significant_sites_count']}")
     print(f"   Compact PARS Signature: {res['compact_pars_signature']}")
-    print("=" * 80)
+    print("=" * 88)
     
     sites = res["sites"]
     top_sites = sites[:15]
     if top_sites:
-        print("\nTop Trait-Associated Codon Sites:")
-        print(f"{'Site':<6} {'Ref':<5} {'Derived':<9} {'Mut':<5} {'Shared':<8} {'Assoc (rho)':<12} {'p-value':<12} {'q-value (FDR)':<14} {'Fg %':<7} {'Bg %':<7}")
-        print("-" * 90)
+        print("\nTop Trait-Associated Codon Sites (Ranked by Transformer Attribution Selection Score):")
+        print(f"{'Site':<6} {'Ref':<5} {'Derived':<9} {'LRT':<7} {'Assoc (rho)':<12} {'Score':<8} {'p-value':<12} {'FDR q-val':<12} {'Fg %':<7} {'Bg %':<7}")
+        print("-" * 92)
         for s in top_sites:
-            q_str = f"{s.get('q_value', 1.0):.3e}" if s.get('q_value', 1.0) < 0.01 else f"{s.get('q_value', 1.0):.3f}"
-            print(f"{s['site']:<6d} {s['ref_aa']:<5s} {s['derived_aa']:<9s} {s['total_mutations']:<5d} {s['shared_foreground_mutations']:<8d} {s['association_rho']:<12.4f} {s['p_value']:<12.3e} {q_str:<14s} {s['foreground_freq_pct']:<7.1f} {s['background_freq_pct']:<7.1f}")
+            q_str = f"{s.get('q_value', 1.0):.2e}" if s.get('q_value', 1.0) < 0.01 else f"{s.get('q_value', 1.0):.3f}"
+            p_str = f"{s.get('p_value', 1.0):.2e}" if s.get('p_value', 1.0) < 0.01 else f"{s.get('p_value', 1.0):.3f}"
+            print(f"{s['site']:<6d} {s['ref_aa']:<5s} {s['derived_aa']:<9s} {s['axomeme_lrt']:<7.2f} {s['association_rho']:<12.4f} {s.get('score', 0.0):<8.3f} {p_str:<12s} {q_str:<12s} {s['foreground_freq_pct']:<7.1f} {s['background_freq_pct']:<7.1f}")
 
     if args.output:
         ensure_parent_directory(args.output)
@@ -679,6 +692,9 @@ def main():
     # 2. Phenotype Subcommand (PhyloWAS)
     pheno_parser = subparsers.add_parser("phenotype", aliases=["phylowas", "trait"], help="Run directional phenotype-genotype association & PARS signature extraction")
     pheno_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
+    pheno_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded)")
+    pheno_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
+    pheno_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from HF (default: {DEFAULT_VARIANT})")
     pheno_parser.add_argument("-p", "--preset", choices=list(PRESETS.keys()), help=f"Curated phenotype preset: {', '.join(PRESETS.keys())}")
     pheno_parser.add_argument("-fg", "--foreground", help="Inline comma-separated list or regex pattern of foreground species")
     pheno_parser.add_argument("-bg", "--background", help="Optional explicit list of background control species")
@@ -686,8 +702,9 @@ def main():
     pheno_parser.add_argument("-tc", "--trait-col", help="Name of the trait column in phenotype file")
     pheno_parser.add_argument("-sc", "--species-col", help="Name of the species/taxa column in phenotype file")
     pheno_parser.add_argument("--continuous", action="store_true", help="Treat trait values as continuous phylogenetic contrasts")
-    pheno_parser.add_argument("--min-taxa", type=int, default=10, help="Minimum sequenced taxa required per site")
+    pheno_parser.add_argument("--min-taxa", type=int, default=4, help="Minimum sequenced taxa required per site")
     pheno_parser.add_argument("--alpha", type=float, default=0.05, help="FDR significance threshold")
+    pheno_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
     pheno_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     pheno_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
 
