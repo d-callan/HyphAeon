@@ -57,13 +57,40 @@ def get_aa_token(codon: str) -> int:
 
 def parse_alignment_sequences(filepath: str) -> Dict[str, str]:
     """
-    Parses FASTA or NEXUS format alignments (including compressed .gz files).
+    Parses FASTA, NEXUS, or PHYLIP (sequential/interleaved) format alignments (including compressed .gz files).
     """
     open_func = gzip.open if filepath.endswith('.gz') else open
     with open_func(filepath, 'rt') as f:
         full_text = f.read()
 
-    # FASTA format
+    # 1. PHYLIP / Sequential / Interleaved format (starts with 'ntaxa nsites' header)
+    lines_nonempty = [l.strip() for l in full_text.splitlines() if l.strip()]
+    if lines_nonempty:
+        first_tokens = lines_nonempty[0].split()
+        if len(first_tokens) == 2 and first_tokens[0].isdigit() and first_tokens[1].isdigit():
+            seq_dict = {}
+            curr_name = None
+            curr_seq = []
+            for line in lines_nonempty[1:]:
+                parts = line.split(None, 1)
+                if len(line) <= 35 and not any(c in line for c in '- ') and (line.isalnum() or '_' in line):
+                    if curr_name:
+                        seq_dict[curr_name] = "".join(curr_seq).upper().replace('U', 'T')
+                    curr_name = line
+                    curr_seq = []
+                elif len(parts) == 2 and (parts[0].isalnum() or '_' in parts[0]) and len(parts[0]) <= 35 and len(parts[1]) > 10:
+                    if curr_name:
+                        seq_dict[curr_name] = "".join(curr_seq).upper().replace('U', 'T')
+                    curr_name = parts[0]
+                    curr_seq = [parts[1].replace(' ', '')]
+                else:
+                    curr_seq.append(line.replace(' ', ''))
+            if curr_name:
+                seq_dict[curr_name] = "".join(curr_seq).upper().replace('U', 'T')
+            if seq_dict and len(seq_dict) >= int(first_tokens[0]):
+                return seq_dict
+
+    # 2. FASTA format
     if full_text.strip().startswith('>'):
         fasta_lines = []
         for line in full_text.splitlines():

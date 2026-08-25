@@ -523,50 +523,140 @@ class PhyloAxialTransformer(nn.Module):
 # DOWNSTREAM FOUNDATION READOUT HEADS (PILLARS 4 & 5)
 # ==============================================================================
 
+# 16 LRT Thresholds spanning 0.1 to 500.0
+CORAL_LRT_THRESHOLDS = torch.tensor([
+    0.10, 0.50, 1.00, 2.00, 3.841, 5.991, 10.0, 15.0, 
+    25.0, 40.0, 65.0, 100.0, 150.0, 220.0, 350.0, 500.0
+], dtype=torch.float32)
+
+# 12 -log10(p) Thresholds spanning p=0.5 down to p=1e-15
+CORAL_LOGP_THRESHOLDS = torch.tensor([
+    0.301, 0.699, 1.000, 1.301, 2.000, 3.000, 
+    4.000, 6.000, 8.000, 10.00, 12.00, 15.00
+], dtype=torch.float32)
+
+# 12 log(omega_3) Thresholds spanning omega=1.0 to omega=1000.0
+CORAL_OMEGA3_THRESHOLDS = torch.tensor([
+    1.00, 1.50, 2.00, 3.00, 5.00, 8.00, 
+    15.0, 30.0, 60.0, 150.0, 400.0, 1000.0
+], dtype=torch.float32)
+
+def decode_coral_lrt(logits):
+    """Smooth continuous integration for LRT."""
+    probs = torch.sigmoid(logits)
+    log_thresh = torch.log1p(CORAL_LRT_THRESHOLDS.to(logits.device))
+    deltas = torch.cat([log_thresh[0:1], log_thresh[1:] - log_thresh[:-1]])
+    expected_log_lrt = (probs * deltas.unsqueeze(0)).sum(dim=-1)
+    return torch.expm1(expected_log_lrt)
+
+def decode_coral_logp(logits):
+    """Smooth continuous integration for -log10(p)."""
+    probs = torch.sigmoid(logits)
+    thresh = CORAL_LOGP_THRESHOLDS.to(logits.device)
+    deltas = torch.cat([thresh[0:1], thresh[1:] - thresh[:-1]])
+    expected_logp = (probs * deltas.unsqueeze(0)).sum(dim=-1)
+    return expected_logp
+
+def decode_coral_omega3(logits):
+    """Smooth continuous integration for omega_3."""
+    probs = torch.sigmoid(logits)
+    log_thresh = torch.log(CORAL_OMEGA3_THRESHOLDS.to(logits.device))
+    deltas = torch.cat([log_thresh[0:1], log_thresh[1:] - log_thresh[:-1]])
+    expected_log_omega = (probs * deltas.unsqueeze(0)).sum(dim=-1)
+    return torch.exp(expected_log_omega)
+
+
+class CoralHead(nn.Module):
+    """
+    Rank-Consistent Ordinal Regression Head (Cao et al. 2020).
+    Guarantees monotonic threshold cutoffs b_1 > b_2 > ... > b_K via cumulative softplus.
+    """
+    def __init__(self, in_features, num_thresholds, b0_init=0.0):
+        super().__init__()
+        self.num_thresholds = num_thresholds
+        self.fc = nn.Linear(in_features, 1, bias=False)
+        self.b0 = nn.Parameter(torch.tensor(float(b0_init)))
+        self.theta_steps = nn.Parameter(torch.full((num_thresholds - 1,), 0.40))
+        nn.init.normal_(self.fc.weight, mean=0.0, std=1.0 / (in_features ** 0.5))
+
+    def get_cutoffs(self):
+        steps = F.softplus(self.theta_steps)
+        cum_steps = torch.cumsum(steps, dim=0)
+        return torch.cat([self.b0.unsqueeze(0), self.b0 - cum_steps])
+
+    def forward(self, x):
+        proj = self.fc(x)
+        cutoffs = self.get_cutoffs().to(device=x.device, dtype=x.dtype)
+        return proj + cutoffs.unsqueeze(0)
+
+
 class BustedMultiTaskHead(nn.Module):
     """
-    Pillar 4: Alignment-Wide Omnibus Selection Head (BUSTED & BUSTED+S Emulation).
-    Uses Multi-Query Cross-Attention Pooling to combine site-level representations
-    into whole-gene episodic selection statistics.
+    Pillar 4: Alignment-Wide Omnibus Selection Head (BUSTED & BUSTED+S Emulation)
+    with Rank-Consistent Ordinal Logits (CORAL).
+    Eliminates regression compression at both the neutral floor and extreme selection bursts.
     """
-    def __init__(self, embed_dim=384, num_queries=4, num_heads=4, hidden_dim=128, dropout=0.1):
+    def __init__(self, embed_dim=384, num_queries=4, num_heads=4, hidden_dim=128, pool_dim=256, dropout=0.1):
         super().__init__()
         self.num_queries = num_queries
         self.embed_dim = embed_dim
-        self.queries = nn.Parameter(torch.randn(1, num_queries, embed_dim) * 0.02)
-        self.cross_attn = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
-        self.norm = nn.LayerNorm(embed_dim)
+        self.pool_dim = pool_dim
+        self.in_proj = nn.Linear(embed_dim, pool_dim) if embed_dim != pool_dim else nn.Identity()
+        self.queries = nn.Parameter(torch.randn(1, num_queries, pool_dim) * 0.02)
+        self.cross_attn = nn.MultiheadAttention(pool_dim, num_heads, batch_first=True)
+        self.norm = nn.LayerNorm(pool_dim)
+        
         self.mlp_shared = nn.Sequential(
-            nn.Linear(num_queries * embed_dim, hidden_dim),
+            nn.Linear(num_queries * pool_dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout)
         )
-        self.head_sqrt_lrt = nn.Linear(hidden_dim, 1)
-        self.head_logp = nn.Linear(hidden_dim, 1)
+        
+        # 1. Binary Selection Classifier (alpha = 0.05 gate)
         self.head_cls = nn.Linear(hidden_dim, 1)
-        self.head_glob_logp = nn.Linear(hidden_dim, 1)
-        self.head_syn_var = nn.Linear(hidden_dim, 1)
-        self.head_omega = nn.Linear(hidden_dim, 3)
+        
+        # 2. CORAL LRT Head (16 thresholds)
+        self.coral_lrt = CoralHead(hidden_dim, num_thresholds=len(CORAL_LRT_THRESHOLDS), b0_init=1.0)
+        
+        # 3. CORAL -log10(p) Head (12 thresholds)
+        self.coral_logp = CoralHead(hidden_dim, num_thresholds=len(CORAL_LOGP_THRESHOLDS), b0_init=0.5)
+        
+        # 4. CORAL omega_3 Head (12 thresholds)
+        self.coral_omega3 = CoralHead(hidden_dim, num_thresholds=len(CORAL_OMEGA3_THRESHOLDS), b0_init=0.0)
+        
+        # 5. Synonymous Rate Variation Var(alpha)
+        self.head_syn_var = nn.Sequential(
+            nn.Linear(hidden_dim, 32),
+            nn.GELU(),
+            nn.Linear(32, 1)
+        )
+        
+        # 6. Omega Mixture Proportions (p1, p2, p3)
         self.head_prop = nn.Linear(hidden_dim, 3)
 
-    def forward(self, x):
-        """
-        x: [B, L, D] or [1, L, D] site embeddings.
-        """
+    def forward(self, x, mask=None):
         if x.dim() == 2:
             x = x.unsqueeze(0)
         B = x.shape[0]
+        x_proj = self.in_proj(x)
         q = self.queries.expand(B, -1, -1)
-        attn_out, _ = self.cross_attn(q, x, x)
+        attn_out, _ = self.cross_attn(q, x_proj, x_proj, key_padding_mask=mask)
         h = self.norm(attn_out).reshape(B, -1)
         feat = self.mlp_shared(h)
+        
+        logits_lrt = self.coral_lrt(feat)
+        logits_logp = self.coral_logp(feat)
+        logits_omega3 = self.coral_omega3(feat)
+        
         return {
-            "sqrt_lrt": torch.clamp(self.head_sqrt_lrt(feat), min=0.0),
-            "logp": self.head_logp(feat),
-            "cls_prob": torch.sigmoid(self.head_cls(feat)),
-            "glob_logp": self.head_glob_logp(feat),
-            "syn_var": torch.clamp(self.head_syn_var(feat), min=0.0),
-            "omega_vals": F.softplus(self.head_omega(feat)),
+            "cls_prob": torch.sigmoid(self.head_cls(feat)).squeeze(-1),
+            "logits_lrt": logits_lrt,
+            "logits_logp": logits_logp,
+            "logits_omega3": logits_omega3,
+            "pred_lrt": decode_coral_lrt(logits_lrt),
+            "pred_logp": decode_coral_logp(logits_logp),
+            "pred_omega3": decode_coral_omega3(logits_omega3),
+            "syn_var": F.softplus(self.head_syn_var(feat)).squeeze(-1),
             "omega_prop": torch.softmax(self.head_prop(feat), dim=-1)
         }
 

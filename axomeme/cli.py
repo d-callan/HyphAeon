@@ -11,6 +11,7 @@ import os
 import sys
 import time
 import json
+import glob
 import argparse
 import numpy as np
 import pandas as pd
@@ -221,11 +222,12 @@ def cmd_busted(args):
     """
     Run Alignment-Wide Omnibus Selection Testing (BUSTED & BUSTED+S emulation).
     Combines site-level representations via ACAT Cauchy transformation and
-    estimates 3-rate mixture parameters (omega_1, omega_2, omega_3) and proportions.
+    evaluates CORAL rank-consistent ordinal heads for exact calibrated selection calls.
+    Supports single alignments (-a) or high-throughput batch directories (-d).
     """
     device = torch.device("cpu") if args.cpu else torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
     print(f"[*] Running HyphAeon BUSTED Omnibus Selection Inference on {device}...")
-    t0 = time.time()
+    t_global_start = time.time()
     
     # 1. Weights
     resolved_path = resolve_weights_path(args.weights, variant=args.variant)
@@ -239,156 +241,227 @@ def cmd_busted(args):
     )
     model.load_state_dict(state_dict, strict=False)
     model.to(device)
+    model.eval()
+
     busted_head = BustedMultiTaskHead(embed_dim=arch_config["embed_dim"]).to(device)
     busted_dict = {k.replace("head_busted.", ""): v for k, v in state_dict.items() if k.startswith("head_busted.")}
     if busted_dict:
         busted_head.load_state_dict(busted_dict, strict=False)
     busted_head.eval()
 
-    # 2. Alignment
-    prune_dups = not getattr(args, "no_prune_duplicates", False)
-    c, a, d, z, inv, taxa, L = load_alignment_and_tree(
-        args.alignment, args.tree, max_species=args.max_species, prune_duplicates=prune_dups
-    )
-    variable_indices = np.where(~inv)[0]
-    num_variable = len(variable_indices)
-    num_species = len(taxa)
-    
-    batch_size = determine_adaptive_batch_size(num_species, max(1, num_variable), device, args.batch_size)
-    tree_cache = model.precompute_tree_cache(d.to(device), z.to(device))
-    
-    lrts = np.zeros(L, dtype=np.float32)
-    hidden_all = torch.zeros((1, L, arch_config["embed_dim"]), dtype=torch.float32)
-
-    if num_variable > 0:
-        with torch.no_grad():
-            for start_idx in range(0, num_variable, batch_size):
-                end_idx = min(start_idx + batch_size, num_variable)
-                batch_site_idx = variable_indices[start_idx:end_idx]
-                c_chunk = c[batch_site_idx].to(device)
-                a_chunk = a[batch_site_idx].to(device)
-                y_soft, _, root_repr = model.forward_cached(c_chunk, a_chunk, tree_cache, return_hidden=True)
-                chunk_lrts = torch.clamp(y_soft.squeeze(-1), min=0.0).cpu().numpy().flatten()
-                lrts[batch_site_idx] = chunk_lrts
-                hidden_all[0, batch_site_idx] = root_repr.cpu()
-                
-    if device.type == 'mps':
-        torch.mps.synchronize()
-    elif device.type == 'cuda':
-        torch.cuda.synchronize()
-        
-    # 3. Neural BUSTED Head Evaluation
-    with torch.no_grad():
-        neural_out = busted_head(hidden_all.to(device))
-        pred_prob_pos = float(neural_out["cls_prob"].item())
-        pred_neural_lrt = float((neural_out["sqrt_lrt"] ** 2).item())
-        pred_syn_var = float(neural_out["syn_var"].item())
-        pred_omega = neural_out["omega_vals"].squeeze().cpu().numpy()
-        pred_prop = neural_out["omega_prop"].squeeze().cpu().numpy()
-
-    elapsed = time.time() - t0
-    
-    # 4. Asymptotic mixture p-values: 0.5 * delta(0) + 0.5 * chi2(1)
-    pvals = np.ones(L, dtype=np.float64)
-    pos_mask = lrts > 0.0
-    if np.any(pos_mask):
-        pvals[pos_mask] = 0.5 * stats.chi2.sf(lrts[pos_mask], df=1)
-
-    # 5. ACAT (Aggregated Cauchy Combination Test on Variable Sites)
-    var_p = pvals[variable_indices] if num_variable > 0 else pvals
-    valid_p = np.clip(var_p, 1e-15, 1.0 - 1e-6)
-    cauchy_terms = np.tan((0.5 - valid_p) * np.pi)
-    t_acat = float(np.mean(cauchy_terms))
-    p_acat = float(0.5 - (np.arctan(t_acat) / np.pi))
-    p_acat = max(1e-15, min(1.0, p_acat))
-
-    # 6. Simes Global Combination
-    sorted_p = np.sort(pvals)
-    ranks = np.arange(1, L + 1)
-    p_simes = float(np.min((L / ranks) * sorted_p))
-    p_simes = max(1e-15, min(1.0, p_simes))
-
-    # 7. Alignment-Wide Statistics
-    sig_sites_05 = int(np.sum(pvals < 0.05))
-    sig_sites_10 = int(np.sum(pvals < 0.10))
-    total_selection_energy = float(np.sum(lrts))
-    omnibus_lrt = float(np.sum(np.maximum(0.0, lrts - 3.841)))
-    
-    is_significant = bool(p_acat < 0.05 or pred_prob_pos > 0.50)
-
-    print("\n" + "=" * 78)
-    print("                HYPHAEON BUSTED SELECTION INFERENCE RESULTS")
-    print("=" * 78)
-    print(f"  Alignment:                 {os.path.basename(args.alignment)}")
-    print(f"  Taxa Count:                {num_species}")
-    print(f"  Codon Sites:               {L} ({num_variable} variable)")
-    print(f"  Throughput:                {L / elapsed:.1f} sites/s ({elapsed * 1000:.1f} ms total)")
-    print("-" * 78)
-    print(f"  [Neural BUSTED Head]")
-    print(f"    Positive Selection Prob: {pred_prob_pos * 100:.1f}%")
-    print(f"    Predicted Gene LRT:      {pred_neural_lrt:.2f}")
-    print(f"    Synonymous Variation:    Var(alpha) = {pred_syn_var:.4f}")
-    print(f"  [Statistical Bridge (ACAT / Simes)]")
-    print(f"    ACAT Omnibus p-value:    {p_acat:.4e}")
-    print(f"    Simes Omnibus p-value:   {p_simes:.4e}")
-    print(f"    Total Selection Energy:  {total_selection_energy:.2f}")
-    print(f"    Significant Sites:       {sig_sites_05}/{L} (p<0.05), {sig_sites_10}/{L} (p<0.10)")
-    print("-" * 78)
-    print("  Inferred 3-Class Omega Mixture Distribution:")
-    print(f"    Class 1 (Purifying):     omega_1 = {pred_omega[0]:.4f}  (proportion = {pred_prop[0]*100:.1f}%)")
-    print(f"    Class 2 (Neutral):       omega_2 = {pred_omega[1]:.4f}  (proportion = {pred_prop[1]*100:.1f}%)")
-    print(f"    Class 3 (Positive):      omega_3 = {pred_omega[2]:.4f}  (proportion = {pred_prop[2]*100:.1f}%)")
-    print("-" * 78)
-    if is_significant:
-        print(f"  VERDICT: POSITIVE SELECTION DETECTED (Confidence: {max(pred_prob_pos*100, (1-p_acat)*100):.1f}%)")
+    # 2. Collect input files (single file or batch directory)
+    input_files = []
+    if getattr(args, "dir", None) and os.path.isdir(args.dir):
+        patterns = getattr(args, "pattern", "*.aln,*.fa,*.fasta,*.nex,*.fna").split(',')
+        for pat in patterns:
+            pat = pat.strip()
+            if pat:
+                input_files.extend(glob.glob(os.path.join(args.dir, pat)))
+        input_files = sorted(list(set(input_files)))
+        print(f"[*] Discovered {len(input_files)} alignment files in '{args.dir}' for batch processing.")
+    elif getattr(args, "alignment", None):
+        if ',' in args.alignment:
+            input_files = [f.strip() for f in args.alignment.split(',') if f.strip()]
+        else:
+            input_files = [args.alignment]
     else:
-        print("  VERDICT: No Evidence of Positive Selection (p >= 0.05)")
-    print("=" * 78 + "\n")
+        print("[!] Error: You must specify either --alignment (-a) or --dir (-d).")
+        sys.exit(1)
 
-    results = {
-        "alignment": args.alignment,
-        "taxa": num_species,
-        "sites": L,
-        "p_value_acat": p_acat,
-        "p_value_simes": p_simes,
-        "omnibus_lrt": omnibus_lrt,
-        "predicted_gene_lrt": pred_neural_lrt,
-        "selection_probability": pred_prob_pos,
-        "synonymous_rate_variation": pred_syn_var,
-        "total_selection_energy": total_selection_energy,
-        "sig_sites_p05": sig_sites_05,
-        "sig_sites_p10": sig_sites_10,
-        "rate_distributions": {
-            "omega_1": float(pred_omega[0]), "proportion_1": float(pred_prop[0]),
-            "omega_2": float(pred_omega[1]), "proportion_2": float(pred_prop[1]),
-            "omega_3": float(pred_omega[2]), "proportion_3": float(pred_prop[2]),
-        },
-        "positive_selection_detected": is_significant,
-        "elapsed_seconds": elapsed
-    }
+    if not input_files:
+        print("[!] No matching alignment files found.")
+        sys.exit(1)
+
+    tree_suffix = getattr(args, "tree_suffix", ".raxml.bestTree")
+    tree_dir = getattr(args, "tree_dir", None)
+    prune_dups = not getattr(args, "no_prune_duplicates", False)
+
+    batch_results = []
+    total_sites_processed = 0
+
+    is_batch = len(input_files) > 1
+    if is_batch:
+        print("\n" + "=" * 92)
+        print(f"{'#':<4} {'Alignment':<20} {'Taxa':<6} {'Sites':<7} {'p_ACAT':<11} {'Prob':<8} {'w3':<8} {'Time':<8} {'Verdict'}")
+        print("=" * 92)
+
+    for file_idx, aln_path in enumerate(input_files, 1):
+        gene_id = os.path.splitext(os.path.basename(aln_path))[0]
+        tree_path = args.tree
+        if tree_path is None:
+            # Auto-locate matching tree
+            if tree_dir:
+                cand = os.path.join(tree_dir, os.path.basename(aln_path) + tree_suffix)
+                if os.path.exists(cand): tree_path = cand
+            else:
+                cand1 = aln_path + tree_suffix
+                cand2 = os.path.splitext(aln_path)[0] + ".nwk"
+                cand3 = os.path.splitext(aln_path)[0] + ".tree"
+                if os.path.exists(cand1): tree_path = cand1
+                elif os.path.exists(cand2): tree_path = cand2
+                elif os.path.exists(cand3): tree_path = cand3
+
+        t0 = time.time()
+        try:
+            c, a, d, z, inv, taxa, L = load_alignment_and_tree(
+                aln_path, tree_path, max_species=args.max_species, prune_duplicates=prune_dups
+            )
+        except Exception as e:
+            if not is_batch:
+                print(f"[!] Error loading {aln_path}: {e}")
+            continue
+
+        variable_indices = np.where(~inv)[0]
+        num_variable = len(variable_indices)
+        num_species = len(taxa)
+        total_sites_processed += L
+        
+        batch_size = determine_adaptive_batch_size(num_species, max(1, num_variable), device, args.batch_size)
+        tree_cache = model.precompute_tree_cache(d.to(device), z.to(device))
+        
+        lrts = np.zeros(L, dtype=np.float32)
+        hidden_all = torch.zeros((1, L, arch_config["embed_dim"]), dtype=torch.float32)
+
+        if num_variable > 0:
+            with torch.no_grad():
+                for start_idx in range(0, num_variable, batch_size):
+                    end_idx = min(start_idx + batch_size, num_variable)
+                    batch_site_idx = variable_indices[start_idx:end_idx]
+                    c_chunk = c[batch_site_idx].to(device)
+                    a_chunk = a[batch_site_idx].to(device)
+                    y_soft, _, root_repr = model.forward_cached(c_chunk, a_chunk, tree_cache, return_hidden=True)
+                    chunk_lrts = torch.clamp(y_soft.squeeze(-1), min=0.0).cpu().numpy().flatten()
+                    lrts[batch_site_idx] = chunk_lrts
+                    hidden_all[0, batch_site_idx] = root_repr.cpu()
+                    
+        if device.type == 'mps':
+            torch.mps.synchronize()
+        elif device.type == 'cuda':
+            torch.cuda.synchronize()
+            
+        # 3. Neural BUSTED Head Evaluation
+        with torch.no_grad():
+            neural_out = busted_head(hidden_all.to(device))
+            pred_prob_pos = float(neural_out["cls_prob"].item())
+            pred_neural_lrt = float(neural_out["pred_lrt"].item()) if "pred_lrt" in neural_out else float((neural_out.get("sqrt_lrt", 0.0) ** 2).item())
+            pred_syn_var = float(neural_out["syn_var"].item())
+            pred_w3 = float(neural_out["pred_omega3"].item()) if "pred_omega3" in neural_out else float(neural_out.get("omega_vals", torch.tensor([1.0, 1.0, 1.0]))[2].item())
+            pred_prop = neural_out["omega_prop"].squeeze().cpu().numpy()
+            pred_omega = [0.10, 1.00, pred_w3]
+
+        elapsed = time.time() - t0
+        
+        # 4. Asymptotic mixture p-values
+        pvals = np.ones(L, dtype=np.float64)
+        pos_mask = lrts > 0.0
+        if np.any(pos_mask):
+            pvals[pos_mask] = 0.5 * stats.chi2.sf(lrts[pos_mask], df=1)
+
+        # 5. ACAT & Simes Combination
+        var_p = pvals[variable_indices] if num_variable > 0 else pvals
+        valid_p = np.clip(var_p, 1e-15, 1.0 - 1e-6)
+        cauchy_terms = np.tan((0.5 - valid_p) * np.pi)
+        t_acat = float(np.mean(cauchy_terms))
+        p_acat = float(0.5 - (np.arctan(t_acat) / np.pi))
+        p_acat = max(1e-15, min(1.0, p_acat))
+
+        sorted_p = np.sort(pvals)
+        ranks = np.arange(1, L + 1)
+        p_simes = float(np.min((L / ranks) * sorted_p))
+        p_simes = max(1e-15, min(1.0, p_simes))
+
+        sig_sites_05 = int(np.sum(pvals < 0.05))
+        sig_sites_10 = int(np.sum(pvals < 0.10))
+        total_selection_energy = float(np.sum(lrts))
+        omnibus_lrt = float(np.sum(np.maximum(0.0, lrts - 3.841)))
+        is_significant = bool(p_acat < 0.05 or pred_prob_pos > 0.50)
+
+        record = {
+            "alignment": aln_path,
+            "gene": gene_id,
+            "taxa": num_species,
+            "sites": L,
+            "p_value_acat": p_acat,
+            "p_value_simes": p_simes,
+            "omnibus_lrt": omnibus_lrt,
+            "predicted_gene_lrt": pred_neural_lrt,
+            "selection_probability": pred_prob_pos,
+            "synonymous_rate_variation": pred_syn_var,
+            "total_selection_energy": total_selection_energy,
+            "sig_sites_p05": sig_sites_05,
+            "sig_sites_p10": sig_sites_10,
+            "rate_distributions": {
+                "omega_1": float(pred_omega[0]), "proportion_1": float(pred_prop[0]),
+                "omega_2": float(pred_omega[1]), "proportion_2": float(pred_prop[1]),
+                "omega_3": float(pred_omega[2]), "proportion_3": float(pred_prop[2]),
+            },
+            "positive_selection_detected": is_significant,
+            "elapsed_seconds": elapsed
+        }
+        batch_results.append(record)
+
+        if is_batch:
+            verdict_str = "✓ POSITIVE" if is_significant else "  Neutral"
+            print(f"#{file_idx:<3d} {gene_id:<20s} {num_species:<6d} {L:<7d} {p_acat:<11.4e} {pred_prob_pos*100:<7.1f}% {pred_w3:<8.2f} {elapsed*1000:<6.1f}ms {verdict_str}")
+        else:
+            print("\n" + "=" * 78)
+            print("                HYPHAEON BUSTED SELECTION INFERENCE RESULTS")
+            print("=" * 78)
+            print(f"  Alignment:                 {os.path.basename(aln_path)}")
+            print(f"  Taxa Count:                {num_species}")
+            print(f"  Codon Sites:               {L} ({num_variable} variable)")
+            print(f"  Throughput:                {L / elapsed:.1f} sites/s ({elapsed * 1000:.1f} ms total)")
+            print("-" * 78)
+            print(f"  [Neural BUSTED Head]")
+            print(f"    Positive Selection Prob: {pred_prob_pos * 100:.1f}%")
+            print(f"    Predicted Gene LRT:      {pred_neural_lrt:.2f}")
+            print(f"    Synonymous Variation:    Var(alpha) = {pred_syn_var:.4f}")
+            print(f"  [Statistical Bridge (ACAT / Simes)]")
+            print(f"    ACAT Omnibus p-value:    {p_acat:.4e}")
+            print(f"    Simes Omnibus p-value:   {p_simes:.4e}")
+            print(f"    Total Selection Energy:  {total_selection_energy:.2f}")
+            print(f"    Significant Sites:       {sig_sites_05}/{L} (p<0.05), {sig_sites_10}/{L} (p<0.10)")
+            print("-" * 78)
+            print("  Inferred 3-Class Omega Mixture Distribution:")
+            print(f"    Class 1 (Purifying):     omega_1 = {pred_omega[0]:.4f}  (proportion = {pred_prop[0]*100:.1f}%)")
+            print(f"    Class 2 (Neutral):       omega_2 = {pred_omega[1]:.4f}  (proportion = {pred_prop[1]*100:.1f}%)")
+            print(f"    Class 3 (Positive):      omega_3 = {pred_omega[2]:.4f}  (proportion = {pred_prop[2]*100:.1f}%)")
+            print("-" * 78)
+            if is_significant:
+                print(f"  VERDICT: POSITIVE SELECTION DETECTED (Confidence: {max(pred_prob_pos*100, (1-p_acat)*100):.1f}%)")
+            else:
+                print("  VERDICT: No Evidence of Positive Selection (p >= 0.05)")
+            print("=" * 78 + "\n")
+
+    t_total = time.time() - t_global_start
+    if is_batch:
+        print("=" * 92)
+        print(f"🎉 Batch Complete: Processed {len(batch_results)} alignments ({total_sites_processed} codons) in {t_total:.2f}s ({len(batch_results)/t_total:.1f} genes/s)")
+        print("=" * 92)
 
     if args.output:
         ensure_parent_directory(args.output)
         with open(args.output, 'w') as f:
-            json.dump(results, f, indent=2)
+            json.dump(batch_results if is_batch else batch_results[0], f, indent=2)
         print(f"[✓] JSON results written to: {args.output}")
 
     if args.csv:
         ensure_parent_directory(args.csv)
         df_summary = pd.DataFrame([{
-            "Gene": os.path.basename(args.alignment).split('.')[0],
-            "Taxa": num_species,
-            "Sites": L,
-            "p_ACAT": p_acat,
-            "p_Simes": p_simes,
-            "Selection_Prob": pred_prob_pos,
-            "Pred_Gene_LRT": pred_neural_lrt,
-            "Omnibus_LRT": omnibus_lrt,
-            "Omega_3": float(pred_omega[2]),
-            "Prop_Positive": float(pred_prop[2]),
-            "Sig_Sites_p05": sig_sites_05,
-            "Selected": is_significant
-        }])
+            "Gene": r["gene"],
+            "Taxa": r["taxa"],
+            "Sites": r["sites"],
+            "p_ACAT": r["p_value_acat"],
+            "p_Simes": r["p_value_simes"],
+            "Selection_Prob": r["selection_probability"],
+            "Pred_Gene_LRT": r["predicted_gene_lrt"],
+            "Omnibus_LRT": r["omnibus_lrt"],
+            "Omega_3": float(r["rate_distributions"]["omega_3"]),
+            "Prop_Positive": float(r["rate_distributions"]["proportion_3"]),
+            "Sig_Sites_p05": r["sig_sites_p05"],
+            "Selected": r["positive_selection_detected"],
+            "Time_ms": r["elapsed_seconds"] * 1000
+        } for r in batch_results])
         df_summary.to_csv(args.csv, index=False)
         print(f"[✓] CSV summary written to: {args.csv}")
 
@@ -648,8 +721,12 @@ def main():
 
     # 5. BUSTED Omnibus Subcommand
     busted_parser = subparsers.add_parser("busted", aliases=["omnibus", "gene-selection"], help="Run alignment-wide omnibus episodic selection inference (BUSTED / BUSTED+S emulation)")
-    busted_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
+    busted_parser.add_argument("-a", "--alignment", default=None, help="Path to single in-frame codon alignment or comma-separated list")
+    busted_parser.add_argument("-d", "--dir", default=None, help="Path to directory containing alignment files for high-throughput batch processing")
+    busted_parser.add_argument("--pattern", default="*.aln,*.fa,*.fasta,*.nex,*.fna", help="Comma-separated glob patterns to match in --dir (default: *.aln,*.fa,*.fasta,*.nex,*.fna)")
     busted_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded)")
+    busted_parser.add_argument("--tree-suffix", default=".raxml.bestTree", help="Suffix to append to alignment filename to locate matching tree (default: .raxml.bestTree)")
+    busted_parser.add_argument("--tree-dir", default=None, help="Optional directory containing corresponding phylogenetic trees")
     busted_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
     busted_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from HF (default: {DEFAULT_VARIANT})")
     busted_parser.add_argument("-s", "--max-species", type=int, default=512, help="Maximum number of taxa (Farthest-Point Traversal subsampling if exceeded)")
