@@ -30,7 +30,7 @@ from .weights import (
     HF_REPO_ID,
 )
 from .phenotype import run_phenotype_association, PRESETS
-from .epistasis import run_epistatic_sector_mining
+from .epistasis import run_epistasis_analysis, run_epistatic_sector_mining
 
 DEFAULT_VARIANT_ENV = os.environ.get("AXOMEME_VARIANT", DEFAULT_VARIANT)
 # If set, AXOMEME_WEIGHTS points to a local weights file and bypasses HF download.

@@ -500,7 +500,7 @@ def run_epistasis_analysis(
         window_size=config['window_size'],
     ).to(device)
     state_dict = load_weights(weights=weights_path, map_location=device)
-    model.load_state_dict(state_dict)
+    model.load_state_dict(state_dict, strict=False)
     model.eval()
     
     d_dev = d.to(device)
