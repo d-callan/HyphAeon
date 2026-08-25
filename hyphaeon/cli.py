@@ -595,9 +595,9 @@ def cmd_epistasis(args):
     
     print("\n" + "=" * 82)
     print(f"🎉 Epistatic Analysis Complete in {elapsed:.3f} seconds!")
-    print(f"   Taxa: {res['taxa_count']} | Codons: {res['codon_count']} | Evaluated Branches: {res['branch_count']}")
+    print(f"   Taxa: {res['taxa_count']} | Codons: {res['codon_count']} | Evaluated Branches: {res.get('branch_count', res.get('evaluated_branches', 0))}")
     max_fdr = getattr(args, "max_fdr", 0.05)
-    print(f"   Co-Selection Edges (FDR q <= {max_fdr}): {res['coevolution_edges_count']} | Discovered Sectors: {res['sectors_discovered']}")
+    print(f"   Co-Selection Edges (FDR q <= {max_fdr}): {len(edges)} | Discovered Sectors: {len(sectors)}")
     print("=" * 82)
     
     # 1. Top Co-Selection Pairs
