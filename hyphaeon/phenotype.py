@@ -39,7 +39,7 @@ from .weights import (
 )
 
 DEFAULT_WEIGHTS = "weights/axomeme_v1.pt"
-from .epistasis import compute_phylogenetic_branch_attributions
+from .epistasis import compute_transformer_attributions
 
 REV_AA_MAP = {v: k for k, v in AA_MAP.items()}
 
@@ -335,8 +335,8 @@ def run_phenotype_association(
     tree_cache = model.precompute_tree_cache(d_dev, z_dev)
 
     # 5. Extract Transformer Phylogenetic Attributions
-    branch_attr, leaf_attr, lrts, pvals, cons_aas, branch_names = compute_phylogenetic_branch_attributions(
-        model, c_tensor, a_tensor, tree_cache, tree_obj, taxa, device, batch_size=batch_size
+    leaf_attr, lrts, pvals, cons_aas = compute_transformer_attributions(
+        model, c_tensor, a_tensor, tree_cache, taxa, device, batch_size=batch_size
     )
 
     # 6. Directional Unit-Hypersphere Attribution Projection
