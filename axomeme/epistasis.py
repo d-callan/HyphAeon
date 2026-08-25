@@ -228,7 +228,10 @@ def extract_epistatic_sectors_tse(
     lrts: np.ndarray,
     consensus_aas: List[str],
     min_clique_size: int = 3,
-    max_overlap: float = 0.50
+    max_overlap: float = 0.50,
+    focal_taxon: Optional[str] = None,
+    a_np: Optional[np.ndarray] = None,
+    taxa: Optional[List[str]] = None
 ) -> List[Dict[str, Any]]:
     """
     Two-Stage Seed-and-Extend (TSE) epistatic sector mining using greedy modularity
@@ -266,19 +269,52 @@ def extract_epistatic_sectors_tse(
         shared_taxa_cnt = int(np.sum(np.all(sub_A > 0, axis=0)))
         mean_lrt_val = float(np.mean(lrts[site_indices]))
         
-        sig_tokens = [f"{consensus_aas[s]}{s+1}" for s in sorted(site_indices)]
+        sorted_sites = sorted(site_indices)
+        sig_tokens = [f"{consensus_aas[s]}{s+1}" for s in sorted_sites]
         pars_sig = f"[ {' - '.join(sig_tokens[:10])} ]"
         
-        sectors.append({
+        # Focal taxon cluster signature extraction
+        focal_name = None
+        focal_sig = None
+        focal_diffs = []
+        if focal_taxon and taxa is not None and a_np is not None:
+            focal_idx = 0
+            for t_i, t_name in enumerate(taxa):
+                if focal_taxon.lower() in t_name.lower():
+                    focal_idx = t_i
+                    focal_name = t_name
+                    break
+            if focal_name:
+                focal_tokens = []
+                for s in sorted_sites:
+                    c_aa = consensus_aas[s]
+                    f_tok = a_np[s, focal_idx]
+                    f_aa = REV_AA_MAP.get(f_tok, '-') if f_tok < 20 else c_aa
+                    if f_aa != c_aa and f_aa != '-':
+                        focal_tokens.append(f"{f_aa}{s+1}*")
+                        focal_diffs.append(f"{c_aa}{s+1}->{f_aa}")
+                    else:
+                        focal_tokens.append(f"{f_aa}{s+1}")
+                focal_sig = f"[ {' - '.join(focal_tokens[:10])} ]"
+        
+        sector_dict = {
             "sector_id": comp_idx + 1,
             "size": len(members),
-            "sites": sorted(members),
+            "sites": [s + 1 for s in sorted_sites],
             "spectral_coherence": coherence,
             "shared_taxa": shared_taxa_cnt,
             "shared_branches": shared_taxa_cnt,
             "mean_lrt": mean_lrt_val,
-            "pars_signature": pars_sig
-        })
+            "pars_signature": pars_sig,
+            "consensus_signature": pars_sig
+        }
+        if focal_name:
+            sector_dict["focal_taxon"] = focal_name
+            sector_dict["focal_signature"] = focal_sig
+            sector_dict["focal_mutations"] = focal_diffs
+            sector_dict["focal_mutations_count"] = len(focal_diffs)
+            
+        sectors.append(sector_dict)
         
     sectors.sort(key=lambda x: (x["spectral_coherence"], x["size"]), reverse=True)
     return sectors
@@ -425,7 +461,8 @@ def run_epistatic_analysis(
 
     sectors = extract_epistatic_sectors_tse(
         G, leaf_attr, lrts, consensus_aas,
-        min_clique_size=min_clique_size, max_overlap=max_overlap
+        min_clique_size=min_clique_size, max_overlap=max_overlap,
+        focal_taxon=focal_taxon, a_np=a_tensor.squeeze(-1).numpy(), taxa=taxa
     )
 
     plasticity = []

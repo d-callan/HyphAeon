@@ -616,8 +616,14 @@ def cmd_epistasis(args):
         print("\nDiscovered Epistatic Sectors (Two-Stage Seed-and-Extend):")
         for sec in sectors[:8]:
             print(f"\nSector #{sec['sector_id']} (Size K = {sec['size']} residues): Sites {sec['sites']}")
-            print(f"  • Spectral Coherence C(S): {sec['spectral_coherence']:.4f} | Mean LRT: {sec['mean_lrt']:.2f} | Shared Branches: {sec['shared_branches']}")
-            print(f"  • Signature: {sec['pars_signature']}")
+            print(f"  • Spectral Coherence C(S): {sec['spectral_coherence']:.4f} | Mean LRT: {sec['mean_lrt']:.2f}")
+            print(f"  • Consensus Signature: {sec['pars_signature']}")
+            if sec.get("focal_taxon"):
+                print(f"  • Focal Species ({sec['focal_taxon']}) Signature: {sec['focal_signature']}")
+                if sec.get("focal_mutations"):
+                    print(f"    - Focal Derived Shifts: {', '.join(sec['focal_mutations'])}")
+                else:
+                    print(f"    - Focal State: Invariant with consensus")
 
     # 3. Selection DMS Mutational Plasticity
     if plasticity:
