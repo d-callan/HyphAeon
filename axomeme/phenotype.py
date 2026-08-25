@@ -167,15 +167,25 @@ def resolve_phenotype_vector(
                         val = v
                         break
 
-            if val is not None:
-                try:
-                    num_val = float(val)
-                    y[i] = num_val
-                    matched_values.append(num_val)
-                except ValueError:
-                    # String category
-                    y[i] = 1.0 if str(val).lower() in ["1", "true", "yes", "case", "foreground", "target", "positive"] else 0.0
+            if val is not None and not pd.isna(val):
+                if not continuous:
+                    val_str = str(val).strip().lower()
+                    fg_targets = ["1", "true", "yes", "case", "foreground", "target", "positive"]
+                    if foreground:
+                        if isinstance(foreground, str):
+                            fg_targets.extend([p.strip().lower() for p in foreground.split(",") if p.strip()])
+                        elif isinstance(foreground, (list, tuple)):
+                            fg_targets.extend([str(p).strip().lower() for p in foreground])
+                    y[i] = 1.0 if val_str in fg_targets else 0.0
                     matched_values.append(y[i])
+                else:
+                    try:
+                        num_val = float(val)
+                        if not np.isnan(num_val):
+                            y[i] = num_val
+                            matched_values.append(num_val)
+                    except ValueError:
+                        pass
 
         if continuous:
             meta["mode"] = "continuous"
