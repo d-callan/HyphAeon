@@ -761,6 +761,15 @@ def main():
     # 6. List-models Subcommand
     list_parser = subparsers.add_parser("list-models", help="List available model variants from Hugging Face")
 
+    # 7. Pooled HyphAeon-vs-MEME evaluation
+    eval_parser = subparsers.add_parser(
+        "evaluate",
+        help="Evaluate folders of site predictions against matched HyPhy MEME results",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    from .evaluation import configure_parser as configure_evaluation_parser
+    configure_evaluation_parser(eval_parser)
+
     args = parser.parse_args()
     if args.command == "predict":
         cmd_predict(args)
@@ -774,6 +783,12 @@ def main():
         cmd_epistasis(args)
     elif args.command == "list-models":
         list_models()
+    elif args.command == "evaluate":
+        from .evaluation import EvaluationError, command as evaluate_command
+        try:
+            evaluate_command(args)
+        except EvaluationError as exc:
+            parser.error(str(exc))
     else:
         parser.print_help()
 

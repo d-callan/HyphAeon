@@ -101,6 +101,25 @@ hyphaeon phenotype -a examples/RHO.fasta -fg "turTru,balMus,balPhys,orcOrc,delDe
 hyphaeon predict -a examples/Smc6.fasta -t examples/Smc6.nwk -o examples/Smc6_results.json -c examples/Smc6_results.csv
 ```
 
+### Evaluate predictions against HyPhy MEME
+
+Pair prediction and ground-truth files by gene name (`Gene1.csv` with
+`Gene1.MEME.json`) and pool all matched sites before calculating metrics:
+
+```bash
+hyphaeon evaluate \
+  --predictions-dir /path/to/hyphaeon_predictions/ \
+  --meme-dir /path/to/meme_results/ \
+  --output pooled_metrics.json
+```
+
+The report includes total sites, LRT Pearson and Spearman correlations, and
+ROC-AUC, positive predictive value (PPV), and false-positive rate (FPR) at
+MEME/HyphAeon p-value cutoffs 0.05 and 0.10. All metrics use site-level pooling
+across genes; pass `--variable-only` to exclude prediction rows marked
+`is_invariable`. Unmatched genes and unequal site sets are errors unless the
+corresponding `--allow-unmatched` or `--allow-site-mismatch` option is used.
+
 ---
 
 ## 🛠️ Retraining & Fine-Tuning HyphAeon
