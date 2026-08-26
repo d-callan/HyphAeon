@@ -227,6 +227,20 @@ every test invocation.
 
 *Note on rank correlation:* In long real genes (e.g. Smc6 with 1,097 sites), >90% of sites are under neutral/purifying evolution where LRT ~ 0. Spearman correlation across the entire variable background measures near-zero baseline noise, but concordance on actual top positive selection sites remains robust.
 
+#### Dataset-level concordance reports
+
+The concordance tests above validate expected model behavior on the repository's
+fixtures. For an ad hoc dataset or a single matched gene, use
+`hyphaeon evaluate` instead. That command consumes existing `hyphaeon predict`
+CSV and HyPhy MEME JSON files without rerunning either inference tool, pools
+sites across matched genes, and reports ROC-AUC, Pearson and Spearman
+correlations, PPV, FPR, confusion matrices, and per-gene site counts.
+
+See [Evaluate predictions against HyPhy MEME](../README.md#example-5-evaluate-predictions-against-hyphy-meme)
+for input naming, direct-file mode, exact metric definitions, and output
+options. This reporting command is separate from the `model_eval/` pytest
+acceptance thresholds and does not produce a pass/fail verdict.
+
 ### stability/ — determinism and edge cases
 
 Same input + same weights → same output, regardless of batch size. Plus: what

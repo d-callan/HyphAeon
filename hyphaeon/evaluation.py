@@ -1,8 +1,10 @@
 """Pooled evaluation of HyphAeon ``predict`` results against HyPhy MEME.
 
 This module powers ``hyphaeon evaluate`` and can also be run directly with
-``python -m hyphaeon.evaluation``.  Files are paired by gene name after
-removing ``.csv`` from predictions and ``.MEME.json`` from MEME results.
+``python -m hyphaeon.evaluation``. Folder inputs are paired by gene name after
+removing ``.csv`` from predictions and ``.MEME.json`` from MEME results. A
+single matched pair can instead be supplied with ``--prediction`` and
+``--meme-result``.
 """
 
 from __future__ import annotations
