@@ -333,27 +333,16 @@ def _threshold_metrics(
     }
 
 
-def evaluate_directories(
-    prediction_directory: Path,
-    meme_directory: Path,
+def _evaluate_pairs(
+    pairs: Sequence[Tuple[str, Path, Path]],
     *,
-    prediction_suffix: str = ".csv",
-    meme_suffix: str = ".MEME.json",
-    allow_unmatched: bool = False,
+    input_metadata: Mapping[str, object],
+    prediction_only: Sequence[str] = (),
+    meme_only: Sequence[str] = (),
     allow_site_mismatch: bool = False,
     variable_only: bool = False,
 ) -> Dict[str, object]:
-    """Pair genes, pool their sites, and calculate dataset-level metrics."""
-    prediction_directory = Path(prediction_directory)
-    meme_directory = Path(meme_directory)
-    pairs, prediction_only, meme_only = match_gene_files(
-        prediction_directory,
-        meme_directory,
-        prediction_suffix=prediction_suffix,
-        meme_suffix=meme_suffix,
-        allow_unmatched=allow_unmatched,
-    )
-
+    """Pool already-paired gene files and calculate dataset-level metrics."""
     pooled_prediction_lrt: List[float] = []
     pooled_prediction_p: List[float] = []
     pooled_meme_lrt: List[float] = []
@@ -440,8 +429,7 @@ def evaluate_directories(
         )
 
     return {
-        "prediction_directory": str(prediction_directory.resolve()),
-        "meme_directory": str(meme_directory.resolve()),
+        **input_metadata,
         "matched_genes": len(pairs),
         "genes": [gene for gene, _, _ in pairs],
         "total_sites": total_matched_sites,
@@ -466,6 +454,84 @@ def evaluate_directories(
         "per_gene": per_gene,
         "warnings": warnings,
     }
+
+
+def evaluate_directories(
+    prediction_directory: Path,
+    meme_directory: Path,
+    *,
+    prediction_suffix: str = ".csv",
+    meme_suffix: str = ".MEME.json",
+    allow_unmatched: bool = False,
+    allow_site_mismatch: bool = False,
+    variable_only: bool = False,
+) -> Dict[str, object]:
+    """Pair genes from two directories, pool their sites, and evaluate."""
+    prediction_directory = Path(prediction_directory)
+    meme_directory = Path(meme_directory)
+    pairs, prediction_only, meme_only = match_gene_files(
+        prediction_directory,
+        meme_directory,
+        prediction_suffix=prediction_suffix,
+        meme_suffix=meme_suffix,
+        allow_unmatched=allow_unmatched,
+    )
+    return _evaluate_pairs(
+        pairs,
+        input_metadata={
+            "input_mode": "directories",
+            "prediction_directory": str(prediction_directory.resolve()),
+            "meme_directory": str(meme_directory.resolve()),
+        },
+        prediction_only=prediction_only,
+        meme_only=meme_only,
+        allow_site_mismatch=allow_site_mismatch,
+        variable_only=variable_only,
+    )
+
+
+def _gene_name_from_file(path: Path, suffix: str, label: str) -> str:
+    if not path.is_file():
+        raise EvaluationError(f"{label} file does not exist or is not a file: {path}")
+    if suffix and not path.name.endswith(suffix):
+        raise EvaluationError(f"{label} file must end with {suffix!r}: {path}")
+    gene = path.name[: -len(suffix)] if suffix else path.name
+    if not gene:
+        raise EvaluationError(f"{path}: file name has no gene name before {suffix!r}")
+    return gene
+
+
+def evaluate_files(
+    prediction_file: Path,
+    meme_result_file: Path,
+    *,
+    prediction_suffix: str = ".csv",
+    meme_suffix: str = ".MEME.json",
+    allow_site_mismatch: bool = False,
+    variable_only: bool = False,
+) -> Dict[str, object]:
+    """Evaluate one matched HyphAeon prediction and MEME result file."""
+    prediction_file = Path(prediction_file)
+    meme_result_file = Path(meme_result_file)
+    prediction_gene = _gene_name_from_file(
+        prediction_file, prediction_suffix, "prediction"
+    )
+    meme_gene = _gene_name_from_file(meme_result_file, meme_suffix, "MEME result")
+    if prediction_gene != meme_gene:
+        raise EvaluationError(
+            "Single-gene files do not match: "
+            f"prediction gene {prediction_gene!r}, MEME result gene {meme_gene!r}"
+        )
+    return _evaluate_pairs(
+        [(prediction_gene, prediction_file, meme_result_file)],
+        input_metadata={
+            "input_mode": "files",
+            "prediction_file": str(prediction_file.resolve()),
+            "meme_result_file": str(meme_result_file.resolve()),
+        },
+        allow_site_mismatch=allow_site_mismatch,
+        variable_only=variable_only,
+    )
 
 
 def _display(value: object) -> str:
@@ -497,17 +563,27 @@ def format_text_report(result: Mapping[str, object]) -> str:
 
 
 def configure_parser(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
+    prediction_input = parser.add_mutually_exclusive_group(required=True)
+    prediction_input.add_argument(
         "--predictions-dir",
-        required=True,
         type=Path,
         help="Folder containing Gene.csv HyphAeon predict results",
     )
-    parser.add_argument(
+    prediction_input.add_argument(
+        "--prediction",
+        type=Path,
+        help="Single Gene.csv HyphAeon predict result",
+    )
+    meme_input = parser.add_mutually_exclusive_group(required=True)
+    meme_input.add_argument(
         "--meme-dir",
-        required=True,
         type=Path,
         help="Folder containing matched Gene.MEME.json results",
+    )
+    meme_input.add_argument(
+        "--meme-result",
+        type=Path,
+        help="Single matched Gene.MEME.json result",
     )
     parser.add_argument("-o", "--output", type=Path, help="Optional JSON output file")
     parser.add_argument(
@@ -536,15 +612,38 @@ def configure_parser(parser: argparse.ArgumentParser) -> None:
 
 
 def command(args: argparse.Namespace) -> Dict[str, object]:
-    result = evaluate_directories(
-        args.predictions_dir,
-        args.meme_dir,
-        prediction_suffix=args.prediction_suffix,
-        meme_suffix=args.meme_suffix,
-        allow_unmatched=args.allow_unmatched,
-        allow_site_mismatch=args.allow_site_mismatch,
-        variable_only=args.variable_only,
-    )
+    direct_file_mode = args.prediction is not None or args.meme_result is not None
+    if direct_file_mode:
+        if args.prediction is None or args.meme_result is None:
+            raise EvaluationError(
+                "Single-gene mode requires --prediction together with --meme-result; "
+                "directory and file inputs cannot be mixed"
+            )
+        if args.allow_unmatched:
+            raise EvaluationError("--allow-unmatched is only valid with directory inputs")
+        result = evaluate_files(
+            args.prediction,
+            args.meme_result,
+            prediction_suffix=args.prediction_suffix,
+            meme_suffix=args.meme_suffix,
+            allow_site_mismatch=args.allow_site_mismatch,
+            variable_only=args.variable_only,
+        )
+    else:
+        if args.predictions_dir is None or args.meme_dir is None:
+            raise EvaluationError(
+                "Directory mode requires --predictions-dir together with --meme-dir; "
+                "directory and file inputs cannot be mixed"
+            )
+        result = evaluate_directories(
+            args.predictions_dir,
+            args.meme_dir,
+            prediction_suffix=args.prediction_suffix,
+            meme_suffix=args.meme_suffix,
+            allow_unmatched=args.allow_unmatched,
+            allow_site_mismatch=args.allow_site_mismatch,
+            variable_only=args.variable_only,
+        )
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         with args.output.open("w", encoding="utf-8") as handle:

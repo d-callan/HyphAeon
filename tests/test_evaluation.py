@@ -3,7 +3,13 @@ import json
 
 import pytest
 
-from hyphaeon.evaluation import EvaluationError, evaluate_directories, load_meme_json
+from hyphaeon.evaluation import (
+    EvaluationError,
+    evaluate_directories,
+    evaluate_files,
+    load_meme_json,
+    main,
+)
 
 
 MEME_HEADERS = [
@@ -199,6 +205,55 @@ def test_unmatched_genes_fail_by_default_and_can_be_ignored(tmp_path):
     result = evaluate_directories(predictions, meme, allow_unmatched=True)
     assert result["matched_genes"] == 1
     assert result["warnings"] == ["Ignored prediction-only genes: PredictionOnly"]
+
+
+def test_evaluates_one_gene_from_directly_supplied_files(tmp_path):
+    prediction = tmp_path / "Gene1.csv"
+    meme = tmp_path / "Gene1.MEME.json"
+    _write_predictions(prediction, [(1, 2.0, 0.1, False), (2, 1.0, 0.2, False)])
+    _write_meme(meme, [_meme_row(2.0, 0.1), _meme_row(1.0, 0.2)])
+
+    result = evaluate_files(prediction, meme)
+
+    assert result["input_mode"] == "files"
+    assert result["prediction_file"] == str(prediction.resolve())
+    assert result["meme_result_file"] == str(meme.resolve())
+    assert result["genes"] == ["Gene1"]
+    assert result["matched_genes"] == 1
+    assert result["total_sites"] == 2
+
+
+def test_direct_file_mode_rejects_mismatched_gene_names(tmp_path):
+    prediction = tmp_path / "Gene1.csv"
+    meme = tmp_path / "Gene2.MEME.json"
+    _write_predictions(prediction, [(1, 1.0, 0.2, False)])
+    _write_meme(meme, [_meme_row(1.0, 0.2)])
+
+    with pytest.raises(EvaluationError, match="prediction gene 'Gene1'.*MEME result gene 'Gene2'"):
+        evaluate_files(prediction, meme)
+
+
+def test_direct_file_cli_flags_emit_single_gene_json(tmp_path, capsys):
+    prediction = tmp_path / "Gene1.csv"
+    meme = tmp_path / "Gene1.MEME.json"
+    _write_predictions(prediction, [(1, 2.0, 0.1, False), (2, 1.0, 0.2, False)])
+    _write_meme(meme, [_meme_row(2.0, 0.1), _meme_row(1.0, 0.2)])
+
+    exit_code = main(
+        [
+            "--prediction",
+            str(prediction),
+            "--meme-result",
+            str(meme),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["input_mode"] == "files"
+    assert report["genes"] == ["Gene1"]
 
 
 def test_site_mismatches_fail_by_default_and_intersection_is_reported(tmp_path):

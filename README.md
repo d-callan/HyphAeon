@@ -120,6 +120,18 @@ across genes; pass `--variable-only` to exclude prediction rows marked
 `is_invariable`. Unmatched genes and unequal site sets are errors unless the
 corresponding `--allow-unmatched` or `--allow-site-mismatch` option is used.
 
+For a single gene, pass the matched result files directly:
+
+```bash
+hyphaeon evaluate \
+  --prediction /path/to/Gene1.csv \
+  --meme-result /path/to/Gene1.MEME.json \
+  --output Gene1_metrics.json
+```
+
+The filename stems must match. Directory flags and direct-file flags cannot be
+mixed in the same invocation.
+
 ---
 
 ## 🛠️ Retraining & Fine-Tuning HyphAeon
