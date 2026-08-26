@@ -148,8 +148,7 @@ mixed in the same invocation.
 | Spearman $\rho$ | Spearman rank correlation between the same pooled LRT values. |
 | ROC-AUC at $\alpha$ | MEME `p-value <= alpha` supplies the binary reference label; continuous HyphAeon `axomeme_lrt` supplies the ranking score. |
 | PPV at $\alpha$ | $TP/(TP+FP)$, where MEME and HyphAeon calls both use `p_value <= alpha`. |
-| FPR at 0.05 | $FP/(FP+TN)$, where both calls use `p_value <= 0.05`. |
-| FPR at 0.10 | $FP/(FP+TN)$, using the requested strict `p_value < 0.10` rule for both calls. |
+| FPR at $\alpha$ | $FP/(FP+TN)$, where MEME and HyphAeon calls both use `p_value <= alpha`. |
 
 A true positive is a site called significant by both MEME and HyphAeon. A true
 negative is a site called non-significant by both. The JSON report includes the
@@ -174,11 +173,8 @@ Spearman rho (LRT): 0.501234
 Metric                 p <= 0.05    p <= 0.10
 ROC-AUC                  0.731000      0.749000
 PPV                      0.420000      0.465000
-FPR                      0.083000      0.121000*
+FPR                      0.083000      0.121000
 ```
-
-The asterisk notes that the 0.10 FPR column uses the strict `p_value < 0.10`
-rule; ROC-AUC and PPV in that column use `p_value <= 0.10`.
 
 Use `--format json` for JSON on standard output or `--output FILE.json` to
 write the detailed report. The JSON includes input paths, aggregate counts,

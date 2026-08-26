@@ -68,7 +68,7 @@ def _paired_directories(tmp_path):
     return predictions, meme
 
 
-def test_calculates_requested_metrics_with_explicit_threshold_rules(tmp_path):
+def test_calculates_requested_metrics_with_inclusive_threshold_rules(tmp_path):
     predictions, meme = _paired_directories(tmp_path)
     _write_predictions(
         predictions / "Gene1.csv",
@@ -113,14 +113,15 @@ def test_calculates_requested_metrics_with_explicit_threshold_rules(tmp_path):
         "true_negative": 1,
         "false_negative": 0,
     }
-    # p == 0.10 is negative for the specifically requested strict FPR rule.
-    assert alpha_010["fpr"] == pytest.approx(1 / 3)
+    # p == 0.10 is significant for every metric, including FPR.
+    assert alpha_010["fpr"] == pytest.approx(1 / 2)
     assert alpha_010["fpr_confusion_matrix"] == {
-        "true_positive": 1,
+        "true_positive": 2,
         "false_positive": 1,
-        "true_negative": 2,
+        "true_negative": 1,
         "false_negative": 0,
     }
+    assert alpha_010["fpr_definition"] == "MEME and HyphAeon p_value <= 0.1"
 
 
 def test_pools_sites_across_genes_and_can_limit_metrics_to_variable_sites(tmp_path):

@@ -305,21 +305,11 @@ def _threshold_metrics(
     predicted_p: np.ndarray,
     meme_p: np.ndarray,
     alpha: float,
-    fpr_inclusive: bool,
 ) -> Dict[str, object]:
     inclusive_truth = meme_p <= alpha
     inclusive_predictions = predicted_p <= alpha
     ppv_confusion = _confusion(inclusive_truth, inclusive_predictions)
-
-    if fpr_inclusive:
-        fpr_truth = inclusive_truth
-        fpr_predictions = inclusive_predictions
-        fpr_operator = "<="
-    else:
-        fpr_truth = meme_p < alpha
-        fpr_predictions = predicted_p < alpha
-        fpr_operator = "<"
-    fpr_confusion = _confusion(fpr_truth, fpr_predictions)
+    fpr_confusion = _confusion(inclusive_truth, inclusive_predictions)
 
     return {
         "roc_auc": _roc_auc(inclusive_truth, predicted_lrt),
@@ -327,7 +317,7 @@ def _threshold_metrics(
         "ppv": _ppv(ppv_confusion),
         "ppv_definition": f"MEME and HyphAeon p_value <= {alpha:g}",
         "fpr": _fpr(fpr_confusion),
-        "fpr_definition": f"MEME and HyphAeon p_value {fpr_operator} {alpha:g}",
+        "fpr_definition": f"MEME and HyphAeon p_value <= {alpha:g}",
         "meme_positive_sites": int(inclusive_truth.sum()),
         "hyphaeon_positive_sites": int(inclusive_predictions.sum()),
         "ppv_confusion_matrix": ppv_confusion,
@@ -449,9 +439,8 @@ def _evaluate_pairs(
         "pearson_r": pearson,
         "spearman_rho": spearman,
         "thresholds": {
-            "0.05": _threshold_metrics(prediction_lrt, prediction_p, meme_p, 0.05, True),
-            # The strict operator here follows the requested p < 0.10 FPR definition.
-            "0.10": _threshold_metrics(prediction_lrt, prediction_p, meme_p, 0.10, False),
+            "0.05": _threshold_metrics(prediction_lrt, prediction_p, meme_p, 0.05),
+            "0.10": _threshold_metrics(prediction_lrt, prediction_p, meme_p, 0.10),
         },
         "per_gene": per_gene,
         "warnings": warnings,
@@ -554,9 +543,7 @@ def format_text_report(result: Mapping[str, object]) -> str:
         "Metric                 p <= 0.05    p <= 0.10",
         f"ROC-AUC                {_display(alpha_005['roc_auc']):>10}    {_display(alpha_010['roc_auc']):>10}",
         f"PPV                    {_display(alpha_005['ppv']):>10}    {_display(alpha_010['ppv']):>10}",
-        f"FPR                    {_display(alpha_005['fpr']):>10}    {_display(alpha_010['fpr']):>10}*",
-        "",
-        "* The 0.10 FPR uses the requested strict p < 0.10 rule; its ROC-AUC and PPV use p <= 0.10.",
+        f"FPR                    {_display(alpha_005['fpr']):>10}    {_display(alpha_010['fpr']):>10}",
     ]
     warnings = result.get("warnings", [])
     if warnings:
