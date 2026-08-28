@@ -94,19 +94,26 @@ hyphaeon phenotype -a examples/RHO.fasta -fg "turTru,balMus,balPhys,orcOrc,delDe
 
 ---
 
-### Example 4: Ultra-Fast Episodic Positive Selection (`predict`) & Automated Alignment Error Filtering (`--filter`)
+### Example 4: Ultra-Fast Episodic Positive Selection (`predict`), Feature Attribution (`--attribute`), & Alignment Error Filtering (`--filter`)
 
 ```bash
-# Infer episodic selection on primate Smc6 antiviral restriction factor
+# Standard per-codon episodic selection inference
 hyphaeon predict -a examples/Smc6.fasta -t examples/Smc6.nwk -o examples/Smc6_results.json -c examples/Smc6_results.csv
 
-# Run inference with automated dual-stage alignment error filtering (hypergeometric patch + single-taxon outlier masking)
-hyphaeon predict -a examples/Smc6.fasta -t examples/Smc6.nwk --filter --filter-out-aln examples/Smc6_cleaned.fasta
+# Enable mechanistic feature attribution (identifies driving species & evolutionary timing)
+hyphaeon predict -a examples/Smc6.fasta -t examples/Smc6.nwk --attribute --attribution-min-lrt 3.84 -o examples/Smc6_attributed.json
+
+# Run inference with automated dual-stage alignment error filtering & export cleaned alignment
+hyphaeon predict -a examples/Smc6.fasta -t examples/Smc6.nwk --filter --filter-out-aln examples/Smc6_cleaned.fasta -c examples/Smc6_clean.csv
 ```
 
-#### Automated Alignment Error Screening (`--filter`):
-* **Dual-Stage Algorithm**: First detects 1D selective clusters via exact upper-tail hypergeometric scan ($p_{\text{local}} \le 0.01$), then evaluates single-taxon counterfactual attribution to identify private frameshift runs ($\ge 3\text{--}4$ contiguous non-synonymous mutations in an isolated leaf against $\ge 120$ conserved species).
-* **Surgical In-Place Masking**: Automatically masks only the anomalous taxon chunk with `NNN`, eliminating false-positive selection spikes while preserving authentic multi-lineage surface loops.
+#### 1. Mechanistic Feature Attribution (`--attribute`):
+* **Single-Taxon Counterfactual Perturbation ($\Delta\text{LRT}$)**: In silico mutates each non-consensus species back to ancestral state to rank driving taxa by marginal selection evidence explained ($\%\text{ Signal Explained}$).
+* **Evolutionary Epoch Decomposition**: Classifies selection timing by weighted root patristic depth into **Recent Terminal / Tip Sweep** ($\ge 0.60$), **Intermediate Subclade Burst** ($0.35\text{--}0.60$), and **Deep Ancestral / Basal Divergence** ($< 0.35$), separating **Recurrent Multi-Lineage Adaptation** from single-lineage sweeps.
+
+#### 2. Automated Alignment Error Screening (`--filter`):
+* **Dual-Stage Algorithm**: Detects 1D selective clusters via exact upper-tail hypergeometric scan ($p_{\text{local}} \le 0.01$), then evaluates the Outlier Contamination Index ($\text{OCI} \ge 0.25$) to flag private frameshifts ($\ge 3$ contiguous radical mutations in an isolated leaf against conserved species).
+* **Surgical In-Place Masking**: Automatically masks only the guilty taxon's anomalous span with `NNN` and re-evaluates the cleaned alignment in milliseconds, eliminating false positives while preserving legitimate multi-species selection.
 
 ---
 
