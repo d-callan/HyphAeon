@@ -356,16 +356,50 @@ def cmd_predict(args):
         status = "p <= 0.05" if p <= 0.05 else ("p <= 0.10" if p <= 0.10 else "not significant")
         print(f"{idx+1:<8} {l:<12.3f} {p:<12.4e} {q:<12.4e} {status:<15}")
         
-    results_list = [
-        {
+    attributions = {}
+    if getattr(args, "attribute", False):
+        print("\n[*] Running Mechanistic Feature Attribution (Single-Taxon Counterfactual Sensitivity)...")
+        from .attribution import attribute_selection
+        min_attr_lrt = getattr(args, "attribution_min_lrt", 3.84)
+        attributions = attribute_selection(
+            model, c, a, d, z, inv, taxa=taxa, min_lrt=min_attr_lrt, base_lrts=lrts, cache=tree_cache
+        )
+        if attributions:
+            print(f"\nMechanistic Selection Attribution ({len(attributions)} sites with LRT >= {min_attr_lrt:.2f}):")
+            print(f"{'Codon':<6} {'LRT':<7} {'Cons':<5} {'Epoch':<32} {'Top Driving Taxon & Mutation (ΔLRT, % explained)'}")
+            print("-" * 105)
+            for s_idx in sorted(attributions.keys()):
+                rec = attributions[s_idx]
+                pos = rec['site_1indexed']
+                l = rec['predicted_lrt']
+                cons = rec['consensus_aa']
+                epoch = rec['when_selection_occurred']['evolutionary_epoch']
+                top_sp = rec['driving_species'][:2]
+                top_str = "; ".join([
+                    f"{d['taxon'][:18]}: {cons}->{d['observed_aa']} (ΔLRT=+{d['delta_lrt']:.2f}, {d['pct_signal_explained']:.1f}%)"
+                    for d in top_sp if d['delta_lrt'] > 0
+                ]) or "Diffuse / Multi-Taxon Distributed"
+                print(f"{pos:<6} {l:<7.2f} {cons:<5} {epoch:<32} {top_str}")
+        else:
+            print(f"[*] No sites met attribution threshold (LRT >= {min_attr_lrt:.2f})")
+
+    results_list = []
+    for i in range(L):
+        site_entry = {
             "site": i + 1,
             "axomeme_lrt": float(lrts[i]),
             "p_value": float(pvals[i]),
             "q_value": float(qvals[i]),
             "is_invariable": bool(inv[i])
         }
-        for i in range(L)
-    ]
+        if i in attributions:
+            rec = attributions[i]
+            site_entry["evolutionary_epoch"] = rec['when_selection_occurred']['evolutionary_epoch']
+            site_entry["adaptation_mode"] = rec['when_selection_occurred']['mode_of_adaptation']
+            site_entry["top_driver"] = rec['driving_species'][0]['taxon'] if rec['driving_species'] else None
+            site_entry["top_mutation"] = f"{rec['consensus_aa']}->{rec['driving_species'][0]['observed_aa']}" if rec['driving_species'] else None
+            site_entry["attribution_details"] = rec
+        results_list.append(site_entry)
     
     tree_meta = args.tree if args.tree else "embedded_in_alignment"
     
@@ -380,13 +414,31 @@ def cmd_predict(args):
                 "runtime_sec": elapsed,
                 "filter_enabled": bool(getattr(args, "filter", False)),
                 "artifacts_masked": filtered_artifacts,
+                "attribution_enabled": bool(getattr(args, "attribute", False)),
+                "attributions": {str(k+1): v for k, v in attributions.items()},
                 "sites": results_list
             }, f, indent=2)
         print(f"\n[✓] JSON results written to: {args.output}")
         
     if args.csv:
         ensure_parent_directory(args.csv)
-        df = pd.DataFrame(results_list)
+        # Flatten attribution details for clean CSV export
+        csv_records = []
+        for r in results_list:
+            row_dict = {
+                "site": r["site"],
+                "axomeme_lrt": r["axomeme_lrt"],
+                "p_value": r["p_value"],
+                "q_value": r["q_value"],
+                "is_invariable": r["is_invariable"],
+            }
+            if "evolutionary_epoch" in r:
+                row_dict["evolutionary_epoch"] = r["evolutionary_epoch"]
+                row_dict["adaptation_mode"] = r["adaptation_mode"]
+                row_dict["top_driver"] = r["top_driver"]
+                row_dict["top_mutation"] = r["top_mutation"]
+            csv_records.append(row_dict)
+        df = pd.DataFrame(csv_records)
         df.to_csv(args.csv, index=False)
         print(f"[✓] CSV results written to: {args.csv}")
 
@@ -868,6 +920,8 @@ def main():
     pred_parser.add_argument("--filter-out-aln", help="Optional path to export cleaned in-frame codon FASTA alignment")
     pred_parser.add_argument("--filter-p-thresh", type=float, default=0.01, help="Hypergeometric local patch p-value threshold (default: 0.01)")
     pred_parser.add_argument("--min-patch-consec", type=int, default=3, help="Minimum consecutive radical mutations in single taxon to declare alignment artifact (default: 3)")
+    pred_parser.add_argument("--attribute", action="store_true", help="Enable mechanistic feature attribution (single-taxon counterfactual sensitivity, Delta-LRT, and evolutionary epoch decomposition)")
+    pred_parser.add_argument("--attribution-min-lrt", type=float, default=3.84, help="Minimum LRT threshold to run feature attribution (default: 3.84, corresponding to nominal p <= 0.05)")
 
     # 2. Phenotype Subcommand (PhyloWAS)
     pheno_parser = subparsers.add_parser("phenotype", aliases=["phylowas", "trait"], help="Run directional phenotype-genotype association & PARS signature extraction")
