@@ -149,12 +149,12 @@ def cmd_predict(args):
 
     elapsed = time.time() - t0
     
-    # 0.5 * chi2.sf(LRT, df=1) under Self & Liang (1987) mixture null: 0.5 * delta(0) + 0.5 * chi2(1)
-    pvals = np.ones(L, dtype=np.float32)
+    # MEME asymptotic mixture null from MEME.bf: 1/3 * delta(0) + 2/3 * (0.45 * chi2(1) + 0.55 * chi2(2))
+    pvals = np.full(L, 2.0 / 3.0, dtype=np.float32)
     pos_mask = lrts > 0.0
-    pvals[pos_mask] = 0.5 * stats.chi2.sf(lrts[pos_mask], df=1)
+    pvals[pos_mask] = (2.0 / 3.0) * (0.45 * stats.chi2.sf(lrts[pos_mask], df=1) + 0.55 * stats.chi2.sf(lrts[pos_mask], df=2))
     
-    # Compute Benjamini-Hochberg False Discovery Rate (FDR) q-values
+    # Benjamini-Hochberg False Discovery Rate (FDR) q-values
     order = np.argsort(pvals)
     ranks = np.empty(L, dtype=int)
     ranks[order] = np.arange(1, L + 1)
@@ -165,6 +165,167 @@ def cmd_predict(args):
     raw_q[order] = sorted_q
     qvals = np.clip(raw_q, 0.0, 1.0).astype(np.float32)
     
+    raw_sig_05 = int((pvals <= 0.05).sum())
+    raw_sig_10 = int((pvals <= 0.10).sum())
+    raw_fdr_05 = int((qvals <= 0.05).sum())
+    raw_fdr_10 = int((qvals <= 0.10).sum())
+
+    filtered_artifacts = []
+    cleaned_alignment_path = None
+    if getattr(args, "filter", False):
+        print("\n[*] Running Automated Alignment Error Screening (Hypergeometric Patch + Counterfactual Outlier Attribution)...")
+        from .dataset import parse_alignment_sequences, CODON_TO_AA
+        
+        # 1. Hypergeometric Scan for selective patches
+        sel_sites = np.where(pvals <= 0.05)[0]
+        K = len(sel_sites)
+        patches = []
+        if K >= 3:
+            cand_p = []
+            for idx_i in range(len(sel_sites)):
+                pos_i = sel_sites[idx_i]
+                for idx_j in range(idx_i + 2, len(sel_sites)):
+                    pos_j = sel_sites[idx_j]
+                    d_span = pos_j - pos_i + 1
+                    if d_span > 35:
+                        break
+                    k_span = idx_j - idx_i + 1
+                    p_loc = 1.0 - stats.hypergeom.cdf(k_span - 1, L, K, d_span)
+                    if p_loc <= getattr(args, "filter_p_thresh", 0.01):
+                        cand_p.append({'start': pos_i, 'end': pos_j, 'k': k_span, 'd': d_span, 'p_local': p_loc})
+            if cand_p:
+                cand_p.sort(key=lambda x: x['start'])
+                merged = []
+                curr = cand_p[0].copy()
+                for cp in cand_p[1:]:
+                    if cp['start'] <= curr['end']:
+                        curr['end'] = max(curr['end'], cp['end'])
+                        curr['p_local'] = min(curr['p_local'], cp['p_local'])
+                    else:
+                        curr['d'] = curr['end'] - curr['start'] + 1
+                        curr['k'] = int(np.sum((sel_sites >= curr['start']) & (sel_sites <= curr['end'])))
+                        merged.append(curr)
+                        curr = cp.copy()
+                curr['d'] = curr['end'] - curr['start'] + 1
+                curr['k'] = int(np.sum((sel_sites >= curr['start']) & (sel_sites <= curr['end'])))
+                merged.append(curr)
+                patches = merged
+
+        if patches:
+            raw_seqs = parse_alignment_sequences(args.alignment)
+            cleaned_seqs = {t: list(raw_seqs[t]) for t in taxa if t in raw_seqs}
+            
+            # Compute consensus per site
+            consensus_codons = []
+            for s in range(L):
+                scds = [raw_seqs[t][s*3:(s+1)*3].upper() for t in taxa if t in raw_seqs and len(raw_seqs[t]) >= (s+1)*3]
+                valid = [cd for cd in scds if '-' not in cd and 'N' not in cd]
+                consensus_codons.append(pd.Series(valid).mode().iloc[0] if valid else 'NNN')
+                
+            min_consec_thresh = getattr(args, "min_patch_consec", 3)
+            for p in patches:
+                p_start, p_end = p['start'], p['end']
+                
+                # Check each taxon for contiguous non-synonymous mutation runs
+                tax_max_run = {}
+                tax_total_muts = {}
+                total_patch_muts = 0
+                for t in taxa:
+                    if t not in raw_seqs: continue
+                    run, max_r, m_cnt = 0, 0, 0
+                    for s in range(p_start, p_end + 1):
+                        obs_cd = raw_seqs[t][s*3:(s+1)*3].upper()
+                        con_cd = consensus_codons[s]
+                        obs_aa = CODON_TO_AA.get(obs_cd, '-')
+                        con_aa = CODON_TO_AA.get(con_cd, '-')
+                        if obs_aa not in '-?' and con_aa not in '-?' and obs_aa != con_aa:
+                            m_cnt += 1
+                            run += 1
+                            max_r = max(max_r, run)
+                        else:
+                            run = 0
+                    tax_max_run[t] = max_r
+                    tax_total_muts[t] = m_cnt
+                    total_patch_muts += m_cnt
+                    
+                top_tax = max(taxa, key=lambda t: (tax_max_run.get(t, 0), tax_total_muts.get(t, 0)))
+                top_run = tax_max_run.get(top_tax, 0)
+                top_muts = tax_total_muts.get(top_tax, 0)
+                oci = top_muts / (total_patch_muts + 1e-8)
+                
+                is_artifact = (top_run >= min_consec_thresh and oci >= 0.25) or (top_run >= 4)
+                if is_artifact:
+                    filtered_artifacts.append({
+                        'start': p_start + 1,
+                        'end': p_end + 1,
+                        'span': p['d'],
+                        'outlier_taxon': top_tax,
+                        'consecutive_mismatches': top_run,
+                        'oci': oci
+                    })
+                    # Mask the guilty outlier in the patch
+                    for s in range(p_start, p_end + 1):
+                        cleaned_seqs[top_tax][s*3 : (s+1)*3] = ['N', 'N', 'N']
+                        
+            if filtered_artifacts:
+                # Re-evaluate cleaned alignment
+                import tempfile
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.fasta', delete=False) as tmp_fa:
+                    for t in taxa:
+                        if t in cleaned_seqs:
+                            tmp_fa.write(f">{t}\n{''.join(cleaned_seqs[t])}\n")
+                    cleaned_temp_path = tmp_fa.name
+                    
+                c_cl, a_cl, d_cl, z_cl, inv_cl, taxa_cl, L_cl = load_alignment_and_tree(
+                    cleaned_temp_path, args.tree, max_species=args.max_species, prune_duplicates=prune_dups
+                )
+                
+                var_cl = np.where(~inv_cl)[0]
+                n_var_cl = len(var_cl)
+                lrts_cl = np.zeros(L, dtype=np.float32)
+                if n_var_cl > 0:
+                    with torch.no_grad():
+                        for start_idx in range(0, n_var_cl, batch_size):
+                            end_idx = min(start_idx + batch_size, n_var_cl)
+                            b_idx = var_cl[start_idx:end_idx]
+                            c_ch = c_cl[b_idx].to(device)
+                            a_ch = a_cl[b_idx].to(device)
+                            y_soft, _ = model.forward_cached(c_ch, a_ch, tree_cache)
+                            lrts_cl[b_idx] = torch.clamp(y_soft.squeeze(-1), min=0.0).cpu().numpy().flatten()
+                            
+                pvals_cl = np.full(L, 2.0 / 3.0, dtype=np.float32)
+                pos_cl = lrts_cl > 0.0
+                pvals_cl[pos_cl] = (2.0 / 3.0) * (0.45 * stats.chi2.sf(lrts_cl[pos_cl], df=1) + 0.55 * stats.chi2.sf(lrts_cl[pos_cl], df=2))
+                
+                order_cl = np.argsort(pvals_cl)
+                ranks_cl = np.empty(L, dtype=int)
+                ranks_cl[order_cl] = np.arange(1, L + 1)
+                raw_q_cl = pvals_cl * (L / ranks_cl)
+                sorted_q_cl = raw_q_cl[order_cl]
+                for i in range(L - 2, -1, -1):
+                    sorted_q_cl[i] = min(sorted_q_cl[i], sorted_q_cl[i + 1])
+                raw_q_cl[order_cl] = sorted_q_cl
+                qvals_cl = np.clip(raw_q_cl, 0.0, 1.0).astype(np.float32)
+                
+                # Export cleaned alignment if requested
+                if getattr(args, "filter_out_aln", None):
+                    ensure_parent_directory(args.filter_out_aln)
+                    with open(args.filter_out_aln, 'w') as out_f:
+                        for t in taxa:
+                            if t in cleaned_seqs:
+                                out_f.write(f">{t}\n{''.join(cleaned_seqs[t])}\n")
+                    cleaned_alignment_path = args.filter_out_aln
+                    print(f"[✓] Cleaned in-frame alignment exported to: {args.filter_out_aln}")
+                    
+                if os.path.exists(cleaned_temp_path):
+                    os.remove(cleaned_temp_path)
+                    
+                # Update inference arrays to cleaned version
+                lrts = lrts_cl
+                pvals = pvals_cl
+                qvals = qvals_cl
+                inv = inv_cl
+                
     sig_10 = (pvals <= 0.10).sum()
     sig_05 = (pvals <= 0.05).sum()
     fdr_05 = (qvals <= 0.05).sum()
@@ -173,6 +334,13 @@ def cmd_predict(args):
     print("\n" + "=" * 78)
     print(f"🎉 AxoMEME Selection Inference Complete in {elapsed:.3f} seconds!")
     print(f"   Taxa: {len(taxa)} | Codon Sites: {L} | Total Invariable: {inv.sum()}")
+    if getattr(args, "filter", False) and filtered_artifacts:
+        print(f"   Automated Alignment Error Filtering: {len(filtered_artifacts)} artifact patch(es) surgically masked")
+        for fa_item in filtered_artifacts:
+            print(f"     ↳ Masked Codons {fa_item['start']}-{fa_item['end']} in [{fa_item['outlier_taxon']}] ({fa_item['consecutive_mismatches']} consec muts, OCI={fa_item['oci']*100:.1f}%)")
+        print(f"   Raw vs Clean Significance: (p <= 0.05): {raw_sig_05} -> {sig_05} | (FDR q <= 0.10): {raw_fdr_10} -> {fdr_10}")
+    elif getattr(args, "filter", False):
+        print(f"   Automated Alignment Error Filtering: 0 artifacts detected (All patches authentic/clean)")
     print(f"   Nominal Significance: (p <= 0.05): {sig_05} | (p <= 0.10): {sig_10}")
     print(f"   FDR Significance:     (q <= 0.05): {fdr_05} | (q <= 0.10): {fdr_10}")
     print("=" * 78)
@@ -210,6 +378,8 @@ def cmd_predict(args):
                 "taxa_count": len(taxa),
                 "codon_count": L,
                 "runtime_sec": elapsed,
+                "filter_enabled": bool(getattr(args, "filter", False)),
+                "artifacts_masked": filtered_artifacts,
                 "sites": results_list
             }, f, indent=2)
         print(f"\n[✓] JSON results written to: {args.output}")
@@ -694,6 +864,10 @@ def main():
     pred_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     pred_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
     pred_parser.add_argument("--cpu", action="store_true", help="Force CPU inference")
+    pred_parser.add_argument("--filter", action="store_true", help="Enable automated dual-stage alignment error detection and surgical outlier masking (Hypergeometric Patch + Counterfactual Attribution)")
+    pred_parser.add_argument("--filter-out-aln", help="Optional path to export cleaned in-frame codon FASTA alignment")
+    pred_parser.add_argument("--filter-p-thresh", type=float, default=0.01, help="Hypergeometric local patch p-value threshold (default: 0.01)")
+    pred_parser.add_argument("--min-patch-consec", type=int, default=3, help="Minimum consecutive radical mutations in single taxon to declare alignment artifact (default: 3)")
 
     # 2. Phenotype Subcommand (PhyloWAS)
     pheno_parser = subparsers.add_parser("phenotype", aliases=["phylowas", "trait"], help="Run directional phenotype-genotype association & PARS signature extraction")

@@ -173,16 +173,30 @@ def extract_tree_from_string_or_file(source: str) -> Optional[Phylo.BaseTree.Tre
         except Exception:
             pass
 
-    # 2. Search for any standard Newick string starting with '(' and ending with ';'
+    # 2. Search for any standard Newick string starting with '('
     for line in content.splitlines():
         line_clean = line.strip()
-        if line_clean.startswith('(') and line_clean.endswith(';') and line_clean.count('(') >= 2:
+        if line_clean.startswith('(') and line_clean.count('(') >= 2:
+            if not line_clean.endswith(';'):
+                line_clean += ';'
             clean_nwk = re.sub(r'\{[^}]*\}', '', line_clean)
             clean_nwk = re.sub(r'\[[^\]]*\]', '', clean_nwk)
             try:
                 return Phylo.read(StringIO(clean_nwk), 'newick')
             except Exception:
                 pass
+
+    # 3. Direct parse attempt on whole content
+    clean_all = content.strip()
+    if clean_all.startswith('(') and clean_all.count('(') >= 2:
+        if not clean_all.endswith(';'):
+            clean_all += ';'
+        clean_nwk = re.sub(r'\{[^}]*\}', '', clean_all)
+        clean_nwk = re.sub(r'\[[^\]]*\]', '', clean_nwk)
+        try:
+            return Phylo.read(StringIO(clean_nwk), 'newick')
+        except Exception:
+            pass
 
     return None
 
@@ -203,6 +217,15 @@ def estimate_tree_branch_lengths_hyphy(seq_dict: Dict[str, str], tree_obj: Phylo
     hyphy_path = shutil.which('hyphy')
     if not hyphy_path:
         return None
+
+    # Prune tree to only taxa present in seq_dict
+    seq_keys = set(seq_dict.keys()) | {k.strip("'\"") for k in seq_dict.keys()}
+    to_prune = [term for term in tree_obj.get_terminals() if term.name and term.name.strip("'\"") not in seq_keys]
+    for t in to_prune:
+        try:
+            tree_obj.prune(t)
+        except Exception:
+            pass
 
     # Get clean topology string without branch lengths
     out_stream = StringIO()
@@ -497,7 +520,13 @@ def load_alignment_and_tree(fa_path: str, nwk_path: Optional[str] = None, max_sp
     L = raw_len // 3
     n_taxa = len(taxa)
 
-    # 5. Compute distance matrix & optional Max-PD downsampling
+    # 5. Fast pre-downsampling for massive sequence collections (N > 300)
+    if max_species is not None and len(taxa) > max_species:
+        # Uniformly stride downsample to 2 * max_species before computing distance matrix
+        stride = max(1, len(taxa) // (max_species * 2))
+        taxa = taxa[::stride][:max_species * 2]
+
+    # Compute distance matrix
     dist_mat = compute_fast_dist_matrix(tree_obj, taxa)
 
     # If tree branch lengths are raw mutation counts (> 10.0) rather than substitutions per site,

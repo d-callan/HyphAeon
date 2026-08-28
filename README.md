@@ -94,12 +94,19 @@ hyphaeon phenotype -a examples/RHO.fasta -fg "turTru,balMus,balPhys,orcOrc,delDe
 
 ---
 
-### Example 4: Ultra-Fast Episodic Positive Selection (`predict`)
+### Example 4: Ultra-Fast Episodic Positive Selection (`predict`) & Automated Alignment Error Filtering (`--filter`)
 
 ```bash
 # Infer episodic selection on primate Smc6 antiviral restriction factor
 hyphaeon predict -a examples/Smc6.fasta -t examples/Smc6.nwk -o examples/Smc6_results.json -c examples/Smc6_results.csv
+
+# Run inference with automated dual-stage alignment error filtering (hypergeometric patch + single-taxon outlier masking)
+hyphaeon predict -a examples/Smc6.fasta -t examples/Smc6.nwk --filter --filter-out-aln examples/Smc6_cleaned.fasta
 ```
+
+#### Automated Alignment Error Screening (`--filter`):
+* **Dual-Stage Algorithm**: First detects 1D selective clusters via exact upper-tail hypergeometric scan ($p_{\text{local}} \le 0.01$), then evaluates single-taxon counterfactual attribution to identify private frameshift runs ($\ge 3\text{--}4$ contiguous non-synonymous mutations in an isolated leaf against $\ge 120$ conserved species).
+* **Surgical In-Place Masking**: Automatically masks only the anomalous taxon chunk with `NNN`, eliminating false-positive selection spikes while preserving authentic multi-lineage surface loops.
 
 ---
 

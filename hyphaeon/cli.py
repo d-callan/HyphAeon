@@ -149,10 +149,10 @@ def cmd_predict(args):
 
     elapsed = time.time() - t0
     
-    # 0.5 * chi2.sf(LRT, df=1) under Self & Liang (1987) mixture null: 0.5 * delta(0) + 0.5 * chi2(1)
-    pvals = np.ones(L, dtype=np.float32)
+    # MEME asymptotic mixture null from MEME.bf: 1/3 * delta(0) + 2/3 * (0.45 * chi2(1) + 0.55 * chi2(2))
+    pvals = np.full(L, 2.0 / 3.0, dtype=np.float32)
     pos_mask = lrts > 0.0
-    pvals[pos_mask] = 0.5 * stats.chi2.sf(lrts[pos_mask], df=1)
+    pvals[pos_mask] = (2.0 / 3.0) * (0.45 * stats.chi2.sf(lrts[pos_mask], df=1) + 0.55 * stats.chi2.sf(lrts[pos_mask], df=2))
     
     # Compute Benjamini-Hochberg False Discovery Rate (FDR) q-values
     order = np.argsort(pvals)
@@ -690,7 +690,7 @@ def main():
     pred_parser.add_argument("--model-variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from Hugging Face (default: {DEFAULT_VARIANT})")
     pred_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: auto-selected)")
     pred_parser.add_argument("-s", "--max-species", type=int, default=None, help="Maximum number of species to include (PD downsampling)")
-    pred_parser.add_argument("--no-prune-duplicates", action="store_true", help="Disable automatic collapsing of 100% identical sequence duplicates")
+    pred_parser.add_argument("--no-prune-duplicates", action="store_true", help="Disable automatic collapsing of 100%% identical sequence duplicates")
     pred_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     pred_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
     pred_parser.add_argument("--cpu", action="store_true", help="Force CPU inference")
