@@ -34,17 +34,13 @@ from .phenotype import run_phenotype_association, PRESETS
 from .epistasis import run_epistasis_analysis, run_epistatic_sector_mining
 from .stats import pvals_from_lrt_meme, pvals_from_lrt_self_liang, benjamini_hochberg, cauchy_combination_p
 from .inference import get_device, load_model, prepare_alignment, predict_site_lrts
+from .io import ensure_parent_directory, write_json, write_csv, format_pq
 
 DEFAULT_VARIANT_ENV = os.environ.get("HYPHAEON_VARIANT", DEFAULT_VARIANT)
 
 # Default to package model.safetensors if it exists, otherwise check HYPHAEON_WEIGHTS
 _local_repo_weights = Path(__file__).resolve().parent.parent / "model.safetensors"
 DEFAULT_WEIGHTS_ENV = os.environ.get("HYPHAEON_WEIGHTS", str(_local_repo_weights) if _local_repo_weights.exists() else None)
-
-def ensure_parent_directory(path):
-    if path:
-        parent = os.path.dirname(os.path.abspath(path))
-        os.makedirs(parent, exist_ok=True)
 
 def determine_adaptive_batch_size(num_species: int, total_sites: int, device: torch.device, user_batch_size: int = None) -> int:
     if user_batch_size is not None and user_batch_size > 0:
@@ -312,24 +308,20 @@ def cmd_meme(args):
     tree_meta = args.tree if args.tree else "embedded_in_alignment"
     
     if args.output:
-        ensure_parent_directory(args.output)
-        with open(args.output, "w") as f:
-            json.dump({
-                "alignment": args.alignment,
-                "tree": tree_meta,
-                "taxa_count": len(taxa),
-                "codon_count": L,
-                "runtime_sec": elapsed,
-                "filter_enabled": bool(getattr(args, "filter", False)),
-                "artifacts_masked": filtered_artifacts,
-                "attribution_enabled": bool(getattr(args, "attribute", False)),
-                "attributions": {str(k+1): v for k, v in attributions.items()},
-                "sites": results_list
-            }, f, indent=2)
-        print(f"\n[✓] JSON results written to: {args.output}")
-        
+        write_json(args.output, {
+            "alignment": args.alignment,
+            "tree": tree_meta,
+            "taxa_count": len(taxa),
+            "codon_count": L,
+            "runtime_sec": elapsed,
+            "filter_enabled": bool(getattr(args, "filter", False)),
+            "artifacts_masked": filtered_artifacts,
+            "attribution_enabled": bool(getattr(args, "attribute", False)),
+            "attributions": {str(k+1): v for k, v in attributions.items()},
+            "sites": results_list
+        })
+
     if args.csv:
-        ensure_parent_directory(args.csv)
         # Flatten attribution details for clean CSV export
         csv_records = []
         for r in results_list:
@@ -346,9 +338,7 @@ def cmd_meme(args):
                 row_dict["top_driver"] = r["top_driver"]
                 row_dict["top_mutation"] = r["top_mutation"]
             csv_records.append(row_dict)
-        df = pd.DataFrame(csv_records)
-        df.to_csv(args.csv, index=False)
-        print(f"[✓] CSV results written to: {args.csv}")
+        write_csv(args.csv, csv_records)
 
 def cmd_busted(args):
     """
@@ -357,7 +347,6 @@ def cmd_busted(args):
     evaluates CORAL rank-consistent ordinal heads for exact calibrated selection calls.
     Supports single alignments (-a) or high-throughput batch directories (-d).
     """
-    device = torch.device("cpu") if args.cpu else torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
     device = get_device(cpu=getattr(args, "cpu", False))
     print(f"[*] Running HyphAeon BUSTED Omnibus Selection Inference on {device}...")
     t_global_start = time.time()
@@ -566,13 +555,9 @@ def cmd_busted(args):
         print("=" * 92)
 
     if args.output:
-        ensure_parent_directory(args.output)
-        with open(args.output, 'w') as f:
-            json.dump(batch_results if is_batch else batch_results[0], f, indent=2)
-        print(f"[✓] JSON results written to: {args.output}")
+        write_json(args.output, batch_results if is_batch else batch_results[0])
 
     if args.csv:
-        ensure_parent_directory(args.csv)
         df_summary = pd.DataFrame([{
             "Gene": r["gene"],
             "Taxa": r["taxa"],
@@ -588,8 +573,7 @@ def cmd_busted(args):
             "Selected": r["positive_selection_detected"],
             "Time_ms": r["elapsed_seconds"] * 1000
         } for r in batch_results])
-        df_summary.to_csv(args.csv, index=False)
-        print(f"[✓] CSV summary written to: {args.csv}")
+        write_csv(args.csv, df_summary, label="CSV summary")
 
 def list_models():
     """List available model variants from Hugging Face."""
@@ -670,8 +654,8 @@ def cmd_phenotype(args):
         print(f"{'Site':<6} {'Ref':<5} {'Derived':<9} {'LRT':<7} {'Assoc (rho)':<12} {'Score':<8} {'p-value':<12} {'FDR q-val':<12} {'Fg %':<7} {'Bg %':<7}")
         print("-" * 92)
         for s in top_sites:
-            q_str = f"{s.get('q_value', 1.0):.2e}" if s.get('q_value', 1.0) < 0.01 else f"{s.get('q_value', 1.0):.3f}"
-            p_str = f"{s.get('p_value', 1.0):.2e}" if s.get('p_value', 1.0) < 0.01 else f"{s.get('p_value', 1.0):.3f}"
+            q_str = format_pq(s.get('q_value', 1.0))
+            p_str = format_pq(s.get('p_value', 1.0))
             print(f"{s['site']:<6d} {s['ref_aa']:<5s} {s['derived_aa']:<9s} {s['hyphaeon_lrt']:<7.2f} {s['association_rho']:<12.4f} {s.get('score', 0.0):<8.3f} {p_str:<12s} {q_str:<12s} {s['foreground_freq_pct']:<7.1f} {s['background_freq_pct']:<7.1f}")
 
     trait_sectors = res.get("trait_sectors", [])
@@ -689,21 +673,15 @@ def cmd_phenotype(args):
         print("-" * 74)
         for p in coselection_pairs[:10]:
             pair_str = f"{p['ref_u']}{p['site_u']} - {p['ref_v']}{p['site_v']}"
-            q_str = f"{p.get('q_value', 1.0):.2e}" if p.get('q_value', 1.0) < 0.01 else f"{p.get('q_value', 1.0):.3f}"
-            p_str = f"{p.get('p_value', 1.0):.2e}" if p.get('p_value', 1.0) < 0.01 else f"{p.get('p_value', 1.0):.3f}"
+            q_str = format_pq(p.get('q_value', 1.0))
+            p_str = format_pq(p.get('p_value', 1.0))
             print(f"{pair_str:<16} {p['similarity']:<14.4f} {p['cesi']:<8.3f} {p['shared_branches']:<8d} {p_str:<12s} {q_str:<12s}")
 
     if args.output:
-        ensure_parent_directory(args.output)
-        with open(args.output, "w") as f:
-            json.dump(res, f, indent=2)
-        print(f"\n[✓] JSON results written to: {args.output}")
+        write_json(args.output, res)
 
     if args.csv:
-        ensure_parent_directory(args.csv)
-        df = pd.DataFrame(sites)
-        df.to_csv(args.csv, index=False)
-        print(f"[✓] CSV results written to: {args.csv}")
+        write_csv(args.csv, sites)
 
 def cmd_epistasis(args):
     print(f"[*] Executing Phylogenetic Branch Attribution, Co-Selection Networks & Selection DMS (ESSM)...")
@@ -755,7 +733,7 @@ def cmd_epistasis(args):
         for idx, e in enumerate(edges[:12]):
             pair_str = f"{e['ref_u']}{e['site_u']} <-> {e['ref_v']}{e['site_v']}"
             lrt_str = f"{e['lrt_u']:.1f} / {e['lrt_v']:.1f}"
-            q_str = f"{e['fdr_q']:.2e}" if e['fdr_q'] < 0.01 else f"{e['fdr_q']:.3f}"
+            q_str = format_pq(e['fdr_q'])
             print(f"#{idx+1:<4d} {pair_str:<16s} {lrt_str:<12s} {e['similarity']:<9.4f} {e['shared_branches']:<8d} {e['cesi']:<10.3f} {q_str:<12s}")
 
     # 2. Epistatic Sectors
@@ -788,13 +766,9 @@ def cmd_epistasis(args):
             print(f"    • Site {int(r['site']):<4d} ({r['wt_aa']}): Plasticity = {r['intrinsic_plasticity']:.3f} | Baseline LRT = {r['baseline_lrt']:.2f} (p = {r['p_value']:.3e})")
 
     if getattr(args, "output", None):
-        ensure_parent_directory(args.output)
-        with open(args.output, "w") as f:
-            json.dump(res, f, indent=2)
-        print(f"\n[✓] JSON results written to: {args.output}")
+        write_json(args.output, res)
 
     if getattr(args, "csv", None):
-        ensure_parent_directory(args.csv)
         if getattr(args, "command", "") in ["dms", "essm", "digital-dms"] and plasticity:
             df_out = pd.DataFrame(plasticity)
         elif edges:
@@ -803,8 +777,7 @@ def cmd_epistasis(args):
             df_out = pd.DataFrame(plasticity)
         else:
             df_out = pd.DataFrame(sectors)
-        df_out.to_csv(args.csv, index=False)
-        print(f"[✓] CSV results written to: {args.csv}")
+        write_csv(args.csv, df_out)
 
     if getattr(args, "graphml", None):
         ensure_parent_directory(args.graphml)
@@ -864,31 +837,26 @@ def cmd_dms(args):
         print(f"{'Site':<6} {'WT':<5} {'Plasticity Φ':<15} {'Baseline LRT':<15} {'p-value':<12} {'Max ΔLRT':<10}")
         print("-" * 65)
         for _, r in top_plastic.iterrows():
-            p_str = f"{r['p_value']:.2e}" if r['p_value'] < 0.01 else f"{r['p_value']:.3f}"
+            p_str = format_pq(r['p_value'])
             print(f"{int(r['site']):<6d} {r['wt_aa']:<5s} {r['intrinsic_plasticity']:<15.4f} {r['baseline_lrt']:<15.2f} {p_str:<12s} {r['max_delta_lrt']:<10.2f}")
             
         print("\nTop Rigid / Catalytic Backbone Sites (Low Plasticity Φ):")
         print(f"{'Site':<6} {'WT':<5} {'Plasticity Φ':<15} {'Baseline LRT':<15} {'p-value':<12} {'Max ΔLRT':<10}")
         print("-" * 65)
         for _, r in top_rigid.iterrows():
-            p_str = f"{r['p_value']:.2e}" if r['p_value'] < 0.01 else f"{r['p_value']:.3f}"
+            p_str = format_pq(r['p_value'])
             print(f"{int(r['site']):<6d} {r['wt_aa']:<5s} {r['intrinsic_plasticity']:<15.4f} {r['baseline_lrt']:<15.2f} {p_str:<12s} {r['max_delta_lrt']:<10.2f}")
             
     if getattr(args, "output", None):
-        ensure_parent_directory(args.output)
-        with open(args.output, "w") as f:
-            json.dump(res, f, indent=2)
-        print(f"\n[✓] JSON results written to: {args.output}")
+        write_json(args.output, res)
 
     if getattr(args, "csv", None):
-        ensure_parent_directory(args.csv)
         df_out = pd.DataFrame(plasticity)
         if "mutant_deltas" in df_out.columns:
             df_out_csv = df_out.drop(columns=["mutant_deltas"])
         else:
             df_out_csv = df_out
-        df_out_csv.to_csv(args.csv, index=False)
-        print(f"[✓] CSV results written to: {args.csv}")
+        write_csv(args.csv, df_out_csv)
 
 def cmd_disease(args):
     """Executes disease pathogenicity prediction for clinical variants."""
@@ -929,9 +897,9 @@ def cmd_disease(args):
     print("=" * 90)
     
     if getattr(args, "csv", None):
-        df_res.to_csv(args.csv, index=False)
-        print(f"[*] Saved CSV results to: {args.csv}")
+        write_csv(args.csv, df_res, label="CSV results")
     if getattr(args, "output", None):
+        ensure_parent_directory(args.output)
         df_res.to_json(args.output, orient="records", indent=2)
         print(f"[*] Saved JSON results to: {args.output}")
 

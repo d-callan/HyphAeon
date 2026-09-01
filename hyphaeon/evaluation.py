@@ -22,6 +22,8 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 import numpy as np
 from scipy.stats import pearsonr, rankdata, spearmanr
 
+from .io import ensure_parent_directory
+
 
 class EvaluationError(ValueError):
     """Raised when inputs cannot be paired or safely aligned by site."""
@@ -634,7 +636,7 @@ def command(args: argparse.Namespace) -> Dict[str, object]:
             variable_only=args.variable_only,
         )
     if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
+        ensure_parent_directory(str(args.output))
         with args.output.open("w", encoding="utf-8") as handle:
             json.dump(result, handle, indent=2, allow_nan=False)
             handle.write("\n")
