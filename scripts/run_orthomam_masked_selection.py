@@ -1,5 +1,5 @@
 import os, sys, time, glob, sqlite3
-sys.path.insert(0, '/Users/sergei/Projects/TOGA_MEME/axomeme_repo')
+sys.path.insert(0, '/Users/sergei/Projects/TOGA_MEME/hyphaeon_repo')
 
 import torch
 import numpy as np
@@ -13,7 +13,7 @@ base_dir = '/Users/sergei/Projects/TOGA_MEME/benchmark/orthomam_v12'
 masked_cds_dir = os.path.join(base_dir, 'masked_cds')
 trees_dir = os.path.join(base_dir, 'trees')
 db_path = os.path.join(base_dir, 'orthomam_v12_analysis.db')
-weights_file = '/Users/sergei/Projects/TOGA_MEME/axomeme_repo/model.safetensors'
+weights_file = '/Users/sergei/Projects/TOGA_MEME/hyphaeon_repo/model.safetensors'
 
 device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
 print(f'Starting OrthoMaM selection inference on device: {device}')

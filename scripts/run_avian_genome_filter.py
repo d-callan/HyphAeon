@@ -22,7 +22,7 @@ import torch
 from scipy.stats import hypergeom, chi2, cauchy
 from Bio import Phylo
 
-sys.path.insert(0, 'axomeme_repo')
+sys.path.insert(0, 'hyphaeon_repo')
 from hyphaeon.weights import load_arch_config, load_weights
 from hyphaeon.model import PhyloAxialTransformer
 from hyphaeon.dataset import load_alignment_and_tree, CODON_TO_AA, parse_alignment_sequences
@@ -96,7 +96,7 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     print(f"[*] Compute Device: {device.type.upper()}")
     
-    weights_path = 'axomeme_5_dim384_nonull.pt'
+    weights_path = 'hyphaeon_5_dim384_nonull.pt'
     config = load_arch_config(weights=weights_path)
     model = PhyloAxialTransformer(
         embed_dim=config['embed_dim'],

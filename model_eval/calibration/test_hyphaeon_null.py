@@ -1,5 +1,5 @@
 """
-Null calibration for AxoMEME: are p-values honest under neutrality?
+Null calibration for HyphAeon: are p-values honest under neutrality?
 
 Feeds the model alignments simulated under neutral evolution (no positive
 selection) using seq-gen with an HKY nucleotide model. Under the null, the
@@ -64,8 +64,8 @@ def _neutral_pvals(model, seqgen_available):
 
 
 @pytest.mark.parametrize("n_taxa,depth,label", _CALIB_GRID)
-class TestAxoMEMENullCalibration:
-    """Under neutral evolution, AxoMEME's p-values should be calibrated.
+class TestHyphAeonNullCalibration:
+    """Under neutral evolution, HyphAeon's p-values should be calibrated.
 
     Pools p-values across multiple seeds per config before asserting, so the
     FPR estimate is over ~150+ sites rather than ~50. Asserting per-seed at
@@ -105,21 +105,21 @@ class TestAxoMEMENullCalibration:
         print(f"  pooled p-value mean: {pooled.mean():.3f} (ideal: ~0.5)")
 
         assert fpr_05 <= 0.10, (
-            f"AxoMEME FPR at alpha=0.05 is {fpr_05:.1%} on neutral data "
+            f"HyphAeon FPR at alpha=0.05 is {fpr_05:.1%} on neutral data "
             f"({label}, pooled over {len(_FPR_SEEDS)} seeds, "
             f"{len(pooled)} sites). Threshold: <=10%. Ideal: 5%. "
             f"p-values are anti-conservative."
         )
 
 
-class TestAxoMEMEPValueDistribution:
+class TestHyphAeonPValueDistribution:
     """Under neutrality, p-values should be approximately uniform on [0,1].
 
     Pools p-values across the full calibration grid (3 configs x 5 seeds = 15
     simulations). A chi-squared test on the p-value histogram checks this.
     This is more sensitive to subtle miscalibration than the FPR test alone.
 
-    Shares simulations with TestAxoMEMENullCalibration via the
+    Shares simulations with TestHyphAeonNullCalibration via the
     _neutral_pvals fixture — no redundant seq-gen runs.
     """
 
@@ -149,7 +149,7 @@ class TestAxoMEMEPValueDistribution:
             "mean_p": float(np.mean(pooled)),
             "histogram": observed.tolist(),
         }
-        out = os.path.join(artifacts_dir, "axomeme_null_calibration.json")
+        out = os.path.join(artifacts_dir, "hyphaeon_null_calibration.json")
         with open(out, "w") as f:
             json.dump(report, f, indent=2)
         print(f"\n[report] {out}")

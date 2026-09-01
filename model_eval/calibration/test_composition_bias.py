@@ -1,5 +1,5 @@
 """
-Composition bias calibration: does AxoMEME stay calibrated under non-uniform
+Composition bias calibration: does HyphAeon stay calibrated under non-uniform
 nucleotide composition?
 
 All other calibration tests use seq-gen with -f0.25,0.25,0.25,0.25 (uniform
@@ -32,7 +32,7 @@ _SEEDS = [0, 1, 2]
 
 
 @pytest.mark.parametrize("comp_name", ["uniform", "at_rich", "gc_rich"])
-class TestAxoMEMECompositionBias:
+class TestHyphAeonCompositionBias:
     """FPR should be stable across nucleotide composition regimes.
 
     Pools p-values across multiple seeds per composition profile before
@@ -91,7 +91,7 @@ class TestAxoMEMECompositionBias:
         print(f"  pooled FPR@0.05: {fpr_05:.1%} (ideal: 5%)")
 
         assert fpr_05 <= 0.15, (
-            f"AxoMEME FPR at alpha=0.05 is {fpr_05:.1%} under {comp_name} "
+            f"HyphAeon FPR at alpha=0.05 is {fpr_05:.1%} under {comp_name} "
             f"composition (pooled over {len(_SEEDS)} seeds, {len(pooled)} "
             f"sites, AT={actual_at:.0%}). Threshold: <=15%. The model "
             f"miscalibrates under non-uniform nucleotide composition — "

@@ -1,5 +1,5 @@
 """
-Tests for axomeme/weights.py — HF weights discovery, download, and loading.
+Tests for hyphaeon/weights.py — HF weights discovery, download, and loading.
 
 These tests mock the huggingface_hub API calls so they don't require network
 access or a valid HF token. Tests that do require HF access are skipped if

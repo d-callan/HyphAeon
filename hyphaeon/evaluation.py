@@ -77,7 +77,7 @@ def _boolean(value: object, label: str, path: Path) -> bool:
 
 def load_prediction_csv(path: Path) -> Dict[int, PredictionSite]:
     """Load site-indexed results written by ``hyphaeon predict``."""
-    required = {"site", "axomeme_lrt", "p_value", "is_invariable"}
+    required = {"site", "hyphaeon_lrt", "p_value", "is_invariable"}
     sites: Dict[int, PredictionSite] = {}
     try:
         with path.open(newline="", encoding="utf-8-sig") as handle:
@@ -91,9 +91,9 @@ def load_prediction_csv(path: Path) -> Dict[int, PredictionSite]:
                 site = _site_number(row["site"], path)
                 if site in sites:
                     raise EvaluationError(f"{path}:{line_number}: duplicate site {site}")
-                lrt = _finite_float(row["axomeme_lrt"], "axomeme_lrt", path)
+                lrt = _finite_float(row["hyphaeon_lrt"], "hyphaeon_lrt", path)
                 if lrt < 0.0:
-                    raise EvaluationError(f"{path}:{line_number}: axomeme_lrt cannot be negative")
+                    raise EvaluationError(f"{path}:{line_number}: hyphaeon_lrt cannot be negative")
                 sites[site] = PredictionSite(
                     lrt=lrt,
                     p_value=_probability(row["p_value"], "p_value", path),
@@ -313,7 +313,7 @@ def _threshold_metrics(
 
     return {
         "roc_auc": _roc_auc(inclusive_truth, predicted_lrt),
-        "roc_auc_definition": f"ground truth MEME p_value <= {alpha:g}; score = HyphAeon axomeme_lrt",
+        "roc_auc_definition": f"ground truth MEME p_value <= {alpha:g}; score = HyphAeon hyphaeon_lrt",
         "ppv": _ppv(ppv_confusion),
         "ppv_definition": f"MEME and HyphAeon p_value <= {alpha:g}",
         "fpr": _fpr(fpr_confusion),
@@ -432,7 +432,7 @@ def _evaluate_pairs(
         "invariable_sites": total_invariable_sites,
         "evaluation_scope": "variable sites only" if variable_only else "all matched sites",
         "correlation_definition": (
-            "HyphAeon axomeme_lrt versus MEME LRT over pooled evaluated sites; "
+            "HyphAeon hyphaeon_lrt versus MEME LRT over pooled evaluated sites; "
             "negative MEME LRT numerical artifacts are clamped to zero"
         ),
         "clamped_negative_meme_lrts": total_clamped_meme_lrts,

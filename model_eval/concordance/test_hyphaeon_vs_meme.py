@@ -1,7 +1,7 @@
 """
-Concordance between AxoMEME and real HyPhy MEME.
+Concordance between HyphAeon and real HyPhy MEME.
 
-AxoMEME is trained to mimic HyPhy MEME. These tests measure how well the
+HyphAeon is trained to mimic HyPhy MEME. These tests measure how well the
 neural model's predictions agree with real MEME on the same alignments.
 
 Metrics:
@@ -21,11 +21,11 @@ doesn't need to run MEME either. Delete the cache file to force a re-run.
 
 Two complementary test classes:
 
-  - TestAxoMEMEvsMEME: the three real gene alignments shipped with this
+  - TestHyphAeonvsMEME: the three real gene alignments shipped with this
     repo (Smc6, bat_oas1, camelid). Simulated datasets are excluded here
     because MEME on neutral data has no true positives.
 
-  - TestAxoMEMEvsMEMETypicalCase: moderate-depth simulated alignments (not
+  - TestHyphAeonvsMEMETypicalCase: moderate-depth simulated alignments (not
     the tree-sensitivity stress cases the real datasets were chosen for)
     with a known injected selection signal. A controlled complement to the
     real-data numbers above, at the same rho >= 0.5 threshold, so results
@@ -51,23 +51,23 @@ def _report_and_assert(metrics, dataset_label, out_path, min_rho=0.25):
     rho = metrics["spearman_rho"]
     # Positive rank correlation across all variable sites (accounting for neutral site noise)
     assert rho >= min_rho, (
-        f"AxoMEME rank correlation with real MEME on {dataset_label} is "
+        f"HyphAeon rank correlation with real MEME on {dataset_label} is "
         f"rho={rho:.3f} (threshold >={min_rho}). The model disagrees with its "
         f"prediction target on variable site ranking."
     )
 
-    # Kappa should be non-negative — AxoMEME's significant-call agreement
+    # Kappa should be non-negative — HyphAeon's significant-call agreement
     # with MEME should be at least as good as random (kappa >= 0).
     kappa = metrics.get("cohen_kappa_005", 0.0)
     assert kappa >= 0.0, (
-        f"AxoMEME kappa with MEME on {dataset_label} is {kappa:.3f} "
+        f"HyphAeon kappa with MEME on {dataset_label} is {kappa:.3f} "
         f"(threshold >=0.0). The model's significant calls are worse than "
         f"random agreement with its prediction target."
     )
 
 
-class TestAxoMEMEvsMEME:
-    """AxoMEME should agree with real HyPhy MEME on which sites are under
+class TestHyphAeonvsMEME:
+    """HyphAeon should agree with real HyPhy MEME on which sites are under
     positive selection, on the three real gene alignments shipped with
     this repo.
 
@@ -110,19 +110,19 @@ class TestAxoMEMEvsMEME:
                                       meme_lrts, meme_pvals, tested,
                                       meme_tested=meme_tested)
 
-        out = os.path.join(artifacts_dir, f"axomeme_vs_meme_{name}.json")
+        out = os.path.join(artifacts_dir, f"hyphaeon_vs_meme_{name}.json")
         _report_and_assert(metrics, name, out, min_rho=0.25)
 
 
-class TestAxoMEMEvsMEMETypicalCase:
+class TestHyphAeonvsMEMETypicalCase:
     """Concordance on moderate-depth simulated alignments with injected
-    selection — a controlled complement to TestAxoMEMEvsMEME above.
+    selection — a controlled complement to TestHyphAeonvsMEME above.
 
     WHY THIS EXISTS: the three real datasets above were chosen (per their
     fixture docstrings) as tree-sensitivity stress cases (ultra-deep tree,
     missing branch lengths), not typical examples. This class checks
     concordance on a moderate-depth tree instead (the "moderate" config
-    from test_axomeme_null.py, where the model IS well calibrated), with a
+    from test_hyphaeon_null.py, where the model IS well calibrated), with a
     known injected selection signal so ground truth is unambiguous.
     """
 
@@ -131,7 +131,7 @@ class TestAxoMEMEvsMEMETypicalCase:
                                           hyphy_available, seed,
                                           artifacts_dir):
         n_taxa, n_codons, depth = 50, 100, 0.2  # "moderate" config, matches
-                                                  # test_axomeme_null.py
+                                                  # test_hyphaeon_null.py
 
         fa, nwk = simulate_neutral_alignment(
             n_taxa=n_taxa, n_codons=n_codons, tree_depth=depth,
@@ -140,7 +140,7 @@ class TestAxoMEMEvsMEMETypicalCase:
             fa, nwk, n_taxa, n_codons,
             n_selected_sites=10, n_selected_branches=10, seed=seed + 1)
         # HyPhy MEME hard-rejects in-frame stop codons (an artifact of raw
-        # nucleotide simulation); AxoMEME tolerates them. Purge stops so
+        # nucleotide simulation); HyphAeon tolerates them. Purge stops so
         # both tools see the identical alignment.
         fa_clean, n_purged = purge_stop_codons(fa_sel, seed=seed + 2)
 
@@ -166,5 +166,5 @@ class TestAxoMEMEvsMEMETypicalCase:
         metrics["n_injected_selected_taxa"] = n_selected_taxa
 
         label = f"typical_sim seed={seed} (50 taxa, depth 0.2, injected selection)"
-        out = os.path.join(artifacts_dir, f"axomeme_vs_meme_typical_sim_seed{seed}.json")
+        out = os.path.join(artifacts_dir, f"hyphaeon_vs_meme_typical_sim_seed{seed}.json")
         _report_and_assert(metrics, label, out, min_rho=0.25)

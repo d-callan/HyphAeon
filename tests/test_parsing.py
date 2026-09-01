@@ -1,4 +1,4 @@
-"""Unit tests for alignment and tree parsing functions in axomeme.dataset."""
+"""Unit tests for alignment and tree parsing functions in hyphaeon.dataset."""
 import gzip
 import pytest
 from Bio import Phylo

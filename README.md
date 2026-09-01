@@ -160,9 +160,9 @@ mixed in the same invocation.
 | Output | Definition |
 | :--- | :--- |
 | Total sites | Number of site IDs shared by the matched prediction/MEME pairs. |
-| Pearson $r$ | Pearson correlation between HyphAeon `axomeme_lrt` and MEME LRT over all pooled evaluated sites. |
+| Pearson $r$ | Pearson correlation between HyphAeon `hyphaeon_lrt` and MEME LRT over all pooled evaluated sites. |
 | Spearman $\rho$ | Spearman rank correlation between the same pooled LRT values. |
-| ROC-AUC at $\alpha$ | MEME `p-value <= alpha` supplies the binary reference label; continuous HyphAeon `axomeme_lrt` supplies the ranking score. |
+| ROC-AUC at $\alpha$ | MEME `p-value <= alpha` supplies the binary reference label; continuous HyphAeon `hyphaeon_lrt` supplies the ranking score. |
 | PPV at $\alpha$ | $TP/(TP+FP)$, where MEME and HyphAeon calls both use `p_value <= alpha`. |
 | FPR at $\alpha$ | $FP/(FP+TN)$, where MEME and HyphAeon calls both use `p_value <= alpha`. |
 
