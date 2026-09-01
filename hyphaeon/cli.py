@@ -31,7 +31,7 @@ from .weights import (
     HF_REPO_ID,
 )
 from .phenotype import run_phenotype_association, PRESETS
-from .epistasis import run_epistasis_analysis, run_epistatic_sector_mining
+from .epistasis import run_epistasis_analysis, run_epistatic_sector_mining, compute_adaptive_safe_batch_size
 
 DEFAULT_VARIANT_ENV = os.environ.get("HYPHAEON_VARIANT") or os.environ.get("AXOMEME_VARIANT", DEFAULT_VARIANT)
 
@@ -45,29 +45,9 @@ def ensure_parent_directory(path):
         os.makedirs(parent, exist_ok=True)
 
 def determine_adaptive_batch_size(num_species: int, total_sites: int, device: torch.device, user_batch_size: int = None) -> int:
-    if user_batch_size is not None and user_batch_size > 0:
-        return min(user_batch_size, total_sites)
-        
-    n = num_species + 1
-    available_bytes = 4 * (1024 ** 3)
-    if device.type == 'cuda' and torch.cuda.is_available():
-        try:
-            free_mem, _ = torch.cuda.mem_get_info(device)
-            available_bytes = free_mem
-        except Exception:
-            available_bytes = 8 * (1024 ** 3)
-    else:
-        try:
-            import psutil
-            vm = psutil.virtual_memory()
-            available_bytes = vm.available
-        except Exception:
-            available_bytes = 8 * (1024 ** 3)
-            
-    target_budget_bytes = max(int(available_bytes * 0.40), 256 * (1024 ** 2))
-    bytes_per_site = 320 * (n ** 2) + 10000 * n + 4096
-    calculated_batch = max(1, target_budget_bytes // bytes_per_site)
-    return min(total_sites, int(calculated_batch))
+    # DEPRECATED: retained for test/back-compat; delegates to compute_adaptive_safe_batch_size
+    bs = compute_adaptive_safe_batch_size(num_species, user_batch_size=user_batch_size, device=device)
+    return min(bs, total_sites)
 
 def cmd_predict(args):
     if torch.cuda.is_available() and not args.cpu:
@@ -120,7 +100,8 @@ def cmd_predict(args):
     variable_indices = np.where(~inv)[0]
     num_variable = len(variable_indices)
 
-    batch_size = determine_adaptive_batch_size(len(taxa), max(1, num_variable), device, args.batch_size)
+    batch_size = compute_adaptive_safe_batch_size(len(taxa), user_batch_size=args.batch_size, device=device)
+    batch_size = min(batch_size, max(1, num_variable))
     num_chunks = (num_variable + batch_size - 1) // batch_size if num_variable > 0 else 0
     mode_desc = "manual override" if args.batch_size else "hardware adaptive"
     print(f"[*] Site Batch Sizing ({mode_desc}): {batch_size} sites/chunk ({num_chunks} chunk{'s' if num_chunks != 1 else ''} for {num_variable}/{L} variable codons)")
@@ -541,7 +522,8 @@ def cmd_busted(args):
         num_species = len(taxa)
         total_sites_processed += L
         
-        batch_size = determine_adaptive_batch_size(num_species, max(1, num_variable), device, args.batch_size)
+        batch_size = compute_adaptive_safe_batch_size(num_species, user_batch_size=args.batch_size, device=device)
+        batch_size = min(batch_size, max(1, num_variable))
         tree_cache = model.precompute_tree_cache(d.to(device), z.to(device))
         
         lrts = np.zeros(L, dtype=np.float32)
@@ -1192,7 +1174,7 @@ def main():
     disease_parser.add_argument("--human-taxon", default=None, help="Name of human reference taxon in alignment (default: auto-detected)")
     disease_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
     disease_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from HF (default: {DEFAULT_VARIANT})")
-    disease_parser.add_argument("-b", "--batch-size", type=int, default=64, help="Batch size for site processing (default: 64)")
+    disease_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Batch size for site processing (default: adaptive hardware budget)")
     disease_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
     disease_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     disease_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")

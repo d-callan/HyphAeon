@@ -34,6 +34,7 @@ from .dataset import (
 )
 from .model import PhyloAxialTransformer
 from .weights import load_weights, load_arch_config
+from .epistasis import compute_adaptive_safe_batch_size
 
 REV_AA_MAP = {v: k for k, v in AA_MAP.items()}
 
@@ -327,7 +328,7 @@ def predict_disease_pathogenicity(
     model: Optional[PhyloAxialTransformer] = None,
     weights_path: Optional[str] = "axomeme_5_dim384_nonull.pt",
     device: Optional[Union[str, torch.device]] = None,
-    batch_size: int = 64,
+    batch_size: Optional[int] = None,
     coevolution_weight: float = 1.0,
     verbose: bool = True
 ) -> pd.DataFrame:
@@ -450,10 +451,16 @@ def predict_disease_pathogenicity(
     tree_cache = model.precompute_tree_cache(d_mat.to(device), z_coords.to(device))
     
     # 8. Batched Wild-Type Latent Root Embeddings
+    eff_batch = compute_adaptive_safe_batch_size(
+        N,
+        user_batch_size=(batch_size if batch_size and batch_size > 0 else None),
+        device=device,
+    )
+    eff_batch = max(1, min(eff_batch, L_codon))
     z_wt_list = []
     with torch.no_grad():
-        for b_start in range(0, L_codon, batch_size):
-            b_end = min(b_start + batch_size, L_codon)
+        for b_start in range(0, L_codon, eff_batch):
+            b_end = min(b_start + eff_batch, L_codon)
             _, _, z_chunk = model.forward_cached(
                 c_tensor[b_start:b_end].to(device),
                 a_tensor[b_start:b_end].to(device),
