@@ -1,4 +1,4 @@
-"""Unit tests for tokenization functions in axomeme.dataset."""
+"""Unit tests for tokenization functions in hyphaeon.dataset."""
 import pytest
 from hyphaeon.dataset import get_codon_token, get_aa_token, GENETIC_CODE, AA_MAP
 

@@ -87,3 +87,4 @@ tests/test_drosophila_preparation.py
 weights/
 *.pt
 *.safetensors
+REVIEW.md

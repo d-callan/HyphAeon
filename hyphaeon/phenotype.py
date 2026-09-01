@@ -1,5 +1,5 @@
 """
-axomeme/phenotype.py
+hyphaeon/phenotype.py
 --------------------
 Directional Phenotype-Genotype Association Mapping (PhyloWAS) and
 Phenotype-Associated Residue Signature (PARS) extraction.
@@ -31,6 +31,8 @@ from .dataset import (
     extract_tree_from_string_or_file
 )
 from .model import PhyloAxialTransformer
+from .stats import cauchy_combination_p, benjamini_hochberg
+from .inference import get_device, load_model
 from .weights import (
     load_weights,
     load_arch_config,
@@ -38,7 +40,7 @@ from .weights import (
     DEFAULT_VARIANT
 )
 
-DEFAULT_WEIGHTS = "weights/axomeme_v1.pt"
+DEFAULT_WEIGHTS = "weights/hyphaeon_v1.pt"
 from .epistasis import compute_transformer_attributions
 
 REV_AA_MAP = {v: k for k, v in AA_MAP.items()}
@@ -366,14 +368,7 @@ def run_phenotype_association(
     attributions and branch projections) rather than binary string substitution counts.
     """
     # 1. Device Selection
-    if cpu:
-        device = torch.device('cpu')
-    elif torch.cuda.is_available():
-        device = torch.device('cuda')
-    elif torch.backends.mps.is_available():
-        device = torch.device('mps')
-    else:
-        device = torch.device('cpu')
+    device = get_device(cpu=cpu)
 
     # 2. Load Alignment, Tree, and Extract Tree Cache
     c_tensor, a_tensor, d_mat, z_coords, inv_mask, taxa, L = load_alignment_and_tree(
@@ -403,20 +398,8 @@ def run_phenotype_association(
         raise ValueError(f"Insufficient foreground taxa ({fg_count}) matching criteria among {N} taxa.")
 
     # 4. Load Neural Architecture and Pretrained Weights
-    config = load_arch_config(weights=weights_path, variant=variant)
-    model = PhyloAxialTransformer(
-        embed_dim=config['embed_dim'],
-        num_layers=config['num_layers'],
-        num_heads=config['num_heads'],
-        window_size=config['window_size'],
-    ).to(device)
-    state_dict = load_weights(weights=weights_path, variant=variant, map_location=device)
-    model.load_state_dict(state_dict, strict=False)
-    model.eval()
-
-    d_dev = d_mat.to(device)
-    z_dev = z_coords.to(device)
-    tree_cache = model.precompute_tree_cache(d_dev, z_dev)
+    model = load_model(weights=weights_path, variant=variant, device=device)
+    tree_cache = model.precompute_tree_cache(d_mat.to(device), z_coords.to(device))
 
     # 5. Extract Transformer Phylogenetic Attributions
     leaf_attr, lrts, pvals, cons_aas = compute_transformer_attributions(
@@ -482,9 +465,7 @@ def run_phenotype_association(
             score = float(np.sqrt(max(0.0, lrt_val)) * max(0.0, rho))
             
             # ACAT Cauchy combination: combines omnibus selection LRT + directional trait attribution
-            c_p = 0.5 * (np.tan((0.5 - p_lrt) * np.pi) + np.tan((0.5 - p_assoc) * np.pi))
-            p_combined = float(0.5 - np.arctan(c_p) / np.pi)
-            p_combined = max(1e-15, min(1.0, p_combined))
+            p_combined = cauchy_combination_p(np.array([p_lrt, p_assoc]))
 
             ref_aa = cons_aas[s]
             fg_valid_aa = a_np[s, is_fg][a_np[s, is_fg] < 20]
@@ -510,7 +491,7 @@ def run_phenotype_association(
                 "site": s + 1,
                 "ref_aa": ref_aa,
                 "derived_aa": derived_aa,
-                "axomeme_lrt": lrt_val,
+                "hyphaeon_lrt": lrt_val,
                 "p_lrt": p_lrt,
                 "attribution_norm": norm_a,
                 "fg_mean_attn": fg_mean_attn,
@@ -528,16 +509,11 @@ def run_phenotype_association(
     site_results.sort(key=lambda x: x["score"], reverse=True)
 
     # 8. Benjamini-Hochberg FDR
-    m = len(site_results)
-    if m > 0:
-        p_sorted_idx = np.argsort([x["p_value"] for x in site_results])
-        min_q = 1.0
-        for rank, idx in reversed(list(enumerate(p_sorted_idx))):
-            p_val = site_results[idx]["p_value"]
-            q_val = (p_val * m) / (rank + 1)
-            if q_val < min_q:
-                min_q = q_val
-            site_results[idx]["q_value"] = min(min_q, 1.0)
+    if site_results:
+        p_arr = np.array([x["p_value"] for x in site_results])
+        q_arr = benjamini_hochberg(p_arr)
+        for i, s in enumerate(site_results):
+            s["q_value"] = float(q_arr[i])
     
     # 9. Dual-Track Extreme-Value Statistics
     max_assoc = float(site_results[0]["association_rho"]) if site_results else 0.0
@@ -615,12 +591,10 @@ def run_phenotype_association(
                             G_trait.add_edge(int(s1 + 1), int(s2 + 1), weight=sim, cesi=cesi)
             
             if pair_list:
-                M_p = len(pair_list)
                 p_arr = np.array([x["p_value"] for x in pair_list])
-                order_p = np.argsort(p_arr)
-                q_p = np.minimum.accumulate((p_arr[order_p] * M_p / np.arange(1, M_p + 1))[::-1])[::-1]
-                for rank_i, orig_i in enumerate(order_p):
-                    pair_list[orig_i]["q_value"] = float(q_p[rank_i])
+                q_arr = benjamini_hochberg(p_arr)
+                for i, pair in enumerate(pair_list):
+                    pair["q_value"] = float(q_arr[i])
                 
                 pair_list.sort(key=lambda x: x["cesi"], reverse=True)
                 coselection_pairs = pair_list

@@ -2,7 +2,7 @@
 """
 train.py
 --------
-Clean training pipeline for AxoMEME (PhyloAxialTransformer).
+Clean training pipeline for HyphAeon (PhyloAxialTransformer).
 Supports mixed precision, cosine annealing learning rate scheduling, per-gene NPZ
 loading, and within-gene site batching.
 """
@@ -104,7 +104,7 @@ def train_epoch(model, loader, optimizer, scaler, device, args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train AxoMEME Neural Selection Predictor")
+    parser = argparse.ArgumentParser(description="Train HyphAeon Neural Selection Predictor")
     parser.add_argument(
         "--data_dir", required=True, help="Directory containing per-gene .npz tensors"
     )

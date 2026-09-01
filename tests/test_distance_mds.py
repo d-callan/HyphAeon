@@ -1,4 +1,4 @@
-"""Unit tests for distance matrix and MDS computation in axomeme.dataset."""
+"""Unit tests for distance matrix and MDS computation in hyphaeon.dataset."""
 import numpy as np
 import pytest
 from Bio import Phylo

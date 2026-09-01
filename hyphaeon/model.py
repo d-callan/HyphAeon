@@ -1,5 +1,5 @@
 """
-axomeme/model.py
+hyphaeon/model.py
 ----------------
 Core Neural Architecture: PhyloAxialTransformer with Multi-Scale 4D Tree-RoPE
 for ultra-fast episodic positive selection inference.
@@ -56,7 +56,7 @@ class PhyloRowAttention(nn.Module):
         # They are remnants of earlier architecture iterations (3-channel tree
         # projection, 2-layer phylo MLP, per-site rate scaler) that were
         # simplified to the current 1-channel Markov kernel. They remain here
-        # because they are present in the pretrained checkpoint (axomeme_v1.pt)
+        # because they are present in the pretrained checkpoint (hyphaeon_v1.pt)
         # and removing them from __init__ would cause load_state_dict to fail
         # with unexpected-key errors. Removing them requires either a checkpoint
         # migration or a compatibility shim in the CLI. See REVIEW.md item #29.

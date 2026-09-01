@@ -1,8 +1,8 @@
 """
-axomeme/cli.py
+hyphaeon/cli.py
 --------------
-Command-line interface for AxoMEME:
-1. 'predict': Ultra-Fast Neural Inference of Episodic Positive Selection (AxoMEME Transformer)
+Command-line interface for HyphAeon:
+1. 'meme': Ultra-Fast Neural Inference of Episodic Positive Selection (HyphAeon Transformer)
 2. 'phenotype' (phylowas): Directional Phenotype-Genotype Association & PARS Signature Extraction
 3. 'epistasis' (essm): Multi-Scale Epistatic Sector Mining (Two-Stage Seed-and-Extend TSE)
 """
@@ -29,69 +29,47 @@ from .weights import (
     list_available_variants,
     DEFAULT_VARIANT,
     HF_REPO_ID,
-)
 from .phenotype import run_phenotype_association, PRESETS
-from .epistasis import run_epistasis_analysis, run_epistatic_sector_mining, compute_adaptive_safe_batch_size
+from .epistasis import run_epistasis_analysis, run_epistatic_sector_mining
+from .stats import pvals_from_lrt_meme, pvals_from_lrt_self_liang, benjamini_hochberg, cauchy_combination_p
+from .inference import get_device, load_model, prepare_alignment, predict_site_lrts, compute_adaptive_safe_batch_size
+from .io import ensure_parent_directory, write_json, write_csv, format_pq
 
-DEFAULT_VARIANT_ENV = os.environ.get("HYPHAEON_VARIANT") or os.environ.get("AXOMEME_VARIANT", DEFAULT_VARIANT)
+DEFAULT_VARIANT_ENV = os.environ.get("HYPHAEON_VARIANT", DEFAULT_VARIANT)
 
-# Default to package model.safetensors if it exists, otherwise check HYPHAEON_WEIGHTS / AXOMEME_WEIGHTS
+# Default to package model.safetensors if it exists, otherwise check HYPHAEON_WEIGHTS
 _local_repo_weights = Path(__file__).resolve().parent.parent / "model.safetensors"
-DEFAULT_WEIGHTS_ENV = os.environ.get("HYPHAEON_WEIGHTS") or os.environ.get("AXOMEME_WEIGHTS", str(_local_repo_weights) if _local_repo_weights.exists() else None)
-
-def ensure_parent_directory(path):
-    if path:
-        parent = os.path.dirname(os.path.abspath(path))
-        os.makedirs(parent, exist_ok=True)
+DEFAULT_WEIGHTS_ENV = os.environ.get("HYPHAEON_WEIGHTS", str(_local_repo_weights) if _local_repo_weights.exists() else None)
 
 def determine_adaptive_batch_size(num_species: int, total_sites: int, device: torch.device, user_batch_size: int = None) -> int:
     # DEPRECATED: retained for test/back-compat; delegates to compute_adaptive_safe_batch_size
     bs = compute_adaptive_safe_batch_size(num_species, user_batch_size=user_batch_size, device=device)
     return min(bs, total_sites)
 
-def cmd_predict(args):
-    if torch.cuda.is_available() and not args.cpu:
-        device = torch.device('cuda')
-    elif torch.backends.mps.is_available() and not args.cpu:
-        device = torch.device('mps')
-    else:
-        device = torch.device('cpu')
+def cmd_meme(args):
+    device = get_device(cpu=getattr(args, "cpu", False))
     print(f"[*] Hardware device selected: {device.type.upper()}")
 
-    # Resolve weights: explicit --weights path > --model-variant (download from HF) > default variant
     try:
-        weights_path = resolve_weights_path(
-            weights=args.weights,
-            variant=args.model_variant,
-        )
+        model = load_model(weights=args.weights, variant=args.model_variant, device=device)
     except RuntimeError as e:
         print(f"[!] {e}")
         sys.exit(1)
-    print(f"[*] Loading AxoMEME model from: {weights_path}")
+    weights_path = resolve_weights_path(weights=args.weights, variant=args.model_variant)
+    print(f"[*] Loading HyphAeon model from: {weights_path}")
 
-    config = load_arch_config(weights=args.weights, variant=args.model_variant)
-    model = PhyloAxialTransformer(
-        embed_dim=config['embed_dim'],
-        num_layers=config['num_layers'],
-        num_heads=config['num_heads'],
-        window_size=config['window_size'],
-    ).to(device)
-
-    state_dict = load_weights(weights=weights_path, variant=args.model_variant, map_location=device)
-    model.load_state_dict(state_dict, strict=False)
-    model.eval()
-    
     print(f"[*] Parsing Alignment: {args.alignment}")
     if args.tree:
         print(f"[*] Parsing Tree:      {args.tree}")
     else:
         print(f"[*] Tree argument not provided; extracting tree from alignment...")
-    
+
     t0 = time.time()
     try:
         prune_dups = not getattr(args, "no_prune_duplicates", False)
-        c, a, d, z, inv, taxa, L = load_alignment_and_tree(
-            args.alignment, args.tree, max_species=args.max_species, prune_duplicates=prune_dups
+        c, a, d, z, inv, taxa, L, tree_cache = prepare_alignment(
+            args.alignment, args.tree, model=model, device=device,
+            max_species=args.max_species, prune_duplicates=prune_dups
         )
     except Exception as e:
         print(f"\n[!] Error loading alignment and tree: {e}")
@@ -105,24 +83,9 @@ def cmd_predict(args):
     num_chunks = (num_variable + batch_size - 1) // batch_size if num_variable > 0 else 0
     mode_desc = "manual override" if args.batch_size else "hardware adaptive"
     print(f"[*] Site Batch Sizing ({mode_desc}): {batch_size} sites/chunk ({num_chunks} chunk{'s' if num_chunks != 1 else ''} for {num_variable}/{L} variable codons)")
-    
-    d_dev = d.to(device)
-    z_dev = z.to(device)
-    tree_cache = model.precompute_tree_cache(d_dev, z_dev)
-    
-    lrts = np.zeros(L, dtype=np.float32)
-    if num_variable > 0:
-        with torch.no_grad():
-            for start_idx in range(0, num_variable, batch_size):
-                end_idx = min(start_idx + batch_size, num_variable)
-                batch_site_idx = variable_indices[start_idx:end_idx]
-                
-                c_chunk = c[batch_site_idx].to(device)
-                a_chunk = a[batch_site_idx].to(device)
-                
-                y_soft, _ = model.forward_cached(c_chunk, a_chunk, tree_cache)
-                chunk_lrts = torch.clamp(y_soft.squeeze(-1), min=0.0).cpu().numpy().flatten()
-                lrts[batch_site_idx] = chunk_lrts
+
+    lrts = predict_site_lrts(model, c, a, d, z, inv, tree_cache=tree_cache,
+                             batch_size=batch_size, device=device)
                 
     if device.type == 'mps':
         torch.mps.synchronize()
@@ -130,22 +93,10 @@ def cmd_predict(args):
         torch.cuda.synchronize()
 
     elapsed = time.time() - t0
-    
-    # MEME asymptotic mixture null from MEME.bf: 1/3 * delta(0) + 2/3 * (0.45 * chi2(1) + 0.55 * chi2(2))
-    pvals = np.full(L, 2.0 / 3.0, dtype=np.float32)
-    pos_mask = lrts > 0.0
-    pvals[pos_mask] = (2.0 / 3.0) * (0.45 * stats.chi2.sf(lrts[pos_mask], df=1) + 0.55 * stats.chi2.sf(lrts[pos_mask], df=2))
-    
-    # Benjamini-Hochberg False Discovery Rate (FDR) q-values
-    order = np.argsort(pvals)
-    ranks = np.empty(L, dtype=int)
-    ranks[order] = np.arange(1, L + 1)
-    raw_q = pvals * (L / ranks)
-    sorted_q = raw_q[order]
-    for i in range(L - 2, -1, -1):
-        sorted_q[i] = min(sorted_q[i], sorted_q[i + 1])
-    raw_q[order] = sorted_q
-    qvals = np.clip(raw_q, 0.0, 1.0).astype(np.float32)
+
+    # MEME asymptotic mixture p-values + Benjamini-Hochberg FDR q-values
+    pvals = pvals_from_lrt_meme(lrts).astype(np.float32)
+    qvals = benjamini_hochberg(pvals).astype(np.float32)
     
     raw_sig_05 = int((pvals <= 0.05).sum())
     raw_sig_10 = int((pvals <= 0.10).sum())
@@ -157,41 +108,13 @@ def cmd_predict(args):
     if getattr(args, "filter", False):
         print("\n[*] Running Automated Alignment Error Screening (Hypergeometric Patch + Counterfactual Outlier Attribution)...")
         from .dataset import parse_alignment_sequences, CODON_TO_AA
-        
+        from .filter import scan_hypergeometric_patches
+
         # 1. Hypergeometric Scan for selective patches
-        sel_sites = np.where(pvals <= 0.05)[0]
-        K = len(sel_sites)
-        patches = []
-        if K >= 3:
-            cand_p = []
-            for idx_i in range(len(sel_sites)):
-                pos_i = sel_sites[idx_i]
-                for idx_j in range(idx_i + 2, len(sel_sites)):
-                    pos_j = sel_sites[idx_j]
-                    d_span = pos_j - pos_i + 1
-                    if d_span > 35:
-                        break
-                    k_span = idx_j - idx_i + 1
-                    p_loc = 1.0 - stats.hypergeom.cdf(k_span - 1, L, K, d_span)
-                    if p_loc <= getattr(args, "filter_p_thresh", 0.01):
-                        cand_p.append({'start': pos_i, 'end': pos_j, 'k': k_span, 'd': d_span, 'p_local': p_loc})
-            if cand_p:
-                cand_p.sort(key=lambda x: x['start'])
-                merged = []
-                curr = cand_p[0].copy()
-                for cp in cand_p[1:]:
-                    if cp['start'] <= curr['end']:
-                        curr['end'] = max(curr['end'], cp['end'])
-                        curr['p_local'] = min(curr['p_local'], cp['p_local'])
-                    else:
-                        curr['d'] = curr['end'] - curr['start'] + 1
-                        curr['k'] = int(np.sum((sel_sites >= curr['start']) & (sel_sites <= curr['end'])))
-                        merged.append(curr)
-                        curr = cp.copy()
-                curr['d'] = curr['end'] - curr['start'] + 1
-                curr['k'] = int(np.sum((sel_sites >= curr['start']) & (sel_sites <= curr['end'])))
-                merged.append(curr)
-                patches = merged
+        patches = scan_hypergeometric_patches(
+            pvals, alpha_site=0.05, min_k=3, max_span=35,
+            p_local_thresh=getattr(args, "filter_p_thresh", 0.01)
+        )
 
         if patches:
             raw_seqs = parse_alignment_sequences(args.alignment)
@@ -261,33 +184,12 @@ def cmd_predict(args):
                 c_cl, a_cl, d_cl, z_cl, inv_cl, taxa_cl, L_cl = load_alignment_and_tree(
                     cleaned_temp_path, args.tree, max_species=args.max_species, prune_duplicates=prune_dups
                 )
-                
-                var_cl = np.where(~inv_cl)[0]
-                n_var_cl = len(var_cl)
-                lrts_cl = np.zeros(L, dtype=np.float32)
-                if n_var_cl > 0:
-                    with torch.no_grad():
-                        for start_idx in range(0, n_var_cl, batch_size):
-                            end_idx = min(start_idx + batch_size, n_var_cl)
-                            b_idx = var_cl[start_idx:end_idx]
-                            c_ch = c_cl[b_idx].to(device)
-                            a_ch = a_cl[b_idx].to(device)
-                            y_soft, _ = model.forward_cached(c_ch, a_ch, tree_cache)
-                            lrts_cl[b_idx] = torch.clamp(y_soft.squeeze(-1), min=0.0).cpu().numpy().flatten()
+
+                lrts_cl = predict_site_lrts(model, c_cl, a_cl, d_cl, z_cl, inv_cl,
+                                            tree_cache=tree_cache, batch_size=batch_size, device=device)
                             
-                pvals_cl = np.full(L, 2.0 / 3.0, dtype=np.float32)
-                pos_cl = lrts_cl > 0.0
-                pvals_cl[pos_cl] = (2.0 / 3.0) * (0.45 * stats.chi2.sf(lrts_cl[pos_cl], df=1) + 0.55 * stats.chi2.sf(lrts_cl[pos_cl], df=2))
-                
-                order_cl = np.argsort(pvals_cl)
-                ranks_cl = np.empty(L, dtype=int)
-                ranks_cl[order_cl] = np.arange(1, L + 1)
-                raw_q_cl = pvals_cl * (L / ranks_cl)
-                sorted_q_cl = raw_q_cl[order_cl]
-                for i in range(L - 2, -1, -1):
-                    sorted_q_cl[i] = min(sorted_q_cl[i], sorted_q_cl[i + 1])
-                raw_q_cl[order_cl] = sorted_q_cl
-                qvals_cl = np.clip(raw_q_cl, 0.0, 1.0).astype(np.float32)
+                pvals_cl = pvals_from_lrt_meme(lrts_cl).astype(np.float32)
+                qvals_cl = benjamini_hochberg(pvals_cl).astype(np.float32)
                 
                 # Export cleaned alignment if requested
                 if getattr(args, "filter_out_aln", None):
@@ -314,7 +216,7 @@ def cmd_predict(args):
     fdr_10 = (qvals <= 0.10).sum()
     
     print("\n" + "=" * 78)
-    print(f"🎉 AxoMEME Selection Inference Complete in {elapsed:.3f} seconds!")
+    print(f"🎉 HyphAeon Selection Inference Complete in {elapsed:.3f} seconds!")
     print(f"   Taxa: {len(taxa)} | Codon Sites: {L} | Total Invariable: {inv.sum()}")
     if getattr(args, "filter", False) and filtered_artifacts:
         print(f"   Automated Alignment Error Filtering: {len(filtered_artifacts)} artifact patch(es) surgically masked")
@@ -369,7 +271,7 @@ def cmd_predict(args):
     for i in range(L):
         site_entry = {
             "site": i + 1,
-            "axomeme_lrt": float(lrts[i]),
+            "hyphaeon_lrt": float(lrts[i]),
             "p_value": float(pvals[i]),
             "q_value": float(qvals[i]),
             "is_invariable": bool(inv[i])
@@ -386,30 +288,26 @@ def cmd_predict(args):
     tree_meta = args.tree if args.tree else "embedded_in_alignment"
     
     if args.output:
-        ensure_parent_directory(args.output)
-        with open(args.output, "w") as f:
-            json.dump({
-                "alignment": args.alignment,
-                "tree": tree_meta,
-                "taxa_count": len(taxa),
-                "codon_count": L,
-                "runtime_sec": elapsed,
-                "filter_enabled": bool(getattr(args, "filter", False)),
-                "artifacts_masked": filtered_artifacts,
-                "attribution_enabled": bool(getattr(args, "attribute", False)),
-                "attributions": {str(k+1): v for k, v in attributions.items()},
-                "sites": results_list
-            }, f, indent=2)
-        print(f"\n[✓] JSON results written to: {args.output}")
-        
+        write_json(args.output, {
+            "alignment": args.alignment,
+            "tree": tree_meta,
+            "taxa_count": len(taxa),
+            "codon_count": L,
+            "runtime_sec": elapsed,
+            "filter_enabled": bool(getattr(args, "filter", False)),
+            "artifacts_masked": filtered_artifacts,
+            "attribution_enabled": bool(getattr(args, "attribute", False)),
+            "attributions": {str(k+1): v for k, v in attributions.items()},
+            "sites": results_list
+        })
+
     if args.csv:
-        ensure_parent_directory(args.csv)
         # Flatten attribution details for clean CSV export
         csv_records = []
         for r in results_list:
             row_dict = {
                 "site": r["site"],
-                "axomeme_lrt": r["axomeme_lrt"],
+                "hyphaeon_lrt": r["hyphaeon_lrt"],
                 "p_value": r["p_value"],
                 "q_value": r["q_value"],
                 "is_invariable": r["is_invariable"],
@@ -420,9 +318,7 @@ def cmd_predict(args):
                 row_dict["top_driver"] = r["top_driver"]
                 row_dict["top_mutation"] = r["top_mutation"]
             csv_records.append(row_dict)
-        df = pd.DataFrame(csv_records)
-        df.to_csv(args.csv, index=False)
-        print(f"[✓] CSV results written to: {args.csv}")
+        write_csv(args.csv, csv_records)
 
 def cmd_busted(args):
     """
@@ -431,15 +327,15 @@ def cmd_busted(args):
     evaluates CORAL rank-consistent ordinal heads for exact calibrated selection calls.
     Supports single alignments (-a) or high-throughput batch directories (-d).
     """
-    device = torch.device("cpu") if args.cpu else torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device(cpu=getattr(args, "cpu", False))
     print(f"[*] Running HyphAeon BUSTED Omnibus Selection Inference on {device}...")
     t_global_start = time.time()
-    
+
     # 1. Weights
     resolved_path = resolve_weights_path(args.weights, variant=args.variant)
     state_dict = load_weights(weights=resolved_path, variant=args.variant)
     arch_config = load_arch_config(resolved_path, variant=args.variant)
-    
+
     model = PhyloAxialTransformer(
         embed_dim=arch_config["embed_dim"],
         num_layers=arch_config["num_layers"],
@@ -557,20 +453,13 @@ def cmd_busted(args):
             pred_omega = [0.10, 1.00, pred_w3]
 
         elapsed = time.time() - t0
-        
-        # 4. Asymptotic mixture p-values
-        pvals = np.ones(L, dtype=np.float64)
-        pos_mask = lrts > 0.0
-        if np.any(pos_mask):
-            pvals[pos_mask] = 0.5 * stats.chi2.sf(lrts[pos_mask], df=1)
+
+        # 4. Asymptotic mixture p-values (Self & Liang for BUSTED omnibus)
+        pvals = pvals_from_lrt_self_liang(lrts)
 
         # 5. ACAT & Simes Combination
         var_p = pvals[variable_indices] if num_variable > 0 else pvals
-        valid_p = np.clip(var_p, 1e-15, 1.0 - 1e-6)
-        cauchy_terms = np.tan((0.5 - valid_p) * np.pi)
-        t_acat = float(np.mean(cauchy_terms))
-        p_acat = float(0.5 - (np.arctan(t_acat) / np.pi))
-        p_acat = max(1e-15, min(1.0, p_acat))
+        p_acat = cauchy_combination_p(var_p)
 
         sorted_p = np.sort(pvals)
         ranks = np.arange(1, L + 1)
@@ -647,13 +536,9 @@ def cmd_busted(args):
         print("=" * 92)
 
     if args.output:
-        ensure_parent_directory(args.output)
-        with open(args.output, 'w') as f:
-            json.dump(batch_results if is_batch else batch_results[0], f, indent=2)
-        print(f"[✓] JSON results written to: {args.output}")
+        write_json(args.output, batch_results if is_batch else batch_results[0])
 
     if args.csv:
-        ensure_parent_directory(args.csv)
         df_summary = pd.DataFrame([{
             "Gene": r["gene"],
             "Taxa": r["taxa"],
@@ -669,8 +554,7 @@ def cmd_busted(args):
             "Selected": r["positive_selection_detected"],
             "Time_ms": r["elapsed_seconds"] * 1000
         } for r in batch_results])
-        df_summary.to_csv(args.csv, index=False)
-        print(f"[✓] CSV summary written to: {args.csv}")
+        write_csv(args.csv, df_summary, label="CSV summary")
 
 def list_models():
     """List available model variants from Hugging Face."""
@@ -687,13 +571,13 @@ def list_models():
         print("No model variants found on Hugging Face.")
         return
 
-    print(f"Available AxoMEME model variants ({HF_REPO_ID}):")
+    print(f"Available HyphAeon model variants ({HF_REPO_ID}):")
     print()
     for v in variants:
         default = " (default)" if v["variant"] == DEFAULT_VARIANT else ""
         print(f"  {v['variant']:15s}  {v['description']}{default}")
     print()
-    print("Use with:  hyphaeon predict -a alignment.fa --model-variant <variant>")
+    print("Use with:  hyphaeon meme -a alignment.fa --model-variant <variant>")
     print(f"Default variant: {DEFAULT_VARIANT}")
 
 def cmd_phenotype(args):
@@ -755,9 +639,9 @@ def cmd_phenotype(args):
         print(f"{'Site':<6} {'Ref':<5} {'Derived':<9} {'LRT':<7} {'Assoc (rho)':<12} {'Score':<8} {'p-value':<12} {'FDR q-val':<12} {'Fg %':<7} {'Bg %':<7}")
         print("-" * 92)
         for s in top_sites:
-            q_str = f"{s.get('q_value', 1.0):.2e}" if s.get('q_value', 1.0) < 0.01 else f"{s.get('q_value', 1.0):.3f}"
-            p_str = f"{s.get('p_value', 1.0):.2e}" if s.get('p_value', 1.0) < 0.01 else f"{s.get('p_value', 1.0):.3f}"
-            print(f"{s['site']:<6d} {s['ref_aa']:<5s} {s['derived_aa']:<9s} {s['axomeme_lrt']:<7.2f} {s['association_rho']:<12.4f} {s.get('score', 0.0):<8.3f} {p_str:<12s} {q_str:<12s} {s['foreground_freq_pct']:<7.1f} {s['background_freq_pct']:<7.1f}")
+            q_str = format_pq(s.get('q_value', 1.0))
+            p_str = format_pq(s.get('p_value', 1.0))
+            print(f"{s['site']:<6d} {s['ref_aa']:<5s} {s['derived_aa']:<9s} {s['hyphaeon_lrt']:<7.2f} {s['association_rho']:<12.4f} {s.get('score', 0.0):<8.3f} {p_str:<12s} {q_str:<12s} {s['foreground_freq_pct']:<7.1f} {s['background_freq_pct']:<7.1f}")
 
     trait_sectors = res.get("trait_sectors", [])
     if trait_sectors:
@@ -774,21 +658,15 @@ def cmd_phenotype(args):
         print("-" * 74)
         for p in coselection_pairs[:10]:
             pair_str = f"{p['ref_u']}{p['site_u']} - {p['ref_v']}{p['site_v']}"
-            q_str = f"{p.get('q_value', 1.0):.2e}" if p.get('q_value', 1.0) < 0.01 else f"{p.get('q_value', 1.0):.3f}"
-            p_str = f"{p.get('p_value', 1.0):.2e}" if p.get('p_value', 1.0) < 0.01 else f"{p.get('p_value', 1.0):.3f}"
+            q_str = format_pq(p.get('q_value', 1.0))
+            p_str = format_pq(p.get('p_value', 1.0))
             print(f"{pair_str:<16} {p['similarity']:<14.4f} {p['cesi']:<8.3f} {p['shared_branches']:<8d} {p_str:<12s} {q_str:<12s}")
 
     if args.output:
-        ensure_parent_directory(args.output)
-        with open(args.output, "w") as f:
-            json.dump(res, f, indent=2)
-        print(f"\n[✓] JSON results written to: {args.output}")
+        write_json(args.output, res)
 
     if args.csv:
-        ensure_parent_directory(args.csv)
-        df = pd.DataFrame(sites)
-        df.to_csv(args.csv, index=False)
-        print(f"[✓] CSV results written to: {args.csv}")
+        write_csv(args.csv, sites)
 
 def cmd_epistasis(args):
     print(f"[*] Executing Phylogenetic Branch Attribution, Co-Selection Networks & Selection DMS (ESSM)...")
@@ -840,7 +718,7 @@ def cmd_epistasis(args):
         for idx, e in enumerate(edges[:12]):
             pair_str = f"{e['ref_u']}{e['site_u']} <-> {e['ref_v']}{e['site_v']}"
             lrt_str = f"{e['lrt_u']:.1f} / {e['lrt_v']:.1f}"
-            q_str = f"{e['fdr_q']:.2e}" if e['fdr_q'] < 0.01 else f"{e['fdr_q']:.3f}"
+            q_str = format_pq(e['fdr_q'])
             print(f"#{idx+1:<4d} {pair_str:<16s} {lrt_str:<12s} {e['similarity']:<9.4f} {e['shared_branches']:<8d} {e['cesi']:<10.3f} {q_str:<12s}")
 
     # 2. Epistatic Sectors
@@ -873,13 +751,9 @@ def cmd_epistasis(args):
             print(f"    • Site {int(r['site']):<4d} ({r['wt_aa']}): Plasticity = {r['intrinsic_plasticity']:.3f} | Baseline LRT = {r['baseline_lrt']:.2f} (p = {r['p_value']:.3e})")
 
     if getattr(args, "output", None):
-        ensure_parent_directory(args.output)
-        with open(args.output, "w") as f:
-            json.dump(res, f, indent=2)
-        print(f"\n[✓] JSON results written to: {args.output}")
+        write_json(args.output, res)
 
     if getattr(args, "csv", None):
-        ensure_parent_directory(args.csv)
         if getattr(args, "command", "") in ["dms", "essm", "digital-dms"] and plasticity:
             df_out = pd.DataFrame(plasticity)
         elif edges:
@@ -888,8 +762,7 @@ def cmd_epistasis(args):
             df_out = pd.DataFrame(plasticity)
         else:
             df_out = pd.DataFrame(sectors)
-        df_out.to_csv(args.csv, index=False)
-        print(f"[✓] CSV results written to: {args.csv}")
+        write_csv(args.csv, df_out)
 
     if getattr(args, "graphml", None):
         ensure_parent_directory(args.graphml)
@@ -949,37 +822,32 @@ def cmd_dms(args):
         print(f"{'Site':<6} {'WT':<5} {'Plasticity Φ':<15} {'Baseline LRT':<15} {'p-value':<12} {'Max ΔLRT':<10}")
         print("-" * 65)
         for _, r in top_plastic.iterrows():
-            p_str = f"{r['p_value']:.2e}" if r['p_value'] < 0.01 else f"{r['p_value']:.3f}"
+            p_str = format_pq(r['p_value'])
             print(f"{int(r['site']):<6d} {r['wt_aa']:<5s} {r['intrinsic_plasticity']:<15.4f} {r['baseline_lrt']:<15.2f} {p_str:<12s} {r['max_delta_lrt']:<10.2f}")
             
         print("\nTop Rigid / Catalytic Backbone Sites (Low Plasticity Φ):")
         print(f"{'Site':<6} {'WT':<5} {'Plasticity Φ':<15} {'Baseline LRT':<15} {'p-value':<12} {'Max ΔLRT':<10}")
         print("-" * 65)
         for _, r in top_rigid.iterrows():
-            p_str = f"{r['p_value']:.2e}" if r['p_value'] < 0.01 else f"{r['p_value']:.3f}"
+            p_str = format_pq(r['p_value'])
             print(f"{int(r['site']):<6d} {r['wt_aa']:<5s} {r['intrinsic_plasticity']:<15.4f} {r['baseline_lrt']:<15.2f} {p_str:<12s} {r['max_delta_lrt']:<10.2f}")
             
     if getattr(args, "output", None):
-        ensure_parent_directory(args.output)
-        with open(args.output, "w") as f:
-            json.dump(res, f, indent=2)
-        print(f"\n[✓] JSON results written to: {args.output}")
+        write_json(args.output, res)
 
     if getattr(args, "csv", None):
-        ensure_parent_directory(args.csv)
         df_out = pd.DataFrame(plasticity)
         if "mutant_deltas" in df_out.columns:
             df_out_csv = df_out.drop(columns=["mutant_deltas"])
         else:
             df_out_csv = df_out
-        df_out_csv.to_csv(args.csv, index=False)
-        print(f"[✓] CSV results written to: {args.csv}")
+        write_csv(args.csv, df_out_csv)
 
 def cmd_disease(args):
     """Executes disease pathogenicity prediction for clinical variants."""
     from .disease import predict_disease_pathogenicity
     
-    device = torch.device("cpu") if args.cpu else torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device(cpu=getattr(args, "cpu", False))
     print(f"[*] Running HyphAeon Disease Variant Pathogenicity Scoring on {device}...")
     
     resolved_path = resolve_weights_path(args.weights, variant=getattr(args, 'variant', DEFAULT_VARIANT))
@@ -1014,9 +882,9 @@ def cmd_disease(args):
     print("=" * 90)
     
     if getattr(args, "csv", None):
-        df_res.to_csv(args.csv, index=False)
-        print(f"[*] Saved CSV results to: {args.csv}")
+        write_csv(args.csv, df_res, label="CSV results")
     if getattr(args, "output", None):
+        ensure_parent_directory(args.output)
         df_res.to_json(args.output, orient="records", indent=2)
         print(f"[*] Saved JSON results to: {args.output}")
 
@@ -1043,7 +911,7 @@ def cmd_filter(args):
         min_run_length=args.min_run_length,
         batch_size=getattr(args, "batch_size", None),
         max_species=getattr(args, "max_species", None),
-        device=torch.device("cpu") if args.cpu else None
+        device=get_device(cpu=getattr(args, "cpu", False))
     )
     
     print("\n" + "=" * 80)
@@ -1077,21 +945,21 @@ def cmd_filter(args):
 def main():
 
     parser = argparse.ArgumentParser(
-        prog="axomeme",
-        description="AxoMEME: Ultra-Fast Neural Selection Inference, Phenotype-Genotype Mapping, and Epistatic Sector Mining",
+        prog="hyphaeon",
+        description="HyphAeon: Ultra-Fast Neural Selection Inference, Phenotype-Genotype Mapping, and Epistatic Sector Mining",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
 
-    # 1. Predict Subcommand
-    pred_parser = subparsers.add_parser("predict", help="Run episodic positive selection inference (AxoMEME Transformer)")
+    # 1. MEME Subcommand
+    pred_parser = subparsers.add_parser("meme", aliases=["predict", "site-selection"], help="Run episodic positive selection inference (HyphAeon Transformer)")
     pred_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
     pred_parser.add_argument("-t", "--tree", required=False, default=None, help="Path to Newick/NEXUS phylogenetic tree (optional if embedded)")
-    pred_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download). Can also be set via AXOMEME_WEIGHTS env var.")
+    pred_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download). Can also be set via HYPHAEON_WEIGHTS env var.")
     pred_parser.add_argument("--model-variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from Hugging Face (default: {DEFAULT_VARIANT})")
     pred_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: auto-selected; very large values may be capped to a hardware-safe threshold to prevent GPU OOM)")
     pred_parser.add_argument("-s", "--max-species", type=int, default=None, help="Maximum number of species to include (PD downsampling)")
-    pred_parser.add_argument("--no-prune-duplicates", action="store_true", help="Disable automatic collapsing of 100% identical sequence duplicates")
+    pred_parser.add_argument("--no-prune-duplicates", action="store_true", help="Disable automatic collapsing of 100%% identical sequence duplicates")
     pred_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     pred_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
     pred_parser.add_argument("--cpu", action="store_true", help="Force CPU inference")
@@ -1209,8 +1077,8 @@ def main():
     configure_evaluation_parser(eval_parser)
 
     args = parser.parse_args()
-    if args.command == "predict":
-        cmd_predict(args)
+    if args.command in ["meme", "predict", "site-selection"]:
+        cmd_meme(args)
     elif args.command in ["busted", "omnibus", "gene-selection"]:
         cmd_busted(args)
     elif args.command in ["phenotype", "phylowas", "trait"]:

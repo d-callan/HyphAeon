@@ -1,4 +1,4 @@
-"""Unit tests for determine_adaptive_batch_size in axomeme.cli."""
+"""Unit tests for determine_adaptive_batch_size in hyphaeon.cli."""
 import torch
 import pytest
 

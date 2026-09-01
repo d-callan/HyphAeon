@@ -33,8 +33,7 @@ from .dataset import (
     get_aa_token
 )
 from .model import PhyloAxialTransformer
-from .weights import load_weights, load_arch_config
-from .epistasis import compute_adaptive_safe_batch_size
+from .inference import get_device, load_model, compute_adaptive_safe_batch_size
 
 REV_AA_MAP = {v: k for k, v in AA_MAP.items()}
 
@@ -326,7 +325,7 @@ def predict_disease_pathogenicity(
     canonical_human_seq: Optional[str] = None,
     human_taxon: Optional[str] = None,
     model: Optional[PhyloAxialTransformer] = None,
-    weights_path: Optional[str] = "axomeme_5_dim384_nonull.pt",
+    weights_path: Optional[str] = "hyphaeon_5_dim384_nonull.pt",
     device: Optional[Union[str, torch.device]] = None,
     batch_size: Optional[int] = None,
     coevolution_weight: float = 1.0,
@@ -342,7 +341,7 @@ def predict_disease_pathogenicity(
         canonical_human_seq: Canonical 1-indexed human protein sequence. If None, auto-extracted from MSA.
         human_taxon: Name of human reference taxon in MSA (e.g. 'hg', 'Homo_sapiens').
         model: Pre-loaded PhyloAxialTransformer instance (optional).
-        weights_path: Path to checkpoint weights (default: 'axomeme_5_dim384_nonull.pt').
+        weights_path: Path to checkpoint weights (default: 'hyphaeon_5_dim384_nonull.pt').
         device: PyTorch compute device ('mps', 'cuda', or 'cpu').
         batch_size: Batch size for memory-efficient forward passes.
         coevolution_weight: Weight lambda for inter-residue epistatic coupling modulation (default: 1.0).
@@ -356,12 +355,7 @@ def predict_disease_pathogenicity(
     
     # 1. Device configuration
     if device is None:
-        if torch.backends.mps.is_available():
-            device = torch.device('mps')
-        elif torch.cuda.is_available():
-            device = torch.device('cuda')
-        else:
-            device = torch.device('cpu')
+        device = get_device()
     else:
         device = torch.device(device)
         
@@ -432,15 +426,7 @@ def predict_disease_pathogenicity(
     # 6. Load model if not provided
     if model is None:
         if os.path.exists(weights_path):
-            config = load_arch_config(weights=weights_path)
-            model = PhyloAxialTransformer(
-                embed_dim=config['embed_dim'],
-                num_layers=config['num_layers'],
-                num_heads=config['num_heads'],
-                window_size=config['window_size']
-            ).to(device)
-            model.load_state_dict(load_weights(weights=weights_path, map_location=device), strict=False)
-            model.eval()
+            model = load_model(weights=weights_path, device=device)
         else:
             raise FileNotFoundError(f"Model checkpoint weights not found at: {weights_path}")
             

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build one AxoMEME training NPZ per alignment gene."""
+"""Build one HyphAeon training NPZ per alignment gene."""
 
 import argparse
 import sys
@@ -14,7 +14,7 @@ from hyphaeon.training_data import build_training_directory
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Build per-gene AxoMEME training tensors from alignments and HyPhy MEME JSON"
+        description="Build per-gene HyphAeon training tensors from alignments and HyPhy MEME JSON"
     )
     parser.add_argument(
         "--alignment_dir", required=True, help="Directory containing FASTA or NEXUS alignments"

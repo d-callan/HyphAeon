@@ -19,9 +19,10 @@ from typing import Optional, Dict, List, Tuple, Any
 
 import numpy as np
 import pandas as pd
-from scipy.stats import hypergeom, chi2
+from scipy.stats import hypergeom
 
 import torch
+from .stats import pvals_from_lrt_meme as calc_asymptotic_pvals, benjamini_hochberg as calc_fdr_qvals, cauchy_combination_p as calc_cauchy_omnibus_p
 
 from .model import PhyloAxialTransformer
 from .dataset import (
@@ -30,7 +31,8 @@ from .dataset import (
     CODON_TO_AA,
     GENETIC_CODE,
 )
-from .weights import resolve_weights_path, load_arch_config, load_weights, DEFAULT_VARIANT
+from .weights import resolve_weights_path, DEFAULT_VARIANT
+from .inference import get_device, load_model
 from .epistasis import compute_adaptive_safe_batch_size
 
 def cleanup_device_memory(device: torch.device):
@@ -46,41 +48,6 @@ def cleanup_device_memory(device: torch.device):
             torch.cuda.empty_cache()
         except Exception:
             pass
-
-def calc_asymptotic_pvals(lrts: np.ndarray) -> np.ndarray:
-    """Computes asymptotic mixture p-values from likelihood ratio test statistics."""
-    pvals = np.full(len(lrts), 2.0 / 3.0, dtype=np.float32)
-    pos = lrts > 0.0
-    if np.any(pos):
-        pvals[pos] = (2.0 / 3.0) * (0.45 * chi2.sf(lrts[pos], df=1) + 0.55 * chi2.sf(lrts[pos], df=2))
-    return pvals
-
-def calc_fdr_qvals(pvals: np.ndarray) -> np.ndarray:
-    """Computes Benjamini-Hochberg False Discovery Rate q-values."""
-    n = len(pvals)
-    if n == 0:
-        return np.array([], dtype=np.float32)
-    sorted_idx = np.argsort(pvals)
-    sorted_p = pvals[sorted_idx]
-    qvals = np.zeros(n, dtype=np.float32)
-    min_q = 1.0
-    for i in range(n - 1, -1, -1):
-        q = sorted_p[i] * n / (i + 1)
-        if q < min_q:
-            min_q = q
-        qvals[i] = min_q
-    res = np.zeros(n, dtype=np.float32)
-    res[sorted_idx] = qvals
-    return np.clip(res, 0.0, 1.0)
-
-def calc_cauchy_omnibus_p(pvals: np.ndarray) -> float:
-    """Computes the Cauchy Combination Test (CCT) gene-level omnibus p-value."""
-    if len(pvals) == 0:
-        return 1.0
-    p_clipped = np.clip(pvals, 1e-15, 1.0 - 1e-15)
-    t = np.mean(np.tan((0.5 - p_clipped) * np.pi))
-    p_cct = 0.5 - (np.arctan(t) / np.pi)
-    return float(np.clip(p_cct, 1e-15, 1.0))
 
 def scan_hypergeometric_patches(
     site_pvals: np.ndarray,
@@ -154,27 +121,12 @@ def run_alignment_filter(
     surgical masking, and optional neural re-evaluation with strict memory safety.
     """
     if device is None:
-        if torch.cuda.is_available():
-            device = torch.device('cuda')
-        elif torch.backends.mps.is_available():
-            device = torch.device('mps')
-        else:
-            device = torch.device('cpu')
-            
+        device = get_device()
+
     t_start = time.time()
-    
+
     # 1. Load model
-    weights_file = resolve_weights_path(weights=weights_path, variant=model_variant)
-    config = load_arch_config(weights=weights_file, variant=model_variant)
-    model = PhyloAxialTransformer(
-        embed_dim=config['embed_dim'],
-        num_layers=config['num_layers'],
-        num_heads=config['num_heads'],
-        window_size=config['window_size']
-    ).to(device)
-    state_dict = load_weights(weights=weights_file, variant=model_variant, map_location=device)
-    model.load_state_dict(state_dict, strict=False)
-    model.eval()
+    model = load_model(weights=weights_path, variant=model_variant, device=device)
     
     # 2. Load Alignment and Tree
     c_tensor, a_tensor, d_mat, z_coords, inv_mask, taxa, L = load_alignment_and_tree(

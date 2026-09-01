@@ -1,5 +1,5 @@
 import os, sys, time, glob, sqlite3
-sys.path.insert(0, '/Users/sergei/Projects/TOGA_MEME/axomeme_repo')
+sys.path.insert(0, '/Users/sergei/Projects/TOGA_MEME/hyphaeon_repo')
 
 import torch
 import numpy as np
@@ -8,12 +8,13 @@ from scipy import stats
 from hyphaeon.model import PhyloAxialTransformer
 from hyphaeon.weights import load_arch_config, load_weights
 from hyphaeon.dataset import load_alignment_and_tree
+from hyphaeon.stats import pvals_from_lrt_meme, benjamini_hochberg, cauchy_combination_p
 
 base_dir = '/Users/sergei/Projects/TOGA_MEME/benchmark/orthomam_v12'
 masked_cds_dir = os.path.join(base_dir, 'masked_cds')
 trees_dir = os.path.join(base_dir, 'trees')
 db_path = os.path.join(base_dir, 'orthomam_v12_analysis.db')
-weights_file = '/Users/sergei/Projects/TOGA_MEME/axomeme_repo/model.safetensors'
+weights_file = '/Users/sergei/Projects/TOGA_MEME/hyphaeon_repo/model.safetensors'
 
 device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
 print(f'Starting OrthoMaM selection inference on device: {device}')
@@ -85,12 +86,6 @@ for f in fasta_files:
 
 print(f'Total genes to evaluate: {len(to_process)}')
 
-def calc_cct(pvals):
-    pvals = np.clip(pvals, 1e-15, 1.0 - 1e-15)
-    t_cct = np.mean(np.tan((0.5 - pvals) * np.pi))
-    p_cct = 0.5 - (np.arctan(t_cct) / np.pi)
-    return float(np.clip(p_cct, 0.0, 1.0))
-
 batch_gene_records = []
 batch_site_records = []
 t_total_start = time.time()
@@ -134,24 +129,11 @@ for g_id, f in to_process:
         if device.type == 'mps':
             torch.mps.empty_cache()
             
-    # Compute mixture asymptotic p-values
-    pvals = np.full(L, 2.0 / 3.0, dtype=np.float32)
-    pos_mask = lrts > 0.0
-    if np.any(pos_mask):
-        pvals[pos_mask] = (2.0 / 3.0) * (0.45 * stats.chi2.sf(lrts[pos_mask], df=1) + 0.55 * stats.chi2.sf(lrts[pos_mask], df=2))
-        
-    # FDR q-values (Benjamini-Hochberg)
-    order = np.argsort(pvals)
-    ranks = np.empty(L, dtype=int)
-    ranks[order] = np.arange(1, L + 1)
-    raw_q = pvals * (L / ranks)
-    sorted_q = raw_q[order]
-    for i in range(L - 2, -1, -1):
-        sorted_q[i] = min(sorted_q[i], sorted_q[i + 1])
-    raw_q[order] = sorted_q
-    qvals = np.clip(raw_q, 0.0, 1.0).astype(np.float32)
-    
-    cct_p = calc_cct(pvals)
+    # Compute mixture asymptotic p-values + FDR q-values
+    pvals = pvals_from_lrt_meme(lrts).astype(np.float32)
+    qvals = benjamini_hochberg(pvals).astype(np.float32)
+
+    cct_p = cauchy_combination_p(pvals)
     sig_p05 = int((pvals <= 0.05).sum())
     sig_q10 = int((qvals <= 0.10).sum())
     mean_lrt = float(np.mean(lrts))

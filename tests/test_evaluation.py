@@ -27,14 +27,14 @@ def _write_predictions(path, rows):
     with path.open("w", newline="") as handle:
         writer = csv.DictWriter(
             handle,
-            fieldnames=["site", "axomeme_lrt", "p_value", "q_value", "is_invariable"],
+            fieldnames=["site", "hyphaeon_lrt", "p_value", "q_value", "is_invariable"],
         )
         writer.writeheader()
         for site, lrt, p_value, is_invariable in rows:
             writer.writerow(
                 {
                     "site": site,
-                    "axomeme_lrt": lrt,
+                    "hyphaeon_lrt": lrt,
                     "p_value": p_value,
                     "q_value": p_value,
                     "is_invariable": is_invariable,
