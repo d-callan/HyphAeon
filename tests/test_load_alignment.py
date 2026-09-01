@@ -2,7 +2,7 @@
 import numpy as np
 import pytest
 import torch
-from axomeme.dataset import load_alignment_and_tree
+from hyphaeon.dataset import load_alignment_and_tree
 
 
 class TestLoadAlignmentAndTreeFasta:

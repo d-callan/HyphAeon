@@ -710,7 +710,7 @@ def list_models():
         default = " (default)" if v["variant"] == DEFAULT_VARIANT else ""
         print(f"  {v['variant']:15s}  {v['description']}{default}")
     print()
-    print("Use with:  axomeme predict -a alignment.fa --model-variant <variant>")
+    print("Use with:  hyphaeon predict -a alignment.fa --model-variant <variant>")
     print(f"Default variant: {DEFAULT_VARIANT}")
 
 def cmd_phenotype(args):

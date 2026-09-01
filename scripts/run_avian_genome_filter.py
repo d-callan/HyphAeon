@@ -23,9 +23,9 @@ from scipy.stats import hypergeom, chi2, cauchy
 from Bio import Phylo
 
 sys.path.insert(0, 'axomeme_repo')
-from axomeme.weights import load_arch_config, load_weights
-from axomeme.model import PhyloAxialTransformer
-from axomeme.dataset import load_alignment_and_tree, CODON_TO_AA, parse_alignment_sequences
+from hyphaeon.weights import load_arch_config, load_weights
+from hyphaeon.model import PhyloAxialTransformer
+from hyphaeon.dataset import load_alignment_and_tree, CODON_TO_AA, parse_alignment_sequences
 
 def calc_pvals(lrts):
     pvals = np.full(len(lrts), 2.0 / 3.0, dtype=np.float32)

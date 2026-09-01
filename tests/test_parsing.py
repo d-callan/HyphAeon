@@ -2,7 +2,7 @@
 import gzip
 import pytest
 from Bio import Phylo
-from axomeme.dataset import (
+from hyphaeon.dataset import (
     parse_alignment_sequences,
     extract_tree_from_string_or_file,
     has_nonzero_branch_lengths,

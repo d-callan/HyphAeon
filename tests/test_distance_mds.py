@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 from Bio import Phylo
 from io import StringIO
-from axomeme.dataset import compute_fast_dist_matrix, compute_mds_coordinates
+from hyphaeon.dataset import compute_fast_dist_matrix, compute_mds_coordinates
 
 
 @pytest.fixture

@@ -33,7 +33,7 @@ EXPECTED_COLUMNS = ["site", "axomeme_lrt", "p_value", "q_value", "is_invariable"
 
 def run_cli(fasta, tree, weights, csv_out, cpu=True):
     cmd = [
-        sys.executable, "-m", "axomeme.cli",
+        sys.executable, "-m", "hyphaeon.cli",
         "predict",
         "-a", fasta,
         "-t", tree,

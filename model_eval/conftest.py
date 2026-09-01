@@ -20,8 +20,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from axomeme.model import PhyloAxialTransformer
-from axomeme import dataset as ds
+from hyphaeon.model import PhyloAxialTransformer
+from hyphaeon import dataset as ds
 
 EXAMPLES_DIR = REPO_ROOT / "examples"
 ARTIFACTS_DIR = Path(__file__).resolve().parent / "_artifacts"
@@ -31,7 +31,7 @@ ARTIFACTS_DIR.mkdir(exist_ok=True)
 # default, AXOMEME_WEIGHTS env var for local .pt/.safetensors files).
 # This mirrors the CLI's behavior: CI downloads from HF; local devs can
 # point at a working checkpoint while iterating before pushing to HF.
-from axomeme.weights import resolve_weights_path, load_weights, load_arch_config
+from hyphaeon.weights import resolve_weights_path, load_weights, load_arch_config
 
 
 # ---------------------------------------------------------------------------
