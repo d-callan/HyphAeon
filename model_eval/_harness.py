@@ -25,7 +25,9 @@ from Bio import Phylo
 from Bio.Phylo.BaseTree import Clade
 
 from hyphaeon import dataset as ds
-from hyphaeon.stats import pvals_from_lrt_meme as pvals_from_lrt, pvals_from_lrt_self_liang
+from hyphaeon.stats import pvals_from_lrt_meme as pvals_from_lrt
+from hyphaeon.attribution import attribute_selection
+from hyphaeon.inference import predict_site_lrts
 
 
 # ---------------------------------------------------------------------------
@@ -46,161 +48,22 @@ def load_tensors(fa_path, nwk_path, **kw):
     return ds.load_alignment_and_tree(fa_path, nwk_path, **kw)
 
 
-INV_GENETIC_CODE = {v: k for k, v in ds.GENETIC_CODE.items() if v < 64}
-INV_AA_MAP = {v: k for k, v in ds.AA_MAP.items() if v < 20}
-
 def predict(model, c, a, d, z, inv, batch=64, attribute=False, taxa=None, focal_sites=None, min_lrt=3.84):
     """Run model.forward_cached on variable sites only; return LRT array [L].
 
     If attribute=True, returns (lrts, attribution_dict) where attribution_dict
     details which species drive the selection signal and when selection occurred.
     """
-    L = c.shape[0]
-    lrts = np.zeros(L, dtype=np.float32)
-    var_idx = np.where(~inv)[0]
-    if len(var_idx) == 0:
-        return (lrts, {}) if attribute else lrts
-    cache = model.precompute_tree_cache(d, z)
-    with torch.no_grad():
-        for s in range(0, len(var_idx), batch):
-            idx = var_idx[s:s + batch]
-            y, _ = model.forward_cached(c[idx], a[idx], cache)
-            lrts[idx] = torch.clamp(y.squeeze(-1), min=0.0).numpy().flatten()
-            
+    lrts = predict_site_lrts(model, c, a, d, z, inv, batch_size=batch)
     if not attribute:
         return lrts
-        
+
+    cache = model.precompute_tree_cache(d, z)
     attr_dict = attribute_selection(
         model=model, c=c, a=a, d=d, z=z, inv=inv, taxa=taxa,
         focal_sites=focal_sites, min_lrt=min_lrt, base_lrts=lrts, cache=cache
     )
     return lrts, attr_dict
-
-
-def attribute_selection(model, c, a, d, z, inv, taxa=None, focal_sites=None, min_lrt=3.84, base_lrts=None, cache=None):
-    """Mechanistic feature attribution for positively selected sites.
-    
-    Answers two core biological questions:
-      1. 'Which species drive the signal?': Single-taxon counterfactual sensitivity (Delta-LRT)
-         and percentage of selection evidence explained.
-      2. 'When did selection occur?': Phylogenetic distance to root and evolutionary horizon
-         of the driving lineage mutations (Recent Terminal vs Intermediate vs Deep Ancestral).
-    """
-    if base_lrts is None:
-        base_lrts = predict(model, c, a, d, z, inv)
-        
-    if cache is None:
-        cache = model.precompute_tree_cache(d, z)
-        
-    if focal_sites is None:
-        focal_sites = np.where(base_lrts >= min_lrt)[0]
-    else:
-        focal_sites = np.array(focal_sites)
-        
-    num_sites, num_taxa, _ = c.shape
-    if taxa is None:
-        taxa = [f"Taxon_{i+1:03d}" for i in range(num_taxa)]
-        
-    # Distance matrix [N, N]
-    d_mat_np = d[0].cpu().numpy()
-    # Approximate root distance per taxon as mean distance to other taxa
-    mean_dist_to_others = d_mat_np.mean(axis=1)
-    max_tree_dist = np.max(d_mat_np)
-    
-    attributions = {}
-    
-    with torch.no_grad():
-        for site in focal_sites:
-            site_lrt = float(base_lrts[site])
-            if site_lrt <= 0:
-                continue
-                
-            site_codons = c[site, :, 0].cpu().numpy()
-            vals, counts = np.unique(site_codons, return_counts=True)
-            cons_codon_tok = int(vals[np.argmax(counts)])
-            cons_codon_str = INV_GENETIC_CODE.get(cons_codon_tok, 'NNN')
-            cons_aa_str = ds.CODON_TO_AA.get(cons_codon_str, '-')
-            cons_aa_tok = ds.AA_MAP.get(cons_aa_str, 20)
-            
-            driving_species = []
-            non_cons_taxa = np.where(site_codons != cons_codon_tok)[0]
-            
-            for t_idx in non_cons_taxa:
-                orig_codon_tok = int(site_codons[t_idx])
-                orig_codon_str = INV_GENETIC_CODE.get(orig_codon_tok, 'NNN')
-                orig_aa_str = ds.CODON_TO_AA.get(orig_codon_str, '-')
-                
-                # Single-taxon counterfactual mutation
-                c_mod = c[site:site+1].clone()
-                a_mod = a[site:site+1].clone()
-                c_mod[0, t_idx, 0] = cons_codon_tok
-                a_mod[0, t_idx, 0] = cons_aa_tok
-                
-                y_mod, _ = model.forward_cached(c_mod, a_mod, cache)
-                mod_lrt = float(torch.clamp(y_mod, min=0.0).cpu().numpy().ravel()[0])
-                
-                delta_lrt = site_lrt - mod_lrt
-                pct_contrib = max(0.0, (delta_lrt / site_lrt) * 100.0) if site_lrt > 0 else 0.0
-                
-                driving_species.append({
-                    'taxon': taxa[t_idx],
-                    'taxon_index': int(t_idx),
-                    'observed_codon': orig_codon_str,
-                    'observed_aa': orig_aa_str,
-                    'consensus_codon': cons_codon_str,
-                    'consensus_aa': cons_aa_str,
-                    'delta_lrt': float(delta_lrt),
-                    'pct_signal_explained': float(pct_contrib),
-                    'mean_patristic_depth': float(mean_dist_to_others[t_idx])
-                })
-                
-            # Sort driving species by marginal impact (Delta-LRT)
-            driving_species.sort(key=lambda x: x['delta_lrt'], reverse=True)
-            
-            # Determine 'When did selection occur?'
-            pos_drivers = [d_sp for d_sp in driving_species if d_sp['delta_lrt'] > 0]
-            if len(pos_drivers) > 0:
-                weights = np.array([d_sp['delta_lrt'] for d_sp in pos_drivers])
-                depths = np.array([d_sp['mean_patristic_depth'] for d_sp in pos_drivers])
-                weighted_depth = float(np.sum(weights * depths) / np.sum(weights))
-                depth_ratio = weighted_depth / (max_tree_dist + 1e-8)
-                
-                # Categorize evolutionary horizon
-                if depth_ratio >= 0.60:
-                    epoch = "Recent Terminal / Tip Sweep"
-                elif depth_ratio >= 0.35:
-                    epoch = "Intermediate Subclade Burst"
-                else:
-                    epoch = "Deep Ancestral / Basal Divergence"
-                    
-                # Recurrence
-                num_major_drivers = sum(1 for d_sp in pos_drivers if d_sp['pct_signal_explained'] >= 10.0)
-                recurrence = "Recurrent / Multi-Lineage Adaptation" if num_major_drivers >= 2 else "Single-Lineage Clade Sweep"
-            else:
-                weighted_depth = 0.0
-                depth_ratio = 0.0
-                epoch = "Distributed Background"
-                recurrence = "Diffuse"
-                
-            p_val = float(pvals_from_lrt_self_liang(np.array([site_lrt]))[0])
-            
-            attributions[int(site)] = {
-                'site_1indexed': int(site + 1),
-                'predicted_lrt': site_lrt,
-                'p_value': p_val,
-                'consensus_codon': cons_codon_str,
-                'consensus_aa': cons_aa_str,
-                'num_mutant_species': len(driving_species),
-                'driving_species': driving_species,
-                'when_selection_occurred': {
-                    'mean_driver_patristic_depth': weighted_depth,
-                    'relative_depth_ratio': depth_ratio,
-                    'evolutionary_epoch': epoch,
-                    'mode_of_adaptation': recurrence
-                }
-            }
-            
-    return attributions
 
 
 def evaluate_alignment(model, fa_path, nwk_path, min_tested=10, **load_kw):

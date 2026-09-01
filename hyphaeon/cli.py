@@ -33,6 +33,7 @@ from .weights import (
 from .phenotype import run_phenotype_association, PRESETS
 from .epistasis import run_epistasis_analysis, run_epistatic_sector_mining
 from .stats import pvals_from_lrt_meme, pvals_from_lrt_self_liang, benjamini_hochberg, cauchy_combination_p
+from .inference import get_device, load_model, prepare_alignment, predict_site_lrts
 
 DEFAULT_VARIANT_ENV = os.environ.get("HYPHAEON_VARIANT", DEFAULT_VARIANT)
 
@@ -71,48 +72,29 @@ def determine_adaptive_batch_size(num_species: int, total_sites: int, device: to
     return min(total_sites, int(calculated_batch))
 
 def cmd_meme(args):
-    if torch.cuda.is_available() and not args.cpu:
-        device = torch.device('cuda')
-    elif torch.backends.mps.is_available() and not args.cpu:
-        device = torch.device('mps')
-    else:
-        device = torch.device('cpu')
+    device = get_device(cpu=getattr(args, "cpu", False))
     print(f"[*] Hardware device selected: {device.type.upper()}")
 
-    # Resolve weights: explicit --weights path > --model-variant (download from HF) > default variant
     try:
-        weights_path = resolve_weights_path(
-            weights=args.weights,
-            variant=args.model_variant,
-        )
+        model = load_model(weights=args.weights, variant=args.model_variant, device=device)
     except RuntimeError as e:
         print(f"[!] {e}")
         sys.exit(1)
+    weights_path = resolve_weights_path(weights=args.weights, variant=args.model_variant)
     print(f"[*] Loading HyphAeon model from: {weights_path}")
 
-    config = load_arch_config(weights=args.weights, variant=args.model_variant)
-    model = PhyloAxialTransformer(
-        embed_dim=config['embed_dim'],
-        num_layers=config['num_layers'],
-        num_heads=config['num_heads'],
-        window_size=config['window_size'],
-    ).to(device)
-
-    state_dict = load_weights(weights=weights_path, variant=args.model_variant, map_location=device)
-    model.load_state_dict(state_dict, strict=False)
-    model.eval()
-    
     print(f"[*] Parsing Alignment: {args.alignment}")
     if args.tree:
         print(f"[*] Parsing Tree:      {args.tree}")
     else:
         print(f"[*] Tree argument not provided; extracting tree from alignment...")
-    
+
     t0 = time.time()
     try:
         prune_dups = not getattr(args, "no_prune_duplicates", False)
-        c, a, d, z, inv, taxa, L = load_alignment_and_tree(
-            args.alignment, args.tree, max_species=args.max_species, prune_duplicates=prune_dups
+        c, a, d, z, inv, taxa, L, tree_cache = prepare_alignment(
+            args.alignment, args.tree, model=model, device=device,
+            max_species=args.max_species, prune_duplicates=prune_dups
         )
     except Exception as e:
         print(f"\n[!] Error loading alignment and tree: {e}")
@@ -125,24 +107,9 @@ def cmd_meme(args):
     num_chunks = (num_variable + batch_size - 1) // batch_size if num_variable > 0 else 0
     mode_desc = "manual override" if args.batch_size else "hardware adaptive"
     print(f"[*] Site Batch Sizing ({mode_desc}): {batch_size} sites/chunk ({num_chunks} chunk{'s' if num_chunks != 1 else ''} for {num_variable}/{L} variable codons)")
-    
-    d_dev = d.to(device)
-    z_dev = z.to(device)
-    tree_cache = model.precompute_tree_cache(d_dev, z_dev)
-    
-    lrts = np.zeros(L, dtype=np.float32)
-    if num_variable > 0:
-        with torch.no_grad():
-            for start_idx in range(0, num_variable, batch_size):
-                end_idx = min(start_idx + batch_size, num_variable)
-                batch_site_idx = variable_indices[start_idx:end_idx]
-                
-                c_chunk = c[batch_site_idx].to(device)
-                a_chunk = a[batch_site_idx].to(device)
-                
-                y_soft, _ = model.forward_cached(c_chunk, a_chunk, tree_cache)
-                chunk_lrts = torch.clamp(y_soft.squeeze(-1), min=0.0).cpu().numpy().flatten()
-                lrts[batch_site_idx] = chunk_lrts
+
+    lrts = predict_site_lrts(model, c, a, d, z, inv, tree_cache=tree_cache,
+                             batch_size=batch_size, device=device)
                 
     if device.type == 'mps':
         torch.mps.synchronize()
@@ -165,41 +132,13 @@ def cmd_meme(args):
     if getattr(args, "filter", False):
         print("\n[*] Running Automated Alignment Error Screening (Hypergeometric Patch + Counterfactual Outlier Attribution)...")
         from .dataset import parse_alignment_sequences, CODON_TO_AA
-        
+        from .filter import scan_hypergeometric_patches
+
         # 1. Hypergeometric Scan for selective patches
-        sel_sites = np.where(pvals <= 0.05)[0]
-        K = len(sel_sites)
-        patches = []
-        if K >= 3:
-            cand_p = []
-            for idx_i in range(len(sel_sites)):
-                pos_i = sel_sites[idx_i]
-                for idx_j in range(idx_i + 2, len(sel_sites)):
-                    pos_j = sel_sites[idx_j]
-                    d_span = pos_j - pos_i + 1
-                    if d_span > 35:
-                        break
-                    k_span = idx_j - idx_i + 1
-                    p_loc = 1.0 - stats.hypergeom.cdf(k_span - 1, L, K, d_span)
-                    if p_loc <= getattr(args, "filter_p_thresh", 0.01):
-                        cand_p.append({'start': pos_i, 'end': pos_j, 'k': k_span, 'd': d_span, 'p_local': p_loc})
-            if cand_p:
-                cand_p.sort(key=lambda x: x['start'])
-                merged = []
-                curr = cand_p[0].copy()
-                for cp in cand_p[1:]:
-                    if cp['start'] <= curr['end']:
-                        curr['end'] = max(curr['end'], cp['end'])
-                        curr['p_local'] = min(curr['p_local'], cp['p_local'])
-                    else:
-                        curr['d'] = curr['end'] - curr['start'] + 1
-                        curr['k'] = int(np.sum((sel_sites >= curr['start']) & (sel_sites <= curr['end'])))
-                        merged.append(curr)
-                        curr = cp.copy()
-                curr['d'] = curr['end'] - curr['start'] + 1
-                curr['k'] = int(np.sum((sel_sites >= curr['start']) & (sel_sites <= curr['end'])))
-                merged.append(curr)
-                patches = merged
+        patches = scan_hypergeometric_patches(
+            pvals, alpha_site=0.05, min_k=3, max_span=35,
+            p_local_thresh=getattr(args, "filter_p_thresh", 0.01)
+        )
 
         if patches:
             raw_seqs = parse_alignment_sequences(args.alignment)
@@ -269,19 +208,9 @@ def cmd_meme(args):
                 c_cl, a_cl, d_cl, z_cl, inv_cl, taxa_cl, L_cl = load_alignment_and_tree(
                     cleaned_temp_path, args.tree, max_species=args.max_species, prune_duplicates=prune_dups
                 )
-                
-                var_cl = np.where(~inv_cl)[0]
-                n_var_cl = len(var_cl)
-                lrts_cl = np.zeros(L, dtype=np.float32)
-                if n_var_cl > 0:
-                    with torch.no_grad():
-                        for start_idx in range(0, n_var_cl, batch_size):
-                            end_idx = min(start_idx + batch_size, n_var_cl)
-                            b_idx = var_cl[start_idx:end_idx]
-                            c_ch = c_cl[b_idx].to(device)
-                            a_ch = a_cl[b_idx].to(device)
-                            y_soft, _ = model.forward_cached(c_ch, a_ch, tree_cache)
-                            lrts_cl[b_idx] = torch.clamp(y_soft.squeeze(-1), min=0.0).cpu().numpy().flatten()
+
+                lrts_cl = predict_site_lrts(model, c_cl, a_cl, d_cl, z_cl, inv_cl,
+                                            tree_cache=tree_cache, batch_size=batch_size, device=device)
                             
                 pvals_cl = pvals_from_lrt_meme(lrts_cl).astype(np.float32)
                 qvals_cl = benjamini_hochberg(pvals_cl).astype(np.float32)
@@ -429,14 +358,15 @@ def cmd_busted(args):
     Supports single alignments (-a) or high-throughput batch directories (-d).
     """
     device = torch.device("cpu") if args.cpu else torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device(cpu=getattr(args, "cpu", False))
     print(f"[*] Running HyphAeon BUSTED Omnibus Selection Inference on {device}...")
     t_global_start = time.time()
-    
+
     # 1. Weights
     resolved_path = resolve_weights_path(args.weights, variant=args.variant)
     state_dict = load_weights(weights=resolved_path, variant=args.variant)
     arch_config = load_arch_config(resolved_path, variant=args.variant)
-    
+
     model = PhyloAxialTransformer(
         embed_dim=arch_config["embed_dim"],
         num_layers=arch_config["num_layers"],
@@ -964,7 +894,7 @@ def cmd_disease(args):
     """Executes disease pathogenicity prediction for clinical variants."""
     from .disease import predict_disease_pathogenicity
     
-    device = torch.device("cpu") if args.cpu else torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device(cpu=getattr(args, "cpu", False))
     print(f"[*] Running HyphAeon Disease Variant Pathogenicity Scoring on {device}...")
     
     resolved_path = resolve_weights_path(args.weights, variant=getattr(args, 'variant', DEFAULT_VARIANT))
@@ -1028,7 +958,7 @@ def cmd_filter(args):
         min_run_length=args.min_run_length,
         batch_size=getattr(args, "batch_size", None),
         max_species=getattr(args, "max_species", None),
-        device=torch.device("cpu") if args.cpu else None
+        device=get_device(cpu=getattr(args, "cpu", False))
     )
     
     print("\n" + "=" * 80)

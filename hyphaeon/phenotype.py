@@ -32,6 +32,7 @@ from .dataset import (
 )
 from .model import PhyloAxialTransformer
 from .stats import cauchy_combination_p, benjamini_hochberg
+from .inference import get_device, load_model
 from .weights import (
     load_weights,
     load_arch_config,
@@ -293,14 +294,7 @@ def run_phenotype_association(
     attributions and branch projections) rather than binary string substitution counts.
     """
     # 1. Device Selection
-    if cpu:
-        device = torch.device('cpu')
-    elif torch.cuda.is_available():
-        device = torch.device('cuda')
-    elif torch.backends.mps.is_available():
-        device = torch.device('mps')
-    else:
-        device = torch.device('cpu')
+    device = get_device(cpu=cpu)
 
     # 2. Load Alignment, Tree, and Extract Tree Cache
     c_tensor, a_tensor, d_mat, z_coords, inv_mask, taxa, L = load_alignment_and_tree(
@@ -330,20 +324,8 @@ def run_phenotype_association(
         raise ValueError(f"Insufficient foreground taxa ({fg_count}) matching criteria among {N} taxa.")
 
     # 4. Load Neural Architecture and Pretrained Weights
-    config = load_arch_config(weights=weights_path, variant=variant)
-    model = PhyloAxialTransformer(
-        embed_dim=config['embed_dim'],
-        num_layers=config['num_layers'],
-        num_heads=config['num_heads'],
-        window_size=config['window_size'],
-    ).to(device)
-    state_dict = load_weights(weights=weights_path, variant=variant, map_location=device)
-    model.load_state_dict(state_dict, strict=False)
-    model.eval()
-
-    d_dev = d_mat.to(device)
-    z_dev = z_coords.to(device)
-    tree_cache = model.precompute_tree_cache(d_dev, z_dev)
+    model = load_model(weights=weights_path, variant=variant, device=device)
+    tree_cache = model.precompute_tree_cache(d_mat.to(device), z_coords.to(device))
 
     # 5. Extract Transformer Phylogenetic Attributions
     leaf_attr, lrts, pvals, cons_aas = compute_transformer_attributions(

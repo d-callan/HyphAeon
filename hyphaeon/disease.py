@@ -34,6 +34,7 @@ from .dataset import (
 )
 from .model import PhyloAxialTransformer
 from .weights import load_weights, load_arch_config
+from .inference import get_device, load_model
 
 REV_AA_MAP = {v: k for k, v in AA_MAP.items()}
 
@@ -355,12 +356,7 @@ def predict_disease_pathogenicity(
     
     # 1. Device configuration
     if device is None:
-        if torch.backends.mps.is_available():
-            device = torch.device('mps')
-        elif torch.cuda.is_available():
-            device = torch.device('cuda')
-        else:
-            device = torch.device('cpu')
+        device = get_device()
     else:
         device = torch.device(device)
         
@@ -431,15 +427,7 @@ def predict_disease_pathogenicity(
     # 6. Load model if not provided
     if model is None:
         if os.path.exists(weights_path):
-            config = load_arch_config(weights=weights_path)
-            model = PhyloAxialTransformer(
-                embed_dim=config['embed_dim'],
-                num_layers=config['num_layers'],
-                num_heads=config['num_heads'],
-                window_size=config['window_size']
-            ).to(device)
-            model.load_state_dict(load_weights(weights=weights_path, map_location=device), strict=False)
-            model.eval()
+            model = load_model(weights=weights_path, device=device)
         else:
             raise FileNotFoundError(f"Model checkpoint weights not found at: {weights_path}")
             

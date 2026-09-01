@@ -31,7 +31,8 @@ from .dataset import (
     CODON_TO_AA,
     GENETIC_CODE,
 )
-from .weights import resolve_weights_path, load_arch_config, load_weights, DEFAULT_VARIANT
+from .weights import resolve_weights_path, DEFAULT_VARIANT
+from .inference import get_device, load_model
 from .epistasis import compute_adaptive_safe_batch_size
 
 def cleanup_device_memory(device: torch.device):
@@ -120,27 +121,12 @@ def run_alignment_filter(
     surgical masking, and optional neural re-evaluation with strict memory safety.
     """
     if device is None:
-        if torch.cuda.is_available():
-            device = torch.device('cuda')
-        elif torch.backends.mps.is_available():
-            device = torch.device('mps')
-        else:
-            device = torch.device('cpu')
-            
+        device = get_device()
+
     t_start = time.time()
-    
+
     # 1. Load model
-    weights_file = resolve_weights_path(weights=weights_path, variant=model_variant)
-    config = load_arch_config(weights=weights_file, variant=model_variant)
-    model = PhyloAxialTransformer(
-        embed_dim=config['embed_dim'],
-        num_layers=config['num_layers'],
-        num_heads=config['num_heads'],
-        window_size=config['window_size']
-    ).to(device)
-    state_dict = load_weights(weights=weights_file, variant=model_variant, map_location=device)
-    model.load_state_dict(state_dict, strict=False)
-    model.eval()
+    model = load_model(weights=weights_path, variant=model_variant, device=device)
     
     # 2. Load Alignment and Tree
     c_tensor, a_tensor, d_mat, z_coords, inv_mask, taxa, L = load_alignment_and_tree(

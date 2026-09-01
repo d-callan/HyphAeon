@@ -14,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 
 # Make the package and this directory importable.
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -22,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from hyphaeon.model import PhyloAxialTransformer
 from hyphaeon import dataset as ds
+from hyphaeon.inference import load_model
 
 EXAMPLES_DIR = REPO_ROOT / "examples"
 ARTIFACTS_DIR = Path(__file__).resolve().parent / "_artifacts"
@@ -31,7 +33,7 @@ ARTIFACTS_DIR.mkdir(exist_ok=True)
 # default, HYPHAEON_WEIGHTS env var for local .pt/.safetensors files).
 # This mirrors the CLI's behavior: CI downloads from HF; local devs can
 # point at a working checkpoint while iterating before pushing to HF.
-from hyphaeon.weights import resolve_weights_path, load_weights, load_arch_config
+from hyphaeon.weights import resolve_weights_path
 
 
 # ---------------------------------------------------------------------------
@@ -64,22 +66,8 @@ WEIGHTS_AVAILABLE = _WEIGHTS_PATH is not None
 
 
 def _load_model_from(path):
-    """Load a checkpoint and return an eval-mode PhyloAxialTransformer.
-
-    Uses hyphaeon.weights.load_arch_config for architecture config (handles
-    both .pt and .safetensors) and load_weights for state_dict extraction.
-    """
-    config = load_arch_config(weights=path)
-    state_dict = load_weights(weights=path, map_location="cpu")
-    m = PhyloAxialTransformer(
-        embed_dim=config["embed_dim"],
-        num_layers=config["num_layers"],
-        num_heads=config["num_heads"],
-        window_size=config["window_size"],
-    )
-    m.load_state_dict(state_dict)
-    m.eval()
-    return m
+    """Load a checkpoint and return an eval-mode PhyloAxialTransformer on CPU."""
+    return load_model(weights=path, device=torch.device("cpu"), strict=True)
 
 
 @pytest.fixture(scope="session")
