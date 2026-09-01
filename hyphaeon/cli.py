@@ -971,7 +971,7 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
 
     # 1. MEME Subcommand
-    pred_parser = subparsers.add_parser("meme", help="Run episodic positive selection inference (HyphAeon Transformer)")
+    pred_parser = subparsers.add_parser("meme", aliases=["predict", "site-selection"], help="Run episodic positive selection inference (HyphAeon Transformer)")
     pred_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
     pred_parser.add_argument("-t", "--tree", required=False, default=None, help="Path to Newick/NEXUS phylogenetic tree (optional if embedded)")
     pred_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download). Can also be set via HYPHAEON_WEIGHTS env var.")
@@ -1096,7 +1096,7 @@ def main():
     configure_evaluation_parser(eval_parser)
 
     args = parser.parse_args()
-    if args.command == "meme":
+    if args.command in ["meme", "predict", "site-selection"]:
         cmd_meme(args)
     elif args.command in ["busted", "omnibus", "gene-selection"]:
         cmd_busted(args)
