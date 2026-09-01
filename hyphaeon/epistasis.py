@@ -35,7 +35,7 @@ from .dataset import (
 from .model import PhyloAxialTransformer
 from .weights import load_weights, load_arch_config
 from .stats import pvals_from_lrt_self_liang, benjamini_hochberg
-from .inference import get_device, load_model
+from .inference import get_device, load_model, get_device_memory_budget, compute_adaptive_safe_batch_size
 
 REV_AA_MAP = {v: k for k, v in AA_MAP.items()}
 
@@ -46,87 +46,6 @@ CANONICAL_AA_TO_CODON = {
     'M': 'ATG', 'N': 'AAC', 'P': 'CCC', 'Q': 'CAG', 'R': 'CGC',
     'S': 'AGC', 'T': 'ACC', 'V': 'GTG', 'W': 'TGG', 'Y': 'TAC'
 }
-
-def get_device_memory_budget(device: torch.device) -> float:
-    """
-    Dynamically probes accelerator VRAM, Unified Memory, or host RAM capacity
-    across CUDA, MPS, TPU (XLA), and CPU to determine an optimal per-layer
-    attention allocation budget (in bytes).
-    """
-    dev_type = device.type
-    
-    if dev_type == 'cuda' and torch.cuda.is_available():
-        try:
-            total_vram = torch.cuda.get_device_properties(device).total_memory
-            # Allocate up to 20% of VRAM for peak single-layer attention tensor (bounded between 1.5 GB and 8.0 GB)
-            return float(min(8.0e9, max(1.5e9, total_vram * 0.20)))
-        except Exception:
-            return 3.0e9
-            
-    elif dev_type == 'mps':
-        try:
-            # Query macOS unified RAM capacity
-            import os
-            sys_ram = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')
-            # 10% of unified memory (bounded between 1.5 GB and 6.0 GB)
-            return float(min(6.0e9, max(1.5e9, sys_ram * 0.10)))
-        except Exception:
-            return 2.0e9
-            
-    elif dev_type == 'xla':
-        # TPU v2/v3/v4/v5e typically feature 16GB-32GB HBM per core
-        return 4.0e9
-        
-    else: # CPU
-        try:
-            import os
-            sys_ram = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')
-            return float(min(4.0e9, max(1.0e9, sys_ram * 0.10)))
-        except Exception:
-            return 1.5e9
-
-def compute_adaptive_safe_batch_size(
-    n_taxa: int, 
-    user_batch_size: Optional[int] = None,
-    device: Optional[torch.device] = None
-) -> int:
-    """
-    Computes an optimal, memory-safe batch size dynamically adapted to:
-      1. Sequence depth N (quadratic scaling: 48 * N^2 bytes per sequence)
-      2. Hardware accelerator capacity (CUDA, MPS, TPU/XLA, or CPU)
-    """
-    if device is None:
-        device = torch.device('cuda' if torch.cuda.is_available() else ('mps' if torch.backends.mps.is_available() else 'cpu'))
-        
-    budget_bytes = get_device_memory_budget(device)
-    # Memory per sequence = 12 heads * N^2 * 4 bytes = 48 * N^2 bytes
-    safe_max_b = max(1, int(budget_bytes / (48.0 * max(1, n_taxa) ** 2)))
-    
-    # Structure safe batches in clean multiples of 19 (for 19 AA DMS passes)
-    if n_taxa >= 600:
-        base_cap = 38 if budget_bytes <= 3.0e9 else (76 if budget_bytes <= 6.0e9 else 152)
-        safe_b = min(base_cap, safe_max_b)
-    elif n_taxa >= 400:
-        base_cap = 57 if budget_bytes <= 3.0e9 else (114 if budget_bytes <= 6.0e9 else 228)
-        safe_b = min(base_cap, safe_max_b)
-    elif n_taxa >= 250:
-        base_cap = 76 if budget_bytes <= 3.0e9 else (152 if budget_bytes <= 6.0e9 else 256)
-        safe_b = min(base_cap, safe_max_b)
-    elif n_taxa >= 100:
-        safe_b = min(128 if budget_bytes <= 3.0e9 else 256, safe_max_b)
-    else:
-        safe_b = min(256 if budget_bytes <= 3.0e9 else 512, safe_max_b)
-        
-    safe_b = max(1, safe_b)
-    
-    if user_batch_size is not None and user_batch_size > 0:
-        if user_batch_size > safe_b * 2:
-            print(f"[!] Warning: Requested batch size {user_batch_size} exceeds hardware safety threshold ({safe_b}) for N={n_taxa} on {device.type.upper()}.", flush=True)
-            print(f"    Automatically capping batch size to {safe_b} to guarantee stable execution.", flush=True)
-            return safe_b
-        return user_batch_size
-        
-    return safe_b
 
 def compute_transformer_attributions(
     model: PhyloAxialTransformer,
