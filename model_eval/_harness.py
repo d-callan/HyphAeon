@@ -7,7 +7,7 @@ conftest.py.
 Provides:
   - load_tensors: parse an alignment+tree into the model's input tensors.
   - predict: run the model on in-memory tensors and return LRT array.
-  - pvals_from_lrt: convert LRTs to p-values (matches the CLI's formula).
+  - pvals_from_lrt: convert LRTs to p-values (MEME asymptotic mixture).
   - evaluate_alignment: load + predict + p-values in one call, with the
     skip-if-too-few-variable-sites check shared by calibration tests.
   - fpr_at: false positive rate among tested sites at a given alpha.
@@ -25,6 +25,7 @@ from Bio import Phylo
 from Bio.Phylo.BaseTree import Clade
 
 from hyphaeon import dataset as ds
+from hyphaeon.stats import pvals_from_lrt_meme as pvals_from_lrt, pvals_from_lrt_self_liang
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +182,7 @@ def attribute_selection(model, c, a, d, z, inv, taxa=None, focal_sites=None, min
                 epoch = "Distributed Background"
                 recurrence = "Diffuse"
                 
-            p_val = float(0.5 * stats.chi2.sf(site_lrt, df=1))
+            p_val = float(pvals_from_lrt_self_liang(np.array([site_lrt]))[0])
             
             attributions[int(site)] = {
                 'site_1indexed': int(site + 1),
@@ -200,15 +201,6 @@ def attribute_selection(model, c, a, d, z, inv, taxa=None, focal_sites=None, min
             }
             
     return attributions
-
-
-def pvals_from_lrt(lrts):
-    """Convert LRT to p-value using the CLI's Self & Liang (1987) mixture
-    formula: 0.5 * chi2.sf(LRT, df=1) under 0.5·δ₀ + 0.5·χ²₁."""
-    p = np.ones(len(lrts), dtype=np.float64)
-    m = lrts > 0
-    p[m] = 0.5 * stats.chi2.sf(lrts[m], df=1)
-    return p
 
 
 def evaluate_alignment(model, fa_path, nwk_path, min_tested=10, **load_kw):

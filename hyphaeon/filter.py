@@ -19,9 +19,10 @@ from typing import Optional, Dict, List, Tuple, Any
 
 import numpy as np
 import pandas as pd
-from scipy.stats import hypergeom, chi2
+from scipy.stats import hypergeom
 
 import torch
+from .stats import pvals_from_lrt_meme as calc_asymptotic_pvals, benjamini_hochberg as calc_fdr_qvals, cauchy_combination_p as calc_cauchy_omnibus_p
 
 from .model import PhyloAxialTransformer
 from .dataset import (
@@ -46,41 +47,6 @@ def cleanup_device_memory(device: torch.device):
             torch.cuda.empty_cache()
         except Exception:
             pass
-
-def calc_asymptotic_pvals(lrts: np.ndarray) -> np.ndarray:
-    """Computes asymptotic mixture p-values from likelihood ratio test statistics."""
-    pvals = np.full(len(lrts), 2.0 / 3.0, dtype=np.float32)
-    pos = lrts > 0.0
-    if np.any(pos):
-        pvals[pos] = (2.0 / 3.0) * (0.45 * chi2.sf(lrts[pos], df=1) + 0.55 * chi2.sf(lrts[pos], df=2))
-    return pvals
-
-def calc_fdr_qvals(pvals: np.ndarray) -> np.ndarray:
-    """Computes Benjamini-Hochberg False Discovery Rate q-values."""
-    n = len(pvals)
-    if n == 0:
-        return np.array([], dtype=np.float32)
-    sorted_idx = np.argsort(pvals)
-    sorted_p = pvals[sorted_idx]
-    qvals = np.zeros(n, dtype=np.float32)
-    min_q = 1.0
-    for i in range(n - 1, -1, -1):
-        q = sorted_p[i] * n / (i + 1)
-        if q < min_q:
-            min_q = q
-        qvals[i] = min_q
-    res = np.zeros(n, dtype=np.float32)
-    res[sorted_idx] = qvals
-    return np.clip(res, 0.0, 1.0)
-
-def calc_cauchy_omnibus_p(pvals: np.ndarray) -> float:
-    """Computes the Cauchy Combination Test (CCT) gene-level omnibus p-value."""
-    if len(pvals) == 0:
-        return 1.0
-    p_clipped = np.clip(pvals, 1e-15, 1.0 - 1e-15)
-    t = np.mean(np.tan((0.5 - p_clipped) * np.pi))
-    p_cct = 0.5 - (np.arctan(t) / np.pi)
-    return float(np.clip(p_cct, 1e-15, 1.0))
 
 def scan_hypergeometric_patches(
     site_pvals: np.ndarray,

@@ -34,6 +34,7 @@ from .dataset import (
 )
 from .model import PhyloAxialTransformer
 from .weights import load_weights, load_arch_config
+from .stats import pvals_from_lrt_self_liang
 
 REV_AA_MAP = {v: k for k, v in AA_MAP.items()}
 
@@ -179,10 +180,8 @@ def compute_transformer_attributions(
     if device.type == 'mps':
         torch.mps.empty_cache()
             
-    # 4. Asymptotic p-values
-    pvals = np.ones(L, dtype=np.float32)
-    pos_mask = lrts > 0.0
-    pvals[pos_mask] = 0.5 * stats.chi2.sf(lrts[pos_mask], df=1)
+    # 4. Asymptotic p-values (Self & Liang for attribution LRTs)
+    pvals = pvals_from_lrt_self_liang(lrts).astype(np.float32)
     
     # 5. Continuous Leaf attributions: A = alpha * delta [L, N]
     leaf_attributions = mean_attns * delta
@@ -246,13 +245,10 @@ def compute_branch_coselection_network(
     t_stat = sim_arr * np.sqrt(df / np.maximum(1e-9, 1.0 - sim_arr**2))
     p_vals = stats.t.sf(t_stat, df=df)
     cesi_vals = sim_arr * np.sqrt(np.maximum(lrts[s1_arr], 0.1) * np.maximum(lrts[s2_arr], 0.1))
-    
+
     # Proper Global Benjamini-Hochberg FDR over all M_total hypothesis tests
-    order = np.argsort(p_vals)
-    p_sorted = p_vals[order]
-    q_global = np.minimum.accumulate((p_sorted * M_total / np.arange(1, M_total + 1))[::-1])[::-1]
-    q_vals = np.zeros(len(p_vals), dtype=np.float32)
-    q_vals[order] = q_global
+    from .stats import benjamini_hochberg
+    q_vals = benjamini_hochberg(p_vals).astype(np.float32)
     
     pass_filter = (
         (q_vals <= max_fdr) & 
@@ -533,7 +529,7 @@ def run_insilico_selection_dms(
             delta_lrts = s_mut_lrts - baseline_lrts[s]
             abs_deltas = np.abs(delta_lrts)
             plasticity = float(np.mean(abs_deltas)) if len(abs_deltas) > 0 else 0.0
-            p_val = float(0.5 * stats.chi2.sf(max(0.0, baseline_lrts[s]), df=1))
+            p_val = float(pvals_from_lrt_self_liang(np.array([max(0.0, baseline_lrts[s])]))[0])
             
             mut_scores = {str(aa): float(d) for aa, d in zip(s_mut_aas, delta_lrts)}
             

@@ -32,6 +32,7 @@ from .weights import (
 )
 from .phenotype import run_phenotype_association, PRESETS
 from .epistasis import run_epistasis_analysis, run_epistatic_sector_mining
+from .stats import pvals_from_lrt_meme, pvals_from_lrt_self_liang, benjamini_hochberg, cauchy_combination_p
 
 DEFAULT_VARIANT_ENV = os.environ.get("HYPHAEON_VARIANT", DEFAULT_VARIANT)
 
@@ -149,22 +150,10 @@ def cmd_meme(args):
         torch.cuda.synchronize()
 
     elapsed = time.time() - t0
-    
-    # MEME asymptotic mixture null from MEME.bf: 1/3 * delta(0) + 2/3 * (0.45 * chi2(1) + 0.55 * chi2(2))
-    pvals = np.full(L, 2.0 / 3.0, dtype=np.float32)
-    pos_mask = lrts > 0.0
-    pvals[pos_mask] = (2.0 / 3.0) * (0.45 * stats.chi2.sf(lrts[pos_mask], df=1) + 0.55 * stats.chi2.sf(lrts[pos_mask], df=2))
-    
-    # Benjamini-Hochberg False Discovery Rate (FDR) q-values
-    order = np.argsort(pvals)
-    ranks = np.empty(L, dtype=int)
-    ranks[order] = np.arange(1, L + 1)
-    raw_q = pvals * (L / ranks)
-    sorted_q = raw_q[order]
-    for i in range(L - 2, -1, -1):
-        sorted_q[i] = min(sorted_q[i], sorted_q[i + 1])
-    raw_q[order] = sorted_q
-    qvals = np.clip(raw_q, 0.0, 1.0).astype(np.float32)
+
+    # MEME asymptotic mixture p-values + Benjamini-Hochberg FDR q-values
+    pvals = pvals_from_lrt_meme(lrts).astype(np.float32)
+    qvals = benjamini_hochberg(pvals).astype(np.float32)
     
     raw_sig_05 = int((pvals <= 0.05).sum())
     raw_sig_10 = int((pvals <= 0.10).sum())
@@ -294,19 +283,8 @@ def cmd_meme(args):
                             y_soft, _ = model.forward_cached(c_ch, a_ch, tree_cache)
                             lrts_cl[b_idx] = torch.clamp(y_soft.squeeze(-1), min=0.0).cpu().numpy().flatten()
                             
-                pvals_cl = np.full(L, 2.0 / 3.0, dtype=np.float32)
-                pos_cl = lrts_cl > 0.0
-                pvals_cl[pos_cl] = (2.0 / 3.0) * (0.45 * stats.chi2.sf(lrts_cl[pos_cl], df=1) + 0.55 * stats.chi2.sf(lrts_cl[pos_cl], df=2))
-                
-                order_cl = np.argsort(pvals_cl)
-                ranks_cl = np.empty(L, dtype=int)
-                ranks_cl[order_cl] = np.arange(1, L + 1)
-                raw_q_cl = pvals_cl * (L / ranks_cl)
-                sorted_q_cl = raw_q_cl[order_cl]
-                for i in range(L - 2, -1, -1):
-                    sorted_q_cl[i] = min(sorted_q_cl[i], sorted_q_cl[i + 1])
-                raw_q_cl[order_cl] = sorted_q_cl
-                qvals_cl = np.clip(raw_q_cl, 0.0, 1.0).astype(np.float32)
+                pvals_cl = pvals_from_lrt_meme(lrts_cl).astype(np.float32)
+                qvals_cl = benjamini_hochberg(pvals_cl).astype(np.float32)
                 
                 # Export cleaned alignment if requested
                 if getattr(args, "filter_out_aln", None):
@@ -575,20 +553,13 @@ def cmd_busted(args):
             pred_omega = [0.10, 1.00, pred_w3]
 
         elapsed = time.time() - t0
-        
-        # 4. Asymptotic mixture p-values
-        pvals = np.ones(L, dtype=np.float64)
-        pos_mask = lrts > 0.0
-        if np.any(pos_mask):
-            pvals[pos_mask] = 0.5 * stats.chi2.sf(lrts[pos_mask], df=1)
+
+        # 4. Asymptotic mixture p-values (Self & Liang for BUSTED omnibus)
+        pvals = pvals_from_lrt_self_liang(lrts)
 
         # 5. ACAT & Simes Combination
         var_p = pvals[variable_indices] if num_variable > 0 else pvals
-        valid_p = np.clip(var_p, 1e-15, 1.0 - 1e-6)
-        cauchy_terms = np.tan((0.5 - valid_p) * np.pi)
-        t_acat = float(np.mean(cauchy_terms))
-        p_acat = float(0.5 - (np.arctan(t_acat) / np.pi))
-        p_acat = max(1e-15, min(1.0, p_acat))
+        p_acat = cauchy_combination_p(var_p)
 
         sorted_p = np.sort(pvals)
         ranks = np.arange(1, L + 1)
