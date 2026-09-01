@@ -289,6 +289,7 @@ def cmd_predict(args):
                 n_var_cl = len(var_cl)
                 lrts_cl = np.zeros(L, dtype=np.float32)
                 if n_var_cl > 0:
+                    pb_cl = ChunkProgress(n_var_cl, 'Predict (re-eval)', 'codon', enabled=n_var_cl > 0)
                     with torch.no_grad():
                         for start_idx in range(0, n_var_cl, batch_size):
                             end_idx = min(start_idx + batch_size, n_var_cl)
@@ -297,7 +298,9 @@ def cmd_predict(args):
                             a_ch = a_cl[b_idx].to(device)
                             y_soft, _ = model.forward_cached(c_ch, a_ch, tree_cache)
                             lrts_cl[b_idx] = torch.clamp(y_soft.squeeze(-1), min=0.0).cpu().numpy().flatten()
-                            
+                            pb_cl.update(end_idx)
+                    pb_cl.finish()
+
                 pvals_cl = np.full(L, 2.0 / 3.0, dtype=np.float32)
                 pos_cl = lrts_cl > 0.0
                 pvals_cl[pos_cl] = (2.0 / 3.0) * (0.45 * stats.chi2.sf(lrts_cl[pos_cl], df=1) + 0.55 * stats.chi2.sf(lrts_cl[pos_cl], df=2))

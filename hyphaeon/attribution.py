@@ -11,6 +11,7 @@ Answers two core biological questions for positively selected codons:
 import numpy as np
 import torch
 from .dataset import CODON_TO_AA, AA_MAP, GENETIC_CODE
+from ._progress import ChunkProgress
 
 INV_GENETIC_CODE = {v: k for k, v in GENETIC_CODE.items()}
 
@@ -69,9 +70,13 @@ def attribute_selection(
     max_tree_dist = float(np.max(d_mat_np)) if np.max(d_mat_np) > 0 else 1.0
     
     attributions = {}
-    
+
+    _pb_attr = ChunkProgress(len(focal_sites), 'Attribute', 'site', enabled=len(focal_sites) > 0)
+    _attr_done = 0
     with torch.no_grad():
         for site in focal_sites:
+            _attr_done += 1
+            _pb_attr.update(_attr_done)
             if base_lrts is not None:
                 site_lrt = float(base_lrts[site])
             else:
@@ -165,5 +170,6 @@ def attribute_selection(
                     'tree_depth_ratio': float(depth_ratio)
                 }
             }
-            
+
+    _pb_attr.finish()
     return attributions
