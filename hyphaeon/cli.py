@@ -1001,7 +1001,7 @@ def cmd_disease(args):
         human_taxon=getattr(args, "human_taxon", None),
         weights_path=resolved_path,
         device=device,
-        batch_size=getattr(args, "batch_size", 64)
+        batch_size=getattr(args, "batch_size", None)
     )
     
     print("\n" + "=" * 90)
@@ -1089,7 +1089,7 @@ def main():
     pred_parser.add_argument("-t", "--tree", required=False, default=None, help="Path to Newick/NEXUS phylogenetic tree (optional if embedded)")
     pred_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download). Can also be set via AXOMEME_WEIGHTS env var.")
     pred_parser.add_argument("--model-variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from Hugging Face (default: {DEFAULT_VARIANT})")
-    pred_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: auto-selected)")
+    pred_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: auto-selected; very large values may be capped to a hardware-safe threshold to prevent GPU OOM)")
     pred_parser.add_argument("-s", "--max-species", type=int, default=None, help="Maximum number of species to include (PD downsampling)")
     pred_parser.add_argument("--no-prune-duplicates", action="store_true", help="Disable automatic collapsing of 100% identical sequence duplicates")
     pred_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
@@ -1161,7 +1161,7 @@ def main():
     busted_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
     busted_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from HF (default: {DEFAULT_VARIANT})")
     busted_parser.add_argument("-s", "--max-species", type=int, default=512, help="Maximum number of taxa (Farthest-Point Traversal subsampling if exceeded)")
-    busted_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Number of codon sites to process in parallel (default: adaptive)")
+    busted_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Number of codon sites to process in parallel (default: adaptive; very large values may be capped to a hardware-safe threshold to prevent GPU OOM)")
     busted_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
     busted_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     busted_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
@@ -1174,7 +1174,7 @@ def main():
     disease_parser.add_argument("--human-taxon", default=None, help="Name of human reference taxon in alignment (default: auto-detected)")
     disease_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
     disease_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from HF (default: {DEFAULT_VARIANT})")
-    disease_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Batch size for site processing (default: adaptive hardware budget)")
+    disease_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Batch size for site processing (default: adaptive hardware budget; very large values may be capped to a hardware-safe threshold to prevent GPU OOM)")
     disease_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
     disease_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     disease_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
