@@ -714,19 +714,23 @@ def list_models():
     print(f"Default variant: {DEFAULT_VARIANT}")
 
 def cmd_phenotype(args):
+    alignment_path = os.path.expanduser(args.alignment) if getattr(args, "alignment", None) else None
+    tree_path = os.path.expanduser(args.tree) if getattr(args, "tree", None) else None
+    weights_path = os.path.expanduser(args.weights) if getattr(args, "weights", None) else DEFAULT_WEIGHTS_ENV
+
     print(f"[*] Executing Directional Phenotype-Genotype Mapping (PhyloWAS)...")
-    print(f"[*] Alignment: {args.alignment}")
-    if getattr(args, "tree", None):
-        print(f"[*] Tree:      {args.tree}")
+    print(f"[*] Alignment: {alignment_path}")
+    if tree_path:
+        print(f"[*] Tree:      {tree_path}")
     else:
         print(f"[*] Tree:      (extracting from alignment)")
     
     t0 = time.time()
     try:
         res = run_phenotype_association(
-            alignment_path=args.alignment,
-            tree_path=getattr(args, "tree", None),
-            weights_path=getattr(args, "weights", DEFAULT_WEIGHTS_ENV),
+            alignment_path=alignment_path,
+            tree_path=tree_path,
+            weights_path=weights_path,
             variant=getattr(args, "variant", DEFAULT_VARIANT_ENV),
             preset=getattr(args, "preset", None),
             foreground=getattr(args, "foreground", None),
@@ -767,6 +771,25 @@ def cmd_phenotype(args):
             q_str = f"{s.get('q_value', 1.0):.2e}" if s.get('q_value', 1.0) < 0.01 else f"{s.get('q_value', 1.0):.3f}"
             p_str = f"{s.get('p_value', 1.0):.2e}" if s.get('p_value', 1.0) < 0.01 else f"{s.get('p_value', 1.0):.3f}"
             print(f"{s['site']:<6d} {s['ref_aa']:<5s} {s['derived_aa']:<9s} {s['axomeme_lrt']:<7.2f} {s['association_rho']:<12.4f} {s.get('score', 0.0):<8.3f} {p_str:<12s} {q_str:<12s} {s['foreground_freq_pct']:<7.1f} {s['background_freq_pct']:<7.1f}")
+
+    trait_sectors = res.get("trait_sectors", [])
+    if trait_sectors:
+        print("\n" + "=" * 88)
+        print(f"🧬 Inferred Epistatic Sectors Across Trait-Associated Sites ({len(trait_sectors)} passing C(S) >= 0.45):")
+        for sec in trait_sectors:
+            sec_sites_str = ", ".join([f"{sec['sites'][i]}" for i in range(len(sec['sites']))])
+            print(f"  • Sector {sec['sector_id']}: Codons [ {sec_sites_str} ] | Size: {sec['size']} | Coherence C(S): {sec['spectral_coherence']:.3f} | Mean LRT: {sec['mean_lrt']:.2f}")
+
+    coselection_pairs = res.get("coselection_pairs", [])
+    if coselection_pairs:
+        print("\nTop Co-Evolving Trait Pairs (Ranked by Composite Epistatic Selection Index CESI):")
+        print(f"{'Pair':<16} {'Co-Sel (Sim)':<14} {'CESI':<8} {'Shared':<8} {'p-value':<12} {'FDR q-val':<12}")
+        print("-" * 74)
+        for p in coselection_pairs[:10]:
+            pair_str = f"{p['ref_u']}{p['site_u']} - {p['ref_v']}{p['site_v']}"
+            q_str = f"{p.get('q_value', 1.0):.2e}" if p.get('q_value', 1.0) < 0.01 else f"{p.get('q_value', 1.0):.3f}"
+            p_str = f"{p.get('p_value', 1.0):.2e}" if p.get('p_value', 1.0) < 0.01 else f"{p.get('p_value', 1.0):.3f}"
+            print(f"{pair_str:<16} {p['similarity']:<14.4f} {p['cesi']:<8.3f} {p['shared_branches']:<8d} {p_str:<12s} {q_str:<12s}")
 
     if args.output:
         ensure_parent_directory(args.output)
@@ -896,7 +919,176 @@ def cmd_epistasis(args):
         nx.write_graphml(G, args.graphml)
         print(f"[✓] Co-selection network GraphML written to: {args.graphml}")
 
+def cmd_dms(args):
+    print(f"[*] Executing in silico Selection Deep Mutational Scanning (Digital DMS / ESSM)...")
+    print(f"[*] Alignment: {args.alignment}")
+    if args.tree:
+        print(f"[*] Tree:      {args.tree}")
+    else:
+        print(f"[*] Tree:      (extracting from alignment)")
+        
+    t0 = time.time()
+    try:
+        from .epistasis import run_digital_dms_analysis
+        res = run_digital_dms_analysis(
+            alignment_path=args.alignment,
+            tree_path=args.tree,
+            weights_path=args.weights,
+            variant=getattr(args, "variant", None),
+            focal_taxon=getattr(args, "focal_taxon", None),
+            cpu=getattr(args, "cpu", False),
+            progress=True
+        )
+    except Exception as e:
+        print(f"\n[!] Digital DMS / ESSM Error: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+        
+    elapsed = time.time() - t0
+    plasticity = res["plasticity"]
+    
+    print("\n" + "=" * 82)
+    print(f"🎉 Digital DMS / ESSM Analysis Complete in {elapsed:.3f} seconds!")
+    print(f"   Taxa: {res['taxa_count']} | Codons: {res['codon_count']} | Total Evaluated Single Mutants: {res['total_mutations']}")
+    print("=" * 82)
+    
+    if plasticity:
+        df_plas = pd.DataFrame(plasticity)
+        top_plastic = df_plas.sort_values(by="intrinsic_plasticity", ascending=False).head(8)
+        top_rigid = df_plas.sort_values(by="intrinsic_plasticity", ascending=True).head(8)
+        
+        print("\nTop Permissive / Evolvable Sites (High Plasticity Φ):")
+        print(f"{'Site':<6} {'WT':<5} {'Plasticity Φ':<15} {'Baseline LRT':<15} {'p-value':<12} {'Max ΔLRT':<10}")
+        print("-" * 65)
+        for _, r in top_plastic.iterrows():
+            p_str = f"{r['p_value']:.2e}" if r['p_value'] < 0.01 else f"{r['p_value']:.3f}"
+            print(f"{int(r['site']):<6d} {r['wt_aa']:<5s} {r['intrinsic_plasticity']:<15.4f} {r['baseline_lrt']:<15.2f} {p_str:<12s} {r['max_delta_lrt']:<10.2f}")
+            
+        print("\nTop Rigid / Catalytic Backbone Sites (Low Plasticity Φ):")
+        print(f"{'Site':<6} {'WT':<5} {'Plasticity Φ':<15} {'Baseline LRT':<15} {'p-value':<12} {'Max ΔLRT':<10}")
+        print("-" * 65)
+        for _, r in top_rigid.iterrows():
+            p_str = f"{r['p_value']:.2e}" if r['p_value'] < 0.01 else f"{r['p_value']:.3f}"
+            print(f"{int(r['site']):<6d} {r['wt_aa']:<5s} {r['intrinsic_plasticity']:<15.4f} {r['baseline_lrt']:<15.2f} {p_str:<12s} {r['max_delta_lrt']:<10.2f}")
+            
+    if getattr(args, "output", None):
+        ensure_parent_directory(args.output)
+        with open(args.output, "w") as f:
+            json.dump(res, f, indent=2)
+        print(f"\n[✓] JSON results written to: {args.output}")
+
+    if getattr(args, "csv", None):
+        ensure_parent_directory(args.csv)
+        df_out = pd.DataFrame(plasticity)
+        if "mutant_deltas" in df_out.columns:
+            df_out_csv = df_out.drop(columns=["mutant_deltas"])
+        else:
+            df_out_csv = df_out
+        df_out_csv.to_csv(args.csv, index=False)
+        print(f"[✓] CSV results written to: {args.csv}")
+
+def cmd_disease(args):
+    """Executes disease pathogenicity prediction for clinical variants."""
+    from .disease import predict_disease_pathogenicity
+    
+    device = torch.device("cpu") if args.cpu else torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[*] Running HyphAeon Disease Variant Pathogenicity Scoring on {device}...")
+    
+    resolved_path = resolve_weights_path(args.weights, variant=getattr(args, 'variant', DEFAULT_VARIANT))
+    
+    # Load canonical human sequence if provided
+    canon_seq = None
+    if getattr(args, "canonical_seq", None):
+        if os.path.exists(args.canonical_seq):
+            from Bio import SeqIO
+            rec = next(SeqIO.parse(args.canonical_seq, "fasta"))
+            canon_seq = str(rec.seq)
+        else:
+            canon_seq = args.canonical_seq.strip()
+            
+    df_res = predict_disease_pathogenicity(
+        msa_path=args.alignment,
+        mutations=args.mutations,
+        canonical_human_seq=canon_seq,
+        human_taxon=getattr(args, "human_taxon", None),
+        weights_path=resolved_path,
+        device=device,
+        batch_size=getattr(args, "batch_size", 64)
+    )
+    
+    print("\n" + "=" * 90)
+    print(f"{'Mutation':<12} {'Canonical Pos':<14} {'MSA Col':<9} {'Mapped':<8} {'Score':<10} {'Prediction'}")
+    print("=" * 90)
+    for _, r in df_res.head(25).iterrows():
+        print(f"{r['mutation']:<12} {r['canonical_pos']:<14} {r['aln_col']:<9} {str(r['is_mapped']):<8} {r['pathogenicity_score']:<10.4f} {r['prediction']}")
+    if len(df_res) > 25:
+        print(f"... ({len(df_res) - 25} more mutations evaluated)")
+    print("=" * 90)
+    
+    if getattr(args, "csv", None):
+        df_res.to_csv(args.csv, index=False)
+        print(f"[*] Saved CSV results to: {args.csv}")
+    if getattr(args, "output", None):
+        df_res.to_json(args.output, orient="records", indent=2)
+        print(f"[*] Saved JSON results to: {args.output}")
+
+def cmd_filter(args):
+    """Executes automated alignment quality control, artifact detection, and surgical masking."""
+    from .filter import run_alignment_filter
+    
+    print("[*] Executing Automated Alignment Error Detection & Surgical Masking...")
+    print(f"[*] Alignment: {args.alignment}")
+    if args.tree:
+        print(f"[*] Tree:      {args.tree}")
+        
+    res = run_alignment_filter(
+        alignment_path=args.alignment,
+        tree_path=args.tree,
+        weights_path=args.weights,
+        model_variant=getattr(args, "variant", DEFAULT_VARIANT),
+        output_alignment_path=args.output,
+        audit_csv_path=args.csv,
+        alpha_site=args.alpha_site,
+        min_k=args.min_k,
+        max_span=args.max_span,
+        min_oci=args.min_oci,
+        min_run_length=args.min_run_length,
+        batch_size=getattr(args, "batch_size", None),
+        max_species=getattr(args, "max_species", None),
+        device=torch.device("cpu") if args.cpu else None
+    )
+    
+    print("\n" + "=" * 80)
+    print(f"🎉 Alignment Filtering Complete in {res['elapsed_seconds']:.3f} seconds!")
+    print(f"   Taxa: {res['num_taxa']} | Codons: {res['num_codons']}")
+    print(f"   Candidate Patches Detected: {res['num_patches_detected']} | Offender Artifacts Masked: {res['num_artifacts_masked']}")
+    print(f"   Total Codons Surgically Masked (NNN): {res['masked_codons_count']}")
+    print("=" * 80)
+    
+    raw = res['raw_metrics']
+    cl = res['cleaned_metrics']
+    print(f"\nMetric Comparison (Raw -> Cleaned):")
+    print(f"  • Cauchy Omnibus p-value (CCT): {raw['cct_p_value']:.4e} -> {cl['cct_p_value']:.4e}")
+    print(f"  • Significant Sites (p <= 0.05): {raw['sig_sites_p05']} -> {cl['sig_sites_p05']} (Suppressed: {res['suppressed_spurious_sites']})")
+    print(f"  • Significant Sites (FDR q <= 0.10): {raw['sig_sites_q10']} -> {cl['sig_sites_q10']}")
+    print(f"  • Mean Likelihood Ratio (LRT): {raw['mean_lrt']:.3f} -> {cl['mean_lrt']:.3f}")
+    
+    if res['artifacts']:
+        print(f"\nSurgically Masked Frameshift / Sequencing Artifacts:")
+        print(f"{'Patch (1-idx)':<15} {'Span':<6} {'k (p<=.05)':<12} {'p_hypergeom':<14} {'Outlier Taxon':<20} {'Run':<5} {'OCI':<6}")
+        print("-" * 80)
+        for a in res['artifacts']:
+            p_range = f"{a['patch_start_1idx']}-{a['patch_end_1idx']}"
+            print(f"{p_range:<15} {a['span_codons']:<6} {a['significant_sites_k']:<12} {a['p_hypergeom']:<14.2e} {a['outlier_taxon']:<20} {a['consecutive_mismatches']:<5} {a['outlier_contamination_index']:<6.2f}")
+            
+    if args.output:
+        print(f"\n[✓] Cleaned alignment saved to: {args.output}")
+    if args.csv:
+        print(f"[✓] Artifact audit log written to: {args.csv}")
+
 def main():
+
     parser = argparse.ArgumentParser(
         prog="axomeme",
         description="AxoMEME: Ultra-Fast Neural Selection Inference, Phenotype-Genotype Mapping, and Epistatic Sector Mining",
@@ -986,7 +1178,37 @@ def main():
     busted_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     busted_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
 
-    # 6. List-models Subcommand
+    # 6. Disease Pathogenicity Subcommand
+    disease_parser = subparsers.add_parser("disease", aliases=["pathogenicity", "variant", "clinvar"], help="Predict disease variant effect and pathogenicity using HyphAeon Transformer")
+    disease_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
+    disease_parser.add_argument("-m", "--mutations", required=True, help="List of mutations ('R175H,G245S'), CSV file, or Parquet path")
+    disease_parser.add_argument("--canonical-seq", default=None, help="Optional canonical human reference sequence or FASTA path")
+    disease_parser.add_argument("--human-taxon", default=None, help="Name of human reference taxon in alignment (default: auto-detected)")
+    disease_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
+    disease_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from HF (default: {DEFAULT_VARIANT})")
+    disease_parser.add_argument("-b", "--batch-size", type=int, default=64, help="Batch size for site processing (default: 64)")
+    disease_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
+    disease_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
+    disease_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
+
+    # 7. Alignment Filtering / Surgical Masking Subcommand
+    filter_parser = subparsers.add_parser("filter", aliases=["mask", "qc", "clean"], help="Run automated alignment quality control, spatial artifact detection, and surgical masking")
+    filter_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
+    filter_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded)")
+    filter_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
+    filter_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from HF (default: {DEFAULT_VARIANT})")
+    filter_parser.add_argument("-o", "--output", help="Path to write the cleaned, surgically masked alignment (FASTA format)")
+    filter_parser.add_argument("-c", "--csv", help="Optional path to write artifact audit log (CSV format)")
+    filter_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: adaptive hardware budget)")
+    filter_parser.add_argument("-s", "--max-species", type=int, default=None, help="Maximum number of taxa to include (PD downsampling)")
+    filter_parser.add_argument("--alpha-site", type=float, default=0.05, help="Site significance threshold for cluster scanning (default: 0.05)")
+    filter_parser.add_argument("--min-k", type=int, default=3, help="Minimum significant sites within window (default: 3)")
+    filter_parser.add_argument("--max-span", type=int, default=35, help="Maximum codon window span for spatial cluster (default: 35)")
+    filter_parser.add_argument("--min-oci", type=float, default=0.25, help="Minimum Outlier Contamination Index threshold (default: 0.25)")
+    filter_parser.add_argument("--min-run-length", type=int, default=3, help="Minimum consecutive mismatch run length in single taxon (default: 3)")
+    filter_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
+
+    # 8. List-models Subcommand
     list_parser = subparsers.add_parser("list-models", help="List available model variants from Hugging Face")
 
     args = parser.parse_args()
@@ -999,7 +1221,11 @@ def main():
     elif args.command in ["epistasis", "coselection", "sector", "network"]:
         cmd_epistasis(args)
     elif args.command in ["dms", "essm", "digital-dms"]:
-        cmd_epistasis(args)
+        cmd_dms(args)
+    elif args.command in ["disease", "pathogenicity", "variant", "clinvar"]:
+        cmd_disease(args)
+    elif args.command in ["filter", "mask", "qc", "clean"]:
+        cmd_filter(args)
     elif args.command == "list-models":
         list_models()
     else:
@@ -1007,3 +1233,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+

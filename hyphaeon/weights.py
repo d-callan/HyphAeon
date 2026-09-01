@@ -14,9 +14,19 @@ without a package update.
 """
 
 import os
+import sys
 import json
 from pathlib import Path
 from typing import Optional, Dict, List
+
+# NumPy 1.x / 2.x unpickling compatibility bridge
+try:
+    import numpy as np
+    if not hasattr(np, '_core') and hasattr(np, 'core'):
+        sys.modules['numpy._core'] = np.core
+        sys.modules['numpy._core.multiarray'] = np.core.multiarray
+except Exception:
+    pass
 
 from huggingface_hub import list_repo_files, hf_hub_download
 

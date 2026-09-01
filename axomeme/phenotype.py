@@ -443,6 +443,84 @@ def run_phenotype_association(
     top_pars_sites = [f"{x['ref_aa']}{x['site']}{x['derived_aa']}" for x in site_results if x["association_rho"] >= 0.40 and x["score"] >= 0.50][:15]
     compact_pars = f"[ {' - '.join(top_pars_sites)} ]" if top_pars_sites else "[]"
 
+    # 11. Directional Epistatic Co-Selection & Sector Mining Across Trait-Associated Sites
+    sig_trait_sites = [x for x in site_results if x.get("q_value", 1.0) <= alpha and x["association_rho"] > 0]
+    trait_site_indices = [x["site"] - 1 for x in sig_trait_sites]
+    
+    coselection_pairs = []
+    trait_sectors = []
+    
+    if len(trait_site_indices) >= 2:
+        sub_indices = np.array(trait_site_indices, dtype=np.int64)
+        sub_A = leaf_attr[sub_indices, :]
+        norms = np.linalg.norm(sub_A, axis=1, keepdims=True)
+        valid_n = (norms > 1e-12).squeeze()
+        
+        if np.sum(valid_n) >= 2:
+            norm_sub_A = np.zeros_like(sub_A)
+            norm_sub_A[valid_n] = sub_A[valid_n] / norms[valid_n]
+            C_trait = norm_sub_A @ norm_sub_A.T
+            
+            K_t = len(sub_indices)
+            import networkx as nx
+            G_trait = nx.Graph()
+            pair_list = []
+            
+            for i in range(K_t):
+                s1 = sub_indices[i]
+                for j in range(i + 1, K_t):
+                    s2 = sub_indices[j]
+                    sim = float(C_trait[i, j])
+                    if sim > 0.15:
+                        lrt_1 = float(lrts[s1])
+                        lrt_2 = float(lrts[s2])
+                        cesi = float(sim * np.sqrt(max(0.1, lrt_1) * max(0.1, lrt_2)))
+                        
+                        df_pair = max(1, N - 2)
+                        t_pair = sim * np.sqrt(df_pair / max(1e-15, 1.0 - sim**2))
+                        p_pair = float(stats.t.sf(t_pair, df=df_pair))
+                        
+                        a1_mut = (a_np[s1] < 20) & (a_np[s1] != AA_MAP.get(cons_aas[s1], 20))
+                        a2_mut = (a_np[s2] < 20) & (a_np[s2] != AA_MAP.get(cons_aas[s2], 20))
+                        shared_branches = int(np.sum(a1_mut & a2_mut))
+                        
+                        pair_dict = {
+                            "site_u": int(s1 + 1),
+                            "site_v": int(s2 + 1),
+                            "ref_u": cons_aas[s1],
+                            "ref_v": cons_aas[s2],
+                            "lrt_u": lrt_1,
+                            "lrt_v": lrt_2,
+                            "similarity": sim,
+                            "cesi": cesi,
+                            "p_value": p_pair,
+                            "shared_branches": shared_branches
+                        }
+                        pair_list.append(pair_dict)
+                        if sim >= 0.25 and cesi >= 1.0:
+                            G_trait.add_edge(int(s1 + 1), int(s2 + 1), weight=sim, cesi=cesi)
+            
+            if pair_list:
+                M_p = len(pair_list)
+                p_arr = np.array([x["p_value"] for x in pair_list])
+                order_p = np.argsort(p_arr)
+                q_p = np.minimum.accumulate((p_arr[order_p] * M_p / np.arange(1, M_p + 1))[::-1])[::-1]
+                for rank_i, orig_i in enumerate(order_p):
+                    pair_list[orig_i]["q_value"] = float(q_p[rank_i])
+                
+                pair_list.sort(key=lambda x: x["cesi"], reverse=True)
+                coselection_pairs = pair_list
+                
+            if G_trait.number_of_edges() > 0:
+                from .epistasis import extract_epistatic_sectors_tse
+                trait_sectors = extract_epistatic_sectors_tse(
+                    G_trait, leaf_attr, lrts, cons_aas,
+                    min_clique_size=2,
+                    min_coherence=0.45,
+                    a_np=a_np,
+                    taxa=taxa
+                )
+
     return {
         "alignment": alignment_path,
         "tree": tree_path,
@@ -457,6 +535,10 @@ def run_phenotype_association(
         "score_track_b": score_track_b,
         "dual_track_composite": dual_track_composite,
         "compact_pars_signature": compact_pars,
-        "significant_sites_count": len([x for x in site_results if x.get("q_value", 1.0) <= alpha]),
+        "significant_sites_count": len(sig_trait_sites),
+        "coselection_pairs_count": len(coselection_pairs),
+        "trait_sectors_count": len(trait_sectors),
+        "coselection_pairs": coselection_pairs,
+        "trait_sectors": trait_sectors,
         "sites": site_results
     }

@@ -59,6 +59,7 @@ def parse_alignment_sequences(filepath: str) -> Dict[str, str]:
     """
     Parses FASTA, NEXUS, or PHYLIP (sequential/interleaved) format alignments (including compressed .gz files).
     """
+    filepath = os.path.expanduser(filepath)
     open_func = gzip.open if filepath.endswith('.gz') else open
     with open_func(filepath, 'rt') as f:
         full_text = f.read()
@@ -90,21 +91,26 @@ def parse_alignment_sequences(filepath: str) -> Dict[str, str]:
             if seq_dict and len(seq_dict) >= int(first_tokens[0]):
                 return seq_dict
 
-    # 2. FASTA format
+    # 2. Fast direct FASTA format parsing
     if full_text.strip().startswith('>'):
-        fasta_lines = []
+        seq_dict = {}
+        curr_id = None
+        curr_chunks = []
         for line in full_text.splitlines():
             l_strip = line.strip()
-            # Stop if encountering embedded tree or nexus commands at the end of the file
-            if l_strip.startswith('(') or l_strip.lower().startswith('tree ') or l_strip.lower().startswith('begin '):
+            if not l_strip:
+                continue
+            if l_strip.startswith('>'):
+                if curr_id is not None:
+                    seq_dict[curr_id] = "".join(curr_chunks).upper().replace('U', 'T')
+                curr_id = l_strip[1:].split()[0].strip("'\"")
+                curr_chunks = []
+            elif l_strip.startswith('(') or l_strip.lower().startswith('tree ') or l_strip.lower().startswith('begin '):
                 break
-            fasta_lines.append(line)
-        clean_fasta = '\n'.join(fasta_lines)
-
-        seq_dict = {}
-        for record in SeqIO.parse(StringIO(clean_fasta), 'fasta'):
-            seq_str = str(record.seq).upper().strip().replace('U', 'T')
-            seq_dict[record.id.strip()] = seq_str
+            else:
+                curr_chunks.append(l_strip.replace(' ', ''))
+        if curr_id is not None:
+            seq_dict[curr_id] = "".join(curr_chunks).upper().replace('U', 'T')
         return seq_dict
 
     # NEXUS format parsing
@@ -155,6 +161,10 @@ def extract_tree_from_string_or_file(source: str) -> Optional[Phylo.BaseTree.Tre
     """
     Parses a tree from a file path or raw string. Supports Newick, Nexus, and embedded trees.
     """
+    if isinstance(source, str):
+        source_exp = os.path.expanduser(source)
+        if os.path.exists(source_exp):
+            source = source_exp
     if os.path.exists(source):
         open_func = gzip.open if source.endswith('.gz') else open
         with open_func(source, 'rt') as f:
@@ -484,10 +494,19 @@ def load_alignment_and_tree(fa_path: str, nwk_path: Optional[str] = None, max_sp
         seq_keys_clean = {k.strip("'\""): k for k in seq_dict.keys()}
         taxa = [seq_keys_clean[t] for t in tree_taxa if t in seq_keys_clean]
         if not taxa:
-            raise ValueError(
-                f"No matching taxa found between tree terminals ({tree_taxa[:5]}...) "
-                f"and alignment sequences ({list(seq_dict.keys())[:5]}...)."
-            )
+            # Try case-insensitive matching
+            seq_keys_lower = {k.strip("'\"").lower(): k for k in seq_dict.keys()}
+            matched_keys = []
+            for t in tree_taxa:
+                t_clean = t.strip("'\"").lower()
+                if t_clean in seq_keys_lower:
+                    matched_keys.append(seq_keys_lower[t_clean])
+            taxa = matched_keys
+            if not taxa:
+                raise ValueError(
+                    f"No matching taxa found between tree terminals ({tree_taxa[:5]}...) "
+                    f"and alignment sequences ({list(seq_dict.keys())[:5]}...)."
+                )
 
     dropped_aln = len(seq_dict) - len(taxa)
     dropped_tree = len(tree_taxa) - len(taxa)
