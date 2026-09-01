@@ -34,6 +34,7 @@ from .dataset import (
 )
 from .model import PhyloAxialTransformer
 from .weights import load_weights, load_arch_config
+from ._progress import ChunkProgress
 
 REV_AA_MAP = {v: k for k, v in AA_MAP.items()}
 
@@ -450,7 +451,10 @@ def predict_disease_pathogenicity(
     tree_cache = model.precompute_tree_cache(d_mat.to(device), z_coords.to(device))
     
     # 8. Batched Wild-Type Latent Root Embeddings
+    if verbose:
+        print(f"[*] Step 1/2: Wild-Type Latent Root Embeddings across {L_codon} codons...", flush=True)
     z_wt_list = []
+    pb = ChunkProgress(L_codon, 'Disease WT', 'codon', enabled=verbose)
     with torch.no_grad():
         for b_start in range(0, L_codon, batch_size):
             b_end = min(b_start + batch_size, L_codon)
@@ -461,7 +465,9 @@ def predict_disease_pathogenicity(
                 return_hidden=True
             )
             z_wt_list.append(z_chunk.squeeze(1).squeeze(1))
-            
+            pb.update(b_end)
+    pb.finish()
+
     Z_wt = torch.cat(z_wt_list, dim=0) # [L_codon, embed_dim]
     
     # 9. Compute Inter-Residue Latent Co-Evolution Coupling Matrix K = Z_norm @ Z_norm.T
@@ -472,6 +478,8 @@ def predict_disease_pathogenicity(
     xi_hubs = (torch.sum(torch.abs(K_offdiag), dim=-1) / max(1, L_codon - 1)).cpu().numpy()
     
     # 10. Score Clinical Mutations
+    if verbose:
+        print(f"[*] Step 2/2: Scoring {len(parsed_muts)} clinical mutations...", flush=True)
     results = []
     pseudo = 1.0 # Dirichlet pseudocount for robust log-odds
     theta_0 = -5.5 # Empirical baseline log-odds threshold for rare/tolerated mammalian substitutions

@@ -32,6 +32,7 @@ from .weights import (
 )
 from .phenotype import run_phenotype_association, PRESETS
 from .epistasis import run_epistasis_analysis, run_epistatic_sector_mining
+from ._progress import ChunkProgress
 
 DEFAULT_VARIANT_ENV = os.environ.get("HYPHAEON_VARIANT") or os.environ.get("AXOMEME_VARIANT", DEFAULT_VARIANT)
 
@@ -131,18 +132,21 @@ def cmd_predict(args):
     
     lrts = np.zeros(L, dtype=np.float32)
     if num_variable > 0:
+        pb = ChunkProgress(num_variable, 'Predict', 'codon', enabled=num_variable > 0)
         with torch.no_grad():
             for start_idx in range(0, num_variable, batch_size):
                 end_idx = min(start_idx + batch_size, num_variable)
                 batch_site_idx = variable_indices[start_idx:end_idx]
-                
+
                 c_chunk = c[batch_site_idx].to(device)
                 a_chunk = a[batch_site_idx].to(device)
-                
+
                 y_soft, _ = model.forward_cached(c_chunk, a_chunk, tree_cache)
                 chunk_lrts = torch.clamp(y_soft.squeeze(-1), min=0.0).cpu().numpy().flatten()
                 lrts[batch_site_idx] = chunk_lrts
-                
+                pb.update(end_idx)
+        pb.finish()
+
     if device.type == 'mps':
         torch.mps.synchronize()
     elif device.type == 'cuda':
@@ -548,6 +552,7 @@ def cmd_busted(args):
         hidden_all = torch.zeros((1, L, arch_config["embed_dim"]), dtype=torch.float32)
 
         if num_variable > 0:
+            pb = ChunkProgress(num_variable, f'BUSTED {gene_id}', 'codon', enabled=(not is_batch and num_variable > 0))
             with torch.no_grad():
                 for start_idx in range(0, num_variable, batch_size):
                     end_idx = min(start_idx + batch_size, num_variable)
@@ -558,7 +563,9 @@ def cmd_busted(args):
                     chunk_lrts = torch.clamp(y_soft.squeeze(-1), min=0.0).cpu().numpy().flatten()
                     lrts[batch_site_idx] = chunk_lrts
                     hidden_all[0, batch_site_idx] = root_repr.cpu()
-                    
+                    pb.update(end_idx)
+            pb.finish()
+
         if device.type == 'mps':
             torch.mps.synchronize()
         elif device.type == 'cuda':

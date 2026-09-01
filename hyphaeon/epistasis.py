@@ -34,6 +34,7 @@ from .dataset import (
 )
 from .model import PhyloAxialTransformer
 from .weights import load_weights, load_arch_config
+from ._progress import ChunkProgress
 
 REV_AA_MAP = {v: k for k, v in AA_MAP.items()}
 
@@ -133,7 +134,8 @@ def compute_transformer_attributions(
     tree_cache: Dict[str, Any],
     taxa: List[str],
     device: torch.device,
-    batch_size: Optional[int] = None
+    batch_size: Optional[int] = None,
+    progress: bool = True
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[str]]:
     """
     Computes continuous Transformer Attribution Vectors directly from axial attention maps:
@@ -164,18 +166,21 @@ def compute_transformer_attributions(
     mean_attns = np.zeros((L, n_taxa), dtype=np.float32)
     
     model.eval()
+    pb = ChunkProgress(L, 'Attribution', 'codon', enabled=progress and L > 0)
     with torch.no_grad():
         for start_idx in range(0, L, safe_batch_size):
             end_idx = min(start_idx + safe_batch_size, L)
             c_chunk = c_tensor[start_idx:end_idx].to(device)
             a_chunk = a_tensor[start_idx:end_idx].to(device)
-            
+
             y_soft, _, root_attns = model.forward_cached(
                 c_chunk, a_chunk, tree_cache, return_attentions=True
             )
             lrts[start_idx:end_idx] = torch.clamp(y_soft, min=0.0).cpu().numpy().flatten()
             mean_attns[start_idx:end_idx] = root_attns.cpu().numpy()
-            
+            pb.update(end_idx)
+    pb.finish()
+
     if device.type == 'mps':
         torch.mps.empty_cache()
             
@@ -653,8 +658,10 @@ def run_epistatic_analysis(
     tree_cache = model.precompute_tree_cache(d_mat.to(device), z_coords.to(device))
 
     # 4. Compute Transformer Attributions and Co-Selection Network
+    if progress:
+        print(f"[*] Computing Transformer Attributions across {L} codons...", flush=True)
     leaf_attr, lrts, pvals, consensus_aas = compute_transformer_attributions(
-        model, c_tensor, a_tensor, tree_cache, taxa, device, batch_size=batch_size
+        model, c_tensor, a_tensor, tree_cache, taxa, device, batch_size=batch_size, progress=progress
     )
 
     sig_edges, G = compute_branch_coselection_network(

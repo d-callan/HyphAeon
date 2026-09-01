@@ -358,7 +358,8 @@ def run_phenotype_association(
     min_taxa_per_site: int = 4,
     alpha: float = 0.05,
     cpu: bool = False,
-    batch_size: int = 64
+    batch_size: int = 64,
+    progress: bool = True
 ) -> Dict[str, Any]:
     """
     Executes directional Phenotype-Genotype association (PhyloWAS) on a codon alignment
@@ -419,8 +420,10 @@ def run_phenotype_association(
     tree_cache = model.precompute_tree_cache(d_dev, z_dev)
 
     # 5. Extract Transformer Phylogenetic Attributions
+    if progress:
+        print(f"[*] Computing Transformer Attributions across {L} codons...", flush=True)
     leaf_attr, lrts, pvals, cons_aas = compute_transformer_attributions(
-        model, c_tensor, a_tensor, tree_cache, taxa, device, batch_size=batch_size
+        model, c_tensor, a_tensor, tree_cache, taxa, device, batch_size=batch_size, progress=progress
     )
 
     # 6. Directional Unit-Hypersphere Attribution Projection
