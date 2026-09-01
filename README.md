@@ -22,7 +22,7 @@
 HyphAeon integrates five complementary phylogenetic deep learning and geometric
 projection engines, plus a pooled MEME concordance workflow:
 
-1. **`hyphaeon predict` (Site-Level Diversifying Selection)**:
+1. **`hyphaeon meme` (Site-Level Diversifying Selection)**:
    Neural episodic positive selection inference ($>100\times$ faster than standard numerical MLE and codon-MCMC models like HyPhy MEME/FEL) using Tree-RoPE 4D geometric branch embeddings and axial tree attention.
 2. **`hyphaeon epistasis` (3D Co-Evolution & Epistatic Sectors)**:
    Multi-scale epistatic sector mining implementing phylogenetic branch attribution, exact tree hypergeometric tests, Jaccard overlap suppression, and contact map recovery ($C_\beta - C_\beta < 8\text{\AA}$).
@@ -102,13 +102,13 @@ hyphaeon phenotype -a examples/RHO.fasta -fg "turTru,balMus,balPhys,orcOrc,delDe
 
 ```bash
 # Standard per-codon episodic selection inference
-hyphaeon predict -a examples/Smc6.fasta -t examples/Smc6.nwk -o examples/Smc6_results.json -c examples/Smc6_results.csv
+hyphaeon meme -a examples/Smc6.fasta -t examples/Smc6.nwk -o examples/Smc6_results.json -c examples/Smc6_results.csv
 
 # Enable mechanistic feature attribution (identifies driving species & evolutionary timing)
-hyphaeon predict -a examples/Smc6.fasta -t examples/Smc6.nwk --attribute --attribution-min-lrt 3.84 -o examples/Smc6_attributed.json
+hyphaeon meme -a examples/Smc6.fasta -t examples/Smc6.nwk --attribute --attribution-min-lrt 3.84 -o examples/Smc6_attributed.json
 
 # Run inference with automated dual-stage alignment error filtering & export cleaned alignment
-hyphaeon predict -a examples/Smc6.fasta -t examples/Smc6.nwk --filter --filter-out-aln examples/Smc6_cleaned.fasta -c examples/Smc6_clean.csv
+hyphaeon meme -a examples/Smc6.fasta -t examples/Smc6.nwk --filter --filter-out-aln examples/Smc6_cleaned.fasta -c examples/Smc6_clean.csv
 ```
 
 #### 1. Mechanistic Feature Attribution (`--attribute`):
@@ -123,7 +123,7 @@ hyphaeon predict -a examples/Smc6.fasta -t examples/Smc6.nwk --filter --filter-o
 
 ### Example 5: Evaluate predictions against HyPhy MEME
 
-`hyphaeon evaluate` compares the site-level output of `hyphaeon predict` with
+`hyphaeon evaluate` compares the site-level output of `hyphaeon meme` with
 HyPhy MEME used as the reference. Here, "true" means concordant with MEME; it
 does not imply independently established biological ground truth.
 
@@ -241,7 +241,7 @@ python train.py \
 
 | Command | Action | Description |
 | :--- | :--- | :--- |
-| `hyphaeon predict` | Site-Level Selection | Fast per-codon LRT & selection rate prediction ($>10,000\times$ faster than MLE). |
+| `hyphaeon meme` | Site-Level Selection | Fast per-codon LRT & selection rate prediction ($>10,000\times$ faster than MLE). |
 | `hyphaeon evaluate` | MEME Concordance | Pooled ROC-AUC, LRT correlations, PPV, and FPR for folders or a single matched gene. |
 | `hyphaeon epistasis` | 3D Epistatic Sectors | Co-selection networks, hypergeometric tree overlaps, and 3D contact recovery. |
 | `hyphaeon dms` | Digital DMS | 19-AA in silico perturbation sweeps and Compensated Pathogenic Deviation mapping. |

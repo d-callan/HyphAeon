@@ -2,7 +2,7 @@
 hyphaeon/cli.py
 --------------
 Command-line interface for HyphAeon:
-1. 'predict': Ultra-Fast Neural Inference of Episodic Positive Selection (HyphAeon Transformer)
+1. 'meme': Ultra-Fast Neural Inference of Episodic Positive Selection (HyphAeon Transformer)
 2. 'phenotype' (phylowas): Directional Phenotype-Genotype Association & PARS Signature Extraction
 3. 'epistasis' (essm): Multi-Scale Epistatic Sector Mining (Two-Stage Seed-and-Extend TSE)
 """
@@ -69,7 +69,7 @@ def determine_adaptive_batch_size(num_species: int, total_sites: int, device: to
     calculated_batch = max(1, target_budget_bytes // bytes_per_site)
     return min(total_sites, int(calculated_batch))
 
-def cmd_predict(args):
+def cmd_meme(args):
     if torch.cuda.is_available() and not args.cpu:
         device = torch.device('cuda')
     elif torch.backends.mps.is_available() and not args.cpu:
@@ -711,7 +711,7 @@ def list_models():
         default = " (default)" if v["variant"] == DEFAULT_VARIANT else ""
         print(f"  {v['variant']:15s}  {v['description']}{default}")
     print()
-    print("Use with:  hyphaeon predict -a alignment.fa --model-variant <variant>")
+    print("Use with:  hyphaeon meme -a alignment.fa --model-variant <variant>")
     print(f"Default variant: {DEFAULT_VARIANT}")
 
 def cmd_phenotype(args):
@@ -1097,8 +1097,8 @@ def main():
     )
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
 
-    # 1. Predict Subcommand
-    pred_parser = subparsers.add_parser("predict", help="Run episodic positive selection inference (HyphAeon Transformer)")
+    # 1. MEME Subcommand
+    pred_parser = subparsers.add_parser("meme", help="Run episodic positive selection inference (HyphAeon Transformer)")
     pred_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
     pred_parser.add_argument("-t", "--tree", required=False, default=None, help="Path to Newick/NEXUS phylogenetic tree (optional if embedded)")
     pred_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download). Can also be set via HYPHAEON_WEIGHTS env var.")
@@ -1222,8 +1222,8 @@ def main():
     configure_evaluation_parser(eval_parser)
 
     args = parser.parse_args()
-    if args.command == "predict":
-        cmd_predict(args)
+    if args.command == "meme":
+        cmd_meme(args)
     elif args.command in ["busted", "omnibus", "gene-selection"]:
         cmd_busted(args)
     elif args.command in ["phenotype", "phylowas", "trait"]:

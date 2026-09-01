@@ -17,7 +17,7 @@ tests re-run against them automatically.
 
 ## Scope: neural model only
 
-This suite covers **only `hyphaeon predict`** — the neural model for episodic
+This suite covers **only `hyphaeon meme`** — the neural model for episodic
 positive selection. The other two applications in the package have their tests
 in `tests/methods/`:
 
@@ -231,7 +231,7 @@ every test invocation.
 
 The concordance tests above validate expected model behavior on the repository's
 fixtures. For an ad hoc dataset or a single matched gene, use
-`hyphaeon evaluate` instead. That command consumes existing `hyphaeon predict`
+`hyphaeon evaluate` instead. That command consumes existing `hyphaeon meme`
 CSV and HyPhy MEME JSON files without rerunning either inference tool, pools
 sites across matched genes, and reports ROC-AUC, Pearson and Spearman
 correlations, PPV, FPR, confusion matrices, and per-gene site counts.

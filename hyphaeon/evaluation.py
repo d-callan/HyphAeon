@@ -76,7 +76,7 @@ def _boolean(value: object, label: str, path: Path) -> bool:
 
 
 def load_prediction_csv(path: Path) -> Dict[int, PredictionSite]:
-    """Load site-indexed results written by ``hyphaeon predict``."""
+    """Load site-indexed results written by ``hyphaeon meme``."""
     required = {"site", "hyphaeon_lrt", "p_value", "is_invariable"}
     sites: Dict[int, PredictionSite] = {}
     try:
