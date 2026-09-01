@@ -86,7 +86,7 @@ class TestExampleDatasets:
         out_json = str(tmp_path / "output.json")
         out_csv = str(tmp_path / "output.csv")
         cmd = [
-            sys.executable, "-m", "axomeme.cli",
+            sys.executable, "-m", "hyphaeon.cli",
             "predict",
             "-a", fa,
             "-t", nwk,
@@ -118,7 +118,7 @@ def test_batch_size_one_produces_same_structure(examples_dir, dummy_weights, tmp
     out = str(tmp_path / "batched.csv")
 
     cmd = [
-        sys.executable, "-m", "axomeme.cli", "predict",
+        sys.executable, "-m", "hyphaeon.cli", "predict",
         "-a", fa, "-t", nwk, "-w", dummy_weights, "-c", out,
         "--cpu", "--batch-size", "1",
     ]

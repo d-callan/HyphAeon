@@ -35,7 +35,7 @@ DEFAULT_VARIANT = "general"
 DEFAULT_CONFIG_FILENAME = "config.json"
 
 # Local cache directory for downloaded weights
-CACHE_DIR = Path(os.environ.get("AXOMEME_CACHE", str(Path.home() / ".cache" / "axomeme")))
+CACHE_DIR = Path(os.environ.get("HYPHAEON_CACHE") or os.environ.get("AXOMEME_CACHE", str(Path.home() / ".cache" / "hyphaeon")))
 
 
 def list_available_variants() -> List[Dict[str, str]]:

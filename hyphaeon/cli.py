@@ -33,10 +33,11 @@ from .weights import (
 from .phenotype import run_phenotype_association, PRESETS
 from .epistasis import run_epistasis_analysis, run_epistatic_sector_mining
 
-DEFAULT_VARIANT_ENV = os.environ.get("AXOMEME_VARIANT", DEFAULT_VARIANT)
-# If set, AXOMEME_WEIGHTS points to a local weights file and bypasses HF download.
-_local_repo_weights = Path(__file__).resolve().parent.parent / "weights" / "axomeme_v1.pt"
-DEFAULT_WEIGHTS_ENV = os.environ.get("AXOMEME_WEIGHTS", str(_local_repo_weights) if _local_repo_weights.exists() else None)
+DEFAULT_VARIANT_ENV = os.environ.get("HYPHAEON_VARIANT") or os.environ.get("AXOMEME_VARIANT", DEFAULT_VARIANT)
+
+# Default to package model.safetensors if it exists, otherwise check HYPHAEON_WEIGHTS / AXOMEME_WEIGHTS
+_local_repo_weights = Path(__file__).resolve().parent.parent / "model.safetensors"
+DEFAULT_WEIGHTS_ENV = os.environ.get("HYPHAEON_WEIGHTS") or os.environ.get("AXOMEME_WEIGHTS", str(_local_repo_weights) if _local_repo_weights.exists() else None)
 
 def ensure_parent_directory(path):
     if path:
