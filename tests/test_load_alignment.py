@@ -1,4 +1,4 @@
-"""Unit tests for load_alignment_and_tree in axomeme.dataset."""
+"""Unit tests for load_alignment_and_tree in hyphaeon.dataset."""
 import numpy as np
 import pytest
 import torch

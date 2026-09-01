@@ -1,6 +1,6 @@
 """
 attribution.py:
-Mechanistic Feature Attribution Engine for HyphAeon / AxoMEME.
+Mechanistic Feature Attribution Engine for HyphAeon / HyphAeon.
 Answers two core biological questions for positively selected codons:
   1. 'Which species & mutations drive the selection signal?': Single-taxon counterfactual sensitivity (Delta-LRT)
      and percentage of total selection evidence explained.

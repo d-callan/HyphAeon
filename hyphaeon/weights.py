@@ -1,7 +1,7 @@
 """
-axomeme/weights.py
+hyphaeon/weights.py
 ------------------
-Handles discovery, download, and caching of AxoMEME model weights from Hugging Face.
+Handles discovery, download, and caching of HyphAeon model weights from Hugging Face.
 
 Weights are hosted at https://huggingface.co/datamonkey/axomeme and that repo is
 the source of truth. On first use, weights are downloaded and cached locally
@@ -35,7 +35,7 @@ DEFAULT_VARIANT = "general"
 DEFAULT_CONFIG_FILENAME = "config.json"
 
 # Local cache directory for downloaded weights
-CACHE_DIR = Path(os.environ.get("HYPHAEON_CACHE") or os.environ.get("AXOMEME_CACHE", str(Path.home() / ".cache" / "hyphaeon")))
+CACHE_DIR = Path(os.environ.get("HYPHAEON_CACHE", str(Path.home() / ".cache" / "hyphaeon")))
 
 
 def list_available_variants() -> List[Dict[str, str]]:
@@ -115,7 +115,7 @@ def resolve_weights_path(
         pass
 
     # 4. Download from HF
-    print(f"[*] Downloading AxoMEME weights ({v} variant) from Hugging Face...")
+    print(f"[*] Downloading HyphAeon weights ({v} variant) from Hugging Face...")
     try:
         downloaded = hf_hub_download(
             repo_id=HF_REPO_ID,

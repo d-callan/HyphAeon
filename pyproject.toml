@@ -35,7 +35,6 @@ model_eval = ["pytest>=7.0", "scikit-learn>=1.0"]
 
 [project.scripts]
 hyphaeon = "hyphaeon.cli:main"
-axomeme = "hyphaeon.cli:main"
 
 [tool.setuptools]
 packages = ["hyphaeon"]
