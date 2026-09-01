@@ -740,6 +740,7 @@ def cmd_phenotype(args):
             trait_col=getattr(args, "trait_col", None),
             species_col=getattr(args, "species_col", None),
             continuous=getattr(args, "continuous", False),
+            permulations=getattr(args, "permulations", 0),
             min_taxa_per_site=getattr(args, "min_taxa", 4),
             alpha=getattr(args, "alpha", 0.05),
             cpu=getattr(args, "cpu", False)
@@ -758,6 +759,9 @@ def cmd_phenotype(args):
     print(f"   Target Trait: {meta['description']}")
     print(f"   Taxa: {res['taxa_count']} (Foreground: {meta.get('foreground_count', 'N/A')}) | Codon Sites: {res['codon_count']}")
     print(f"   Spectral Energy (Psi): {res['spectral_energy']:.4f} | Normalized Spectral Ratio: {res['norm_spectral_ratio']:.4f}")
+    if res.get("permulations_count", 0) > 0:
+        p_str = f"{res['gene_p_value_perm']:.4e}" if res['gene_p_value_perm'] is not None else "N/A"
+        print(f"   Phylogenetic Permulations: {res['permulations_count']} (Gene Empirical p = {p_str})")
     print(f"   Significant Sites (FDR q <= {args.alpha}): {res['significant_sites_count']}")
     print(f"   Compact PARS Signature: {res['compact_pars_signature']}")
     print("=" * 88)
@@ -1129,6 +1133,7 @@ def main():
     pheno_parser.add_argument("-tc", "--trait-col", help="Name of the trait column in phenotype file")
     pheno_parser.add_argument("-sc", "--species-col", help="Name of the species/taxa column in phenotype file")
     pheno_parser.add_argument("--continuous", action="store_true", help="Treat trait values as continuous phylogenetic contrasts")
+    pheno_parser.add_argument("--permulations", type=int, default=0, help="Number of Brownian motion phylogenetic permulations for empirical p-values (RERconverge null model; default: 0 / parametric)")
     pheno_parser.add_argument("--min-taxa", type=int, default=4, help="Minimum sequenced taxa required per site")
     pheno_parser.add_argument("--alpha", type=float, default=0.05, help="FDR significance threshold")
     pheno_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")

@@ -269,6 +269,79 @@ def resolve_phenotype_vector(
 
     raise ValueError("Must provide one of --preset, --phenotype-file, or --foreground.")
 
+
+def compute_phylogenetic_covariance(tree: Phylo.BaseTree.Tree, taxa: List[str]) -> np.ndarray:
+    """
+    Computes the phylogenetic variance-covariance matrix V (Saputra et al. 2021):
+    V[i, j] = shared patristic distance from root to MRCA(taxon_i, taxon_j).
+    """
+    M = len(taxa)
+    V = np.zeros((M, M), dtype=np.float64)
+    root = tree.root
+    root_dists = {t.name: tree.distance(root, t) for t in tree.get_terminals()}
+
+    for i in range(M):
+        t1 = tree.find_any(name=taxa[i])
+        for j in range(i, M):
+            t2 = tree.find_any(name=taxa[j])
+            if i == j:
+                V[i, i] = root_dists.get(taxa[i], 1.0)
+            elif t1 is not None and t2 is not None:
+                mrca = tree.common_ancestor(t1, t2)
+                shared_d = tree.distance(root, mrca)
+                V[i, j] = shared_d
+                V[j, i] = shared_d
+    return V
+
+
+def generate_permulations(
+    original_y: np.ndarray,
+    tree: Phylo.BaseTree.Tree,
+    taxa: List[str],
+    n_perm: int = 1000,
+    seed: int = 42
+) -> np.ndarray:
+    """
+    Generates n_perm phylogenetic permulations preserving the tree covariance structure
+    under Brownian motion (Saputra et al. 2021 / RERconverge null model).
+
+    - For binary phenotypes: Uses the threshold liability model, setting the top-K
+      largest simulated liability scores to 1.0 (matching exact foreground count K).
+    - For continuous phenotypes: Uses rank-matching transformation, sorting the simulated
+      Brownian motion vector and mapping back to the exact empirical values.
+
+    Returns:
+        np.ndarray of shape (n_perm, len(taxa))
+    """
+    np.random.seed(seed)
+    M = len(taxa)
+    V = compute_phylogenetic_covariance(tree, taxa)
+
+    # Cholesky factorization with tiny ridge for numerical stability
+    L_chol = np.linalg.cholesky(V + 1e-7 * np.eye(M))
+
+    # Simulate Brownian motion paths: shape (M, n_perm)
+    Z = np.dot(L_chol, np.random.randn(M, n_perm))
+
+    unique_vals = np.unique(original_y)
+    is_binary = len(unique_vals) == 2 and set(unique_vals).issubset({0, 1, 0.0, 1.0})
+
+    perm_matrix = np.zeros((n_perm, M), dtype=float)
+
+    if is_binary:
+        k_foreground = int(np.sum(original_y > 0))
+        for p in range(n_perm):
+            top_k_idx = np.argsort(Z[:, p])[-k_foreground:]
+            perm_matrix[p, top_k_idx] = 1.0
+    else:
+        sorted_orig = np.sort(original_y)
+        for p in range(n_perm):
+            ranks = np.argsort(np.argsort(Z[:, p]))
+            perm_matrix[p] = sorted_orig[ranks]
+
+    return perm_matrix
+
+
 def run_phenotype_association(
     alignment_path: str,
     tree_path: Optional[str] = None,
@@ -281,6 +354,7 @@ def run_phenotype_association(
     trait_col: Optional[str] = None,
     species_col: Optional[str] = None,
     continuous: bool = False,
+    permulations: int = 0,
     min_taxa_per_site: int = 4,
     alpha: float = 0.05,
     cpu: bool = False,
@@ -358,6 +432,26 @@ def run_phenotype_association(
 
     a_np = a_tensor.squeeze(-1).numpy() # [L, N] amino acid token matrix
 
+    # 6b. Vectorized Phylogenetic Permulations (Saputra et al. 2021 / RERconverge null model)
+    null_rhos = None
+    gene_p_perm = None
+    if permulations > 0 and tree_obj is not None:
+        try:
+            Y_perms = generate_permulations(y, tree_obj, taxa, n_perm=permulations) # [P, N]
+            norm_y_perms = np.linalg.norm(Y_perms, axis=1) # [P]
+            
+            # Site-level null correlations: [L, P]
+            norm_leaf_mat = np.linalg.norm(leaf_attr, axis=1, keepdims=True) # [L, 1]
+            null_rhos = (leaf_attr @ Y_perms.T) / (norm_leaf_mat @ norm_y_perms[None, :] + 1e-15)
+            
+            # Gene-level null spectral energies: [P]
+            null_projs = (leaf_attr @ Y_perms.T) / (norm_y_perms[None, :] + 1e-15)
+            null_spectral_energies = np.linalg.norm(null_projs, axis=0)
+            gene_p_perm = float((1.0 + np.sum(null_spectral_energies >= spectral_energy)) / (1.0 + permulations))
+        except Exception as e:
+            null_rhos = None
+            gene_p_perm = None
+
     # 7. Site-Level Transformer Attribution Associations
     site_results = []
     for s in range(L):
@@ -370,10 +464,18 @@ def run_phenotype_association(
         if norm_a > 0 and N_valid >= min_taxa_per_site:
             rho = float(np.dot(a_s, y) / (norm_a * np.linalg.norm(y) + 1e-15))
             
-            # Continuous Attribution Student's t-statistic
+            # Continuous Attribution Student's t-statistic (Parametric Null)
             df = max(1, N_valid - 2)
             t_stat = rho * np.sqrt(df / max(1e-15, 1.0 - rho**2))
-            p_assoc = float(stats.t.sf(t_stat, df=df))
+            p_assoc_parametric = float(stats.t.sf(t_stat, df=df))
+            
+            # Empirical Phylogenetic Permulation p-value
+            if null_rhos is not None:
+                p_assoc_perm = float((1.0 + np.sum(null_rhos[s] >= rho)) / (1.0 + permulations))
+                p_assoc = p_assoc_perm
+            else:
+                p_assoc_perm = None
+                p_assoc = p_assoc_parametric
             
             lrt_val = float(lrts[s])
             p_lrt = float(pvals[s])
@@ -416,6 +518,8 @@ def run_phenotype_association(
                 "association_rho": rho,
                 "p_value": p_combined,
                 "p_assoc": p_assoc,
+                "p_assoc_parametric": p_assoc_parametric,
+                "p_assoc_perm": p_assoc_perm,
                 "score": score,
                 "foreground_freq_pct": fg_freq,
                 "background_freq_pct": bg_freq
@@ -545,6 +649,8 @@ def run_phenotype_association(
         "score_track_b": score_track_b,
         "dual_track_composite": dual_track_composite,
         "compact_pars_signature": compact_pars,
+        "permulations_count": permulations if null_rhos is not None else 0,
+        "gene_p_value_perm": gene_p_perm,
         "significant_sites_count": len(sig_trait_sites),
         "coselection_pairs_count": len(coselection_pairs),
         "trait_sectors_count": len(trait_sectors),

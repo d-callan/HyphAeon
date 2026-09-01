@@ -294,3 +294,80 @@ class TestPhenotypeCLI:
         assert "site" in df.columns
         assert "p_value" in df.columns
         assert len(df) == len(data["sites"])
+
+
+# ---------------------------------------------------------------------------
+# Permulations — Brownian motion phylogenetic null model
+# ---------------------------------------------------------------------------
+
+class TestPermulations:
+    def test_compute_phylogenetic_covariance_structure(self):
+        import io
+        from Bio import Phylo
+        from hyphaeon.phenotype import compute_phylogenetic_covariance, generate_permulations
+
+        nwk = "(((A:0.1,B:0.1):0.1,C:0.2):0.2,(D:0.3,E:0.3):0.1);"
+        tree = Phylo.read(io.StringIO(nwk), "newick")
+        taxa = ["A", "B", "C", "D", "E"]
+
+        V = compute_phylogenetic_covariance(tree, taxa)
+        assert V.shape == (5, 5)
+        # Symmetry
+        np.testing.assert_allclose(V, V.T)
+        # Shared distance between A and B should be greater than between A and D
+        assert V[0, 1] > V[0, 3]
+
+    def test_generate_permulations_binary(self):
+        import io
+        from Bio import Phylo
+        from hyphaeon.phenotype import generate_permulations
+
+        nwk = "((A:0.1,B:0.1):0.2,(C:0.2,D:0.2):0.1);"
+        tree = Phylo.read(io.StringIO(nwk), "newick")
+        taxa = ["A", "B", "C", "D"]
+        y_binary = np.array([1.0, 1.0, 0.0, 0.0])
+
+        perms = generate_permulations(y_binary, tree, taxa, n_perm=50, seed=123)
+        assert perms.shape == (50, 4)
+        # Each permulation must preserve exact foreground count
+        for p in range(50):
+            assert np.sum(perms[p] == 1.0) == 2
+            assert np.sum(perms[p] == 0.0) == 2
+
+    def test_generate_permulations_continuous(self):
+        import io
+        from Bio import Phylo
+        from hyphaeon.phenotype import generate_permulations
+
+        nwk = "((A:0.1,B:0.1):0.2,(C:0.2,D:0.2):0.1);"
+        tree = Phylo.read(io.StringIO(nwk), "newick")
+        taxa = ["A", "B", "C", "D"]
+        y_cont = np.array([10.5, 5.2, -1.3, 0.0])
+
+        perms = generate_permulations(y_cont, tree, taxa, n_perm=20, seed=456)
+        assert perms.shape == (20, 4)
+        # Each permulation must preserve exact set of values
+        sorted_orig = np.sort(y_cont)
+        for p in range(20):
+            np.testing.assert_allclose(np.sort(perms[p]), sorted_orig)
+
+    def test_run_phenotype_association_with_permulations(self, examples_dir, dummy_weights):
+        fa = os.path.join(examples_dir, "Smc6.fasta")
+        nwk = os.path.join(examples_dir, "Smc6.nwk")
+
+        res = run_phenotype_association(
+            alignment_path=fa,
+            tree_path=nwk,
+            weights_path=dummy_weights,
+            foreground="homSap*,panTro*,panPan*",
+            permulations=50,
+            cpu=True,
+        )
+        assert res["permulations_count"] == 50
+        assert "gene_p_value_perm" in res
+        assert len(res["sites"]) > 0
+        first_site = res["sites"][0]
+        assert "p_assoc_perm" in first_site
+        assert first_site["p_assoc_perm"] is not None
+        assert 0.0 <= first_site["p_assoc_perm"] <= 1.0
+
