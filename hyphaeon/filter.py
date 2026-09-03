@@ -115,6 +115,7 @@ def run_alignment_filter(
     max_species: Optional[int] = None,
     device: Optional[torch.device] = None,
     progress: bool = True,
+    use_tn93: bool = False,
 ) -> Dict[str, Any]:
     """
     Executes automated alignment quality control, artifact detection,
@@ -130,7 +131,7 @@ def run_alignment_filter(
     
     # 2. Load Alignment and Tree
     c_tensor, a_tensor, d_mat, z_coords, inv_mask, taxa, L = load_alignment_and_tree(
-        alignment_path, tree_path, max_species=max_species, prune_duplicates=True
+        alignment_path, tree_path, max_species=max_species, prune_duplicates=True, use_tn93=use_tn93
     )
     raw_seqs = parse_alignment_sequences(alignment_path)
     N = len(taxa)
@@ -293,9 +294,9 @@ def run_alignment_filter(
                 tmp_clean_f.write(f">{t}\n{''.join(seq_chars)}\n")
             tmp_clean_fasta = tmp_clean_f.name
             
-        effective_tree = tree_path if tree_path is not None else alignment_path
+        effective_tree = tree_path if (tree_path is not None or use_tn93) else alignment_path
         c_cl, a_cl, d_cl, z_cl, inv_cl, taxa_cl, L_cl = load_alignment_and_tree(
-            tmp_clean_fasta, effective_tree, max_species=max_species, prune_duplicates=True
+            tmp_clean_fasta, effective_tree, max_species=max_species, prune_duplicates=True, use_tn93=use_tn93
         )
         tree_cache_cl = model.precompute_tree_cache(d_cl.to(device), z_cl.to(device))
         

@@ -538,7 +538,8 @@ def run_epistatic_analysis(
     skip_dms: bool = False,
     cpu: bool = False,
     batch_size: int = 64,
-    progress: bool = True
+    progress: bool = True,
+    use_tn93: bool = False
 ) -> Dict[str, Any]:
     """
     Executes pure Transformer Attribution Co-Selection Networks, Epistatic Sector Mining,
@@ -549,7 +550,7 @@ def run_epistatic_analysis(
 
     # 2. Load Alignment and Tree
     c_tensor, a_tensor, d_mat, z_coords, inv_mask, taxa, L = load_alignment_and_tree(
-        alignment_path, tree_path, prune_duplicates=True
+        alignment_path, tree_path, prune_duplicates=True, use_tn93=use_tn93
     )
     N = len(taxa)
 
@@ -618,7 +619,8 @@ def run_digital_dms_analysis(
     focal_taxon: Optional[str] = None,
     cpu: bool = False,
     batch_size: int = 64,
-    progress: bool = True
+    progress: bool = True,
+    use_tn93: bool = False
 ) -> Dict[str, Any]:
     """
     Executes standalone in silico Selection Deep Mutational Scanning (Digital DMS / ESSM)
@@ -629,7 +631,7 @@ def run_digital_dms_analysis(
 
     # 2. Load Alignment and Tree
     c_tensor, a_tensor, d_mat, z_coords, inv_mask, taxa, L = load_alignment_and_tree(
-        alignment_path, tree_path, prune_duplicates=True
+        alignment_path, tree_path, prune_duplicates=True, use_tn93=use_tn93
     )
     N = len(taxa)
 

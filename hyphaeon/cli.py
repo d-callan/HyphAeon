@@ -61,7 +61,10 @@ def cmd_meme(args):
     print(f"[*] Loading HyphAeon model from: {weights_path}")
 
     print(f"[*] Parsing Alignment: {args.alignment}")
-    if args.tree:
+    use_tn93 = getattr(args, "no_tree", False) or getattr(args, "use_tn93", False) or (getattr(args, "tree", None) == "tn93")
+    if use_tn93:
+        print(f"[*] Tree argument skipped; estimating pairwise distances directly via TN93...")
+    elif args.tree:
         print(f"[*] Parsing Tree:      {args.tree}")
     else:
         print(f"[*] Tree argument not provided; extracting tree from alignment...")
@@ -71,7 +74,8 @@ def cmd_meme(args):
         prune_dups = not getattr(args, "no_prune_duplicates", False)
         c, a, d, z, inv, taxa, L, tree_cache = prepare_alignment(
             args.alignment, args.tree, model=model, device=device,
-            max_species=args.max_species, prune_duplicates=prune_dups
+            max_species=args.max_species, prune_duplicates=prune_dups,
+            use_tn93=use_tn93
         )
     except Exception as e:
         print(f"\n[!] Error loading alignment and tree: {e}")
@@ -183,7 +187,8 @@ def cmd_meme(args):
                     cleaned_temp_path = tmp_fa.name
                     
                 c_cl, a_cl, d_cl, z_cl, inv_cl, taxa_cl, L_cl = load_alignment_and_tree(
-                    cleaned_temp_path, args.tree, max_species=args.max_species, prune_duplicates=prune_dups
+                    cleaned_temp_path, args.tree, max_species=args.max_species, prune_duplicates=prune_dups,
+                    use_tn93=use_tn93
                 )
                 lrts_cl = predict_site_lrts(model, c_cl, a_cl, d_cl, z_cl, inv_cl,
                                             tree_cache=tree_cache, batch_size=batch_size, device=device,
@@ -388,10 +393,11 @@ def cmd_busted(args):
         print(f"{'#':<4} {'Alignment':<20} {'Taxa':<6} {'Sites':<7} {'p_ACAT':<11} {'Prob':<8} {'w3':<8} {'Time':<8} {'Verdict'}")
         print("=" * 92)
 
+    use_tn93 = getattr(args, "no_tree", False) or getattr(args, "use_tn93", False) or (getattr(args, "tree", None) == "tn93")
     for file_idx, aln_path in enumerate(input_files, 1):
         gene_id = os.path.splitext(os.path.basename(aln_path))[0]
         tree_path = args.tree
-        if tree_path is None:
+        if not use_tn93 and tree_path is None:
             # Auto-locate matching tree
             if tree_dir:
                 cand = os.path.join(tree_dir, os.path.basename(aln_path) + tree_suffix)
@@ -407,7 +413,8 @@ def cmd_busted(args):
         t0 = time.time()
         try:
             c, a, d, z, inv, taxa, L = load_alignment_and_tree(
-                aln_path, tree_path, max_species=args.max_species, prune_duplicates=prune_dups
+                aln_path, tree_path, max_species=args.max_species, prune_duplicates=prune_dups,
+                use_tn93=use_tn93
             )
         except Exception as e:
             if not is_batch:
@@ -589,9 +596,12 @@ def cmd_phenotype(args):
     tree_path = os.path.expanduser(args.tree) if getattr(args, "tree", None) else None
     weights_path = os.path.expanduser(args.weights) if getattr(args, "weights", None) else DEFAULT_WEIGHTS_ENV
 
+    use_tn93 = getattr(args, "no_tree", False) or getattr(args, "use_tn93", False) or (getattr(args, "tree", None) == "tn93")
     print(f"[*] Executing Directional Phenotype-Genotype Mapping (PhyloWAS)...")
     print(f"[*] Alignment: {alignment_path}")
-    if tree_path:
+    if use_tn93:
+        print(f"[*] Tree:      (skipped; estimating pairwise distances via TN93)")
+    elif tree_path:
         print(f"[*] Tree:      {tree_path}")
     else:
         print(f"[*] Tree:      (extracting from alignment)")
@@ -613,7 +623,8 @@ def cmd_phenotype(args):
             permulations=getattr(args, "permulations", 0),
             min_taxa_per_site=getattr(args, "min_taxa", 4),
             alpha=getattr(args, "alpha", 0.05),
-            cpu=getattr(args, "cpu", False)
+            cpu=getattr(args, "cpu", False),
+            use_tn93=use_tn93
         )
     except Exception as e:
         print(f"\n[!] Phenotype Association Error: {e}")
@@ -673,9 +684,12 @@ def cmd_phenotype(args):
         write_csv(args.csv, sites)
 
 def cmd_epistasis(args):
+    use_tn93 = getattr(args, "no_tree", False) or getattr(args, "use_tn93", False) or (getattr(args, "tree", None) == "tn93")
     print(f"[*] Executing Phylogenetic Branch Attribution, Co-Selection Networks & Selection DMS (ESSM)...")
     print(f"[*] Alignment: {args.alignment}")
-    if args.tree:
+    if use_tn93:
+        print(f"[*] Tree:      (skipped; estimating pairwise distances via TN93)")
+    elif args.tree:
         print(f"[*] Tree:      {args.tree}")
     else:
         print(f"[*] Tree:      (extracting from alignment)")
@@ -694,7 +708,8 @@ def cmd_epistasis(args):
             min_clique_size=getattr(args, "min_clique_size", 3),
             max_overlap=getattr(args, "max_overlap", 0.50),
             run_dms=not getattr(args, "no_dms", False),
-            cpu=getattr(args, "cpu", False)
+            cpu=getattr(args, "cpu", False),
+            use_tn93=use_tn93
         )
     except Exception as e:
         print(f"\n[!] Epistasis / ESSM Error: {e}")
@@ -784,9 +799,12 @@ def cmd_epistasis(args):
         print(f"[✓] Co-selection network GraphML written to: {args.graphml}")
 
 def cmd_dms(args):
+    use_tn93 = getattr(args, "no_tree", False) or getattr(args, "use_tn93", False) or (getattr(args, "tree", None) == "tn93")
     print(f"[*] Executing in silico Selection Deep Mutational Scanning (Digital DMS / ESSM)...")
     print(f"[*] Alignment: {args.alignment}")
-    if args.tree:
+    if use_tn93:
+        print(f"[*] Tree:      (skipped; estimating pairwise distances via TN93)")
+    elif args.tree:
         print(f"[*] Tree:      {args.tree}")
     else:
         print(f"[*] Tree:      (extracting from alignment)")
@@ -801,7 +819,8 @@ def cmd_dms(args):
             variant=getattr(args, "variant", None),
             focal_taxon=getattr(args, "focal_taxon", None),
             cpu=getattr(args, "cpu", False),
-            progress=True
+            progress=True,
+            use_tn93=use_tn93
         )
     except Exception as e:
         print(f"\n[!] Digital DMS / ESSM Error: {e}")
@@ -898,7 +917,10 @@ def cmd_filter(args):
     
     print("[*] Executing Automated Alignment Error Detection & Surgical Masking...")
     print(f"[*] Alignment: {args.alignment}")
-    if args.tree:
+    use_tn93 = getattr(args, "no_tree", False) or getattr(args, "use_tn93", False) or (getattr(args, "tree", None) == "tn93")
+    if use_tn93:
+        print(f"[*] Tree:      (skipped; estimating pairwise distances via TN93)")
+    elif args.tree:
         print(f"[*] Tree:      {args.tree}")
         
     res = run_alignment_filter(
@@ -915,7 +937,8 @@ def cmd_filter(args):
         min_run_length=args.min_run_length,
         batch_size=getattr(args, "batch_size", None),
         max_species=getattr(args, "max_species", None),
-        device=get_device(cpu=getattr(args, "cpu", False))
+        device=get_device(cpu=getattr(args, "cpu", False)),
+        use_tn93=use_tn93
     )
     
     print("\n" + "=" * 80)
@@ -958,7 +981,9 @@ def main():
     # 1. MEME Subcommand
     pred_parser = subparsers.add_parser("meme", aliases=["predict", "site-selection"], help="Run episodic positive selection inference (HyphAeon Transformer)")
     pred_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
-    pred_parser.add_argument("-t", "--tree", required=False, default=None, help="Path to Newick/NEXUS phylogenetic tree (optional if embedded)")
+    pred_parser.add_argument("-t", "--tree", required=False, default=None, help="Path to Newick/NEXUS phylogenetic tree (optional if embedded, or if --no-tree/--use-tn93 is set)")
+    pred_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93")
+    pred_parser.add_argument("--use-tn93", action="store_true", help="Estimate pairwise distances directly from alignment using TN93 (skips tree)")
     pred_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download). Can also be set via HYPHAEON_WEIGHTS env var.")
     pred_parser.add_argument("--model-variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from Hugging Face (default: {DEFAULT_VARIANT})")
     pred_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: auto-selected; very large values may be capped to a hardware-safe threshold to prevent GPU OOM)")
@@ -977,7 +1002,9 @@ def main():
     # 2. Phenotype Subcommand (PhyloWAS)
     pheno_parser = subparsers.add_parser("phenotype", aliases=["phylowas", "trait"], help="Run directional phenotype-genotype association & PARS signature extraction")
     pheno_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
-    pheno_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded)")
+    pheno_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded, or if --no-tree/--use-tn93 is set)")
+    pheno_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93")
+    pheno_parser.add_argument("--use-tn93", action="store_true", help="Estimate pairwise distances directly from alignment using TN93 (skips tree)")
     pheno_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
     pheno_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from HF (default: {DEFAULT_VARIANT})")
     pheno_parser.add_argument("-p", "--preset", choices=list(PRESETS.keys()), help=f"Curated phenotype preset: {', '.join(PRESETS.keys())}")
@@ -997,7 +1024,9 @@ def main():
     # 3. Epistasis Subcommand (Branch Co-Selection & Sectors)
     epi_parser = subparsers.add_parser("epistasis", aliases=["coselection", "sector", "network"], help="Run phylogenetic branch co-selection and epistatic sector mining")
     epi_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
-    epi_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded)")
+    epi_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded, or if --no-tree/--use-tn93 is set)")
+    epi_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93")
+    epi_parser.add_argument("--use-tn93", action="store_true", help="Estimate pairwise distances directly from alignment using TN93 (skips tree)")
     epi_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
     epi_parser.add_argument("--focal-taxon", help="Focal taxon for in silico Selection DMS sweep (default: auto/consensus)")
     epi_parser.add_argument("--min-sim", type=float, default=0.30, help="Pairwise cosine similarity threshold for co-selection edges")
@@ -1015,7 +1044,9 @@ def main():
     # 4. Digital DMS / ESSM Subcommand
     dms_parser = subparsers.add_parser("dms", aliases=["essm", "digital-dms"], help="Run in silico Selection Deep Mutational Scanning (Digital DMS / ESSM)")
     dms_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
-    dms_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded)")
+    dms_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded, or if --no-tree/--use-tn93 is set)")
+    dms_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93")
+    dms_parser.add_argument("--use-tn93", action="store_true", help="Estimate pairwise distances directly from alignment using TN93 (skips tree)")
     dms_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
     dms_parser.add_argument("--focal-taxon", help="Focal taxon for in silico Selection DMS sweep (default: auto/consensus)")
     dms_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
@@ -1027,7 +1058,9 @@ def main():
     busted_parser.add_argument("-a", "--alignment", default=None, help="Path to single in-frame codon alignment or comma-separated list")
     busted_parser.add_argument("-d", "--dir", default=None, help="Path to directory containing alignment files for high-throughput batch processing")
     busted_parser.add_argument("--pattern", default="*.aln,*.fa,*.fasta,*.nex,*.fna", help="Comma-separated glob patterns to match in --dir (default: *.aln,*.fa,*.fasta,*.nex,*.fna)")
-    busted_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded)")
+    busted_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded, or if --no-tree/--use-tn93 is set)")
+    busted_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93")
+    busted_parser.add_argument("--use-tn93", action="store_true", help="Estimate pairwise distances directly from alignment using TN93 (skips tree)")
     busted_parser.add_argument("--tree-suffix", default=".raxml.bestTree", help="Suffix to append to alignment filename to locate matching tree (default: .raxml.bestTree)")
     busted_parser.add_argument("--tree-dir", default=None, help="Optional directory containing corresponding phylogenetic trees")
     busted_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
@@ -1054,7 +1087,9 @@ def main():
     # 7. Alignment Filtering / Surgical Masking Subcommand
     filter_parser = subparsers.add_parser("filter", aliases=["mask", "qc", "clean"], help="Run automated alignment quality control, spatial artifact detection, and surgical masking")
     filter_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
-    filter_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded)")
+    filter_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded, or if --no-tree/--use-tn93 is set)")
+    filter_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93")
+    filter_parser.add_argument("--use-tn93", action="store_true", help="Estimate pairwise distances directly from alignment using TN93 (skips tree)")
     filter_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
     filter_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from HF (default: {DEFAULT_VARIANT})")
     filter_parser.add_argument("-o", "--output", help="Path to write the cleaned, surgically masked alignment (FASTA format)")

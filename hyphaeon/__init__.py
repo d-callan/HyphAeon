@@ -4,7 +4,7 @@ Phenotype-Genotype Association Mapping, and Epistatic Sector Mining.
 """
 
 from .model import PhyloAxialTransformer
-from .dataset import load_alignment_and_tree, parse_alignment_sequences
+from .dataset import load_alignment_and_tree, parse_alignment_sequences, compute_tn93_distance_matrix
 from .phenotype import run_phenotype_association, resolve_phenotype_vector, PRESETS
 from .epistasis import (
     run_epistasis_analysis,
@@ -21,6 +21,7 @@ __version__ = "1.0.0"
 __all__ = [
     "PhyloAxialTransformer",
     "load_alignment_and_tree",
+    "compute_tn93_distance_matrix",
     "parse_alignment_sequences",
     "run_phenotype_association",
     "resolve_phenotype_vector",

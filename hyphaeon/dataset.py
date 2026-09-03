@@ -13,6 +13,7 @@ import shutil
 import tempfile
 import subprocess
 import re
+import csv
 from io import StringIO
 from typing import Optional, Tuple, Dict, List
 
@@ -439,9 +440,97 @@ def prune_identical_sequences(seq_dict: Dict[str, str], taxa: List[str]) -> Tupl
     num_pruned = len(taxa) - len(unique_taxa)
     return unique_taxa, dup_map, num_pruned
 
-def load_alignment_and_tree(fa_path: str, nwk_path: Optional[str] = None, max_species: Optional[int] = None, prune_duplicates: bool = True):
+def compute_tn93_distance_matrix(seq_dict: Dict[str, str], taxa: List[str], fa_path: Optional[str] = None) -> np.ndarray:
+    """
+    Computes pairwise Tamura-Nei 93 (TN93) genetic distance matrix directly from sequences.
+    Prefers the high-speed compiled 'tn93' C binary if available in PATH, falling back
+    to the Python 'tn93' package (from tn93.tn93 import TN93).
+    """
+    n = len(taxa)
+    dist_mat = np.zeros((n, n), dtype=np.float32)
+    if n <= 1:
+        return dist_mat
+
+    taxa_idx = {t: i for i, t in enumerate(taxa)}
+    tn93_bin = shutil.which("tn93")
+    used_binary = False
+
+    if tn93_bin:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_fa = os.path.join(tmpdir, "subset.fa")
+            out_csv = os.path.join(tmpdir, "distances.csv")
+            with open(tmp_fa, "w") as f:
+                for t in taxa:
+                    f.write(f">{t}\n{seq_dict[t]}\n")
+            cmd = [tn93_bin, "-t", "1.0", "-l", "1", "-q", "-o", out_csv, tmp_fa]
+            try:
+                subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if os.path.exists(out_csv) and os.path.getsize(out_csv) > 0:
+                    with open(out_csv, "r") as cf:
+                        reader = csv.DictReader(cf)
+                        for row in reader:
+                            id1 = row.get("ID1")
+                            id2 = row.get("ID2")
+                            d_str = row.get("Distance")
+                            if id1 in taxa_idx and id2 in taxa_idx and d_str is not None:
+                                try:
+                                    d_val = float(d_str)
+                                    i, j = taxa_idx[id1], taxa_idx[id2]
+                                    dist_mat[i, j] = d_val
+                                    dist_mat[j, i] = d_val
+                                except ValueError:
+                                    pass
+                    used_binary = True
+            except Exception as e:
+                print(f"[!] Warning: tn93 binary execution failed ({e}); falling back to Python TN93.")
+                used_binary = False
+
+    if not used_binary:
+        try:
+            from tn93.tn93 import TN93
+            tn = TN93()
+            for i in range(n):
+                for j in range(i + 1, n):
+                    counts = tn.get_counts(seq_dict[taxa[i]], seq_dict[taxa[j]], "resolve")
+                    nuc_freq = tn.get_nucleotide_frequency(counts)
+                    d = tn.calculate_distance(counts, nuc_freq)
+                    if d is None or d == "-" or d < 0 or np.isnan(d):
+                        d = 1.0
+                    d = float(d)
+                    dist_mat[i, j] = d
+                    dist_mat[j, i] = d
+        except ImportError:
+            raise ImportError(
+                "The 'tn93' tool or python package is required to skip the tree and compute TN93 distances. "
+                "Please install it via 'pip install tn93' or 'pip install hyphaeon[tn93]' "
+                "(or install the tn93 binary from https://github.com/veg/tn93)."
+            )
+
+    # Impute missing/saturated off-diagonal distances with maximum observed distance or 1.0
+    max_d = float(dist_mat.max()) if dist_mat.max() > 0 else 0.1
+    for i in range(n):
+        for j in range(i + 1, n):
+            if dist_mat[i, j] <= 0.0 and seq_dict[taxa[i]] != seq_dict[taxa[j]]:
+                dist_mat[i, j] = 1e-4
+                dist_mat[j, i] = 1e-4
+            elif dist_mat[i, j] <= 0.0 and dist_mat.max() > 0:
+                dist_mat[i, j] = max(1.0, max_d)
+                dist_mat[j, i] = max(1.0, max_d)
+
+    np.fill_diagonal(dist_mat, 0.0)
+    return dist_mat
+
+def load_alignment_and_tree(
+    fa_path: str,
+    nwk_path: Optional[str] = None,
+    max_species: Optional[int] = None,
+    prune_duplicates: bool = True,
+    use_tn93: bool = False
+):
     """
     Parses alignment (FASTA or NEXUS) and phylogenetic tree (from nwk_path or embedded in alignment).
+    If use_tn93 is True (or nwk_path == "tn93"), skips the tree and estimates pairwise
+    evolutionary distances directly from the alignment using TN93.
     Enforces non-zero branch lengths (estimating them via HyPhy if available and missing).
     Automatically prunes identical sequence duplicates and trims tree accordingly if prune_duplicates=True.
     Optionally applies greedy Faith's PD species downsampling if max_species is specified.
@@ -452,110 +541,148 @@ def load_alignment_and_tree(fa_path: str, nwk_path: Optional[str] = None, max_sp
     if not seq_dict:
         raise ValueError(f"Could not parse any sequences from alignment file: '{fa_path}'")
 
-    # 2. Extract or load tree
-    tree_obj = None
-    tree_source_desc = ""
-    if nwk_path is not None:
-        tree_obj = extract_tree_from_string_or_file(nwk_path)
-        if tree_obj is None:
-            raise ValueError(f"Could not parse phylogenetic tree from specified path: '{nwk_path}'")
-        tree_source_desc = f"external file ({nwk_path})"
-    else:
-        # Attempt to find tree embedded in alignment
-        tree_obj = extract_tree_from_string_or_file(fa_path)
-        if tree_obj is None:
-            raise ValueError(
-                f"No tree specified (--tree), and no embedded phylogenetic tree found in alignment '{fa_path}'. "
-                f"Please provide a tree via -t / --tree."
-            )
-        tree_source_desc = f"embedded in alignment ({fa_path})"
+    if use_tn93 or (nwk_path is not None and str(nwk_path).strip().lower() in ("tn93", "none", "skip")):
+        print("[*] Tree skipped: Estimating pairwise sequence distances directly via TN93...")
+        taxa = list(seq_dict.keys())
 
-    # 3. Branch length validation / HyPhy estimation
-    if not has_nonzero_branch_lengths(tree_obj):
-        if shutil.which("hyphy"):
-            print(f"[*] Tree ({tree_source_desc}) has no branch lengths. Estimating via HyPhy (HKY85)...")
-            est_tree = estimate_tree_branch_lengths_hyphy(seq_dict, tree_obj)
-            if est_tree is not None and has_nonzero_branch_lengths(est_tree):
-                tree_obj = est_tree
-                print(f"[✓] HyPhy branch length estimation succeeded.")
-            else:
-                print(f"[!] HyPhy estimation unsuccessful; enforcing minimum positive branch lengths.")
+        # Automated Duplicate Sequence Pruning
+        if prune_duplicates and len(taxa) > 1:
+            unique_taxa, dup_map, num_pruned = prune_identical_sequences(seq_dict, taxa)
+            if num_pruned > 0:
+                print(f"[*] Duplicate Taxon Pruning: Collapsed {num_pruned} identical duplicate sequence(s) ({len(taxa)} -> {len(unique_taxa)} unique haplotypes).")
+                taxa = unique_taxa
+
+        # Sequence length & reading frame validation
+        seq_lengths = {sp: len(seq_dict[sp]) for sp in taxa}
+        unique_lens = set(seq_lengths.values())
+        if len(unique_lens) > 1:
+            print(f"[!] Warning: Unequal sequence lengths detected in alignment: {unique_lens}. Padding shorter sequences with gaps.")
+
+        first_seq = seq_dict[taxa[0]]
+        raw_len = len(first_seq)
+        if raw_len < 3:
+            raise ValueError(f"Alignment sequence length ({raw_len} bp) is less than 1 codon (3 bp).")
+
+        if raw_len % 3 != 0:
+            print(f"[!] Notice: Alignment length ({raw_len} bp) is not divisible by 3. Trimming {raw_len % 3} trailing nucleotide(s).")
+        
+        L = raw_len // 3
+
+        # Fast pre-downsampling for massive sequence collections (N > 300)
+        if max_species is not None and len(taxa) > max_species:
+            stride = max(1, len(taxa) // (max_species * 2))
+            taxa = taxa[::stride][:max_species * 2]
+
+        dist_mat = compute_tn93_distance_matrix(seq_dict, taxa, fa_path=fa_path)
+
+        if max_species is not None and len(taxa) > max_species:
+            dist_mat, taxa = downsample_taxa_faith_pd(dist_mat, taxa, max_species)
+            print(f"[*] Distance Diversity Downsampling: Selected {len(taxa)} taxa maximizing sequence diversity.")
+    else:
+        # 2. Extract or load tree
+        tree_obj = None
+        tree_source_desc = ""
+        if nwk_path is not None:
+            tree_obj = extract_tree_from_string_or_file(nwk_path)
+            if tree_obj is None:
+                raise ValueError(f"Could not parse phylogenetic tree from specified path: '{nwk_path}'")
+            tree_source_desc = f"external file ({nwk_path})"
         else:
-            print(f"[*] Tree ({tree_source_desc}) lacks branch lengths (HyPhy not found); enforcing default positive branch lengths.")
-
-    # Guarantee all branch lengths strictly positive
-    enforce_nonzero_branch_lengths(tree_obj, min_len=1e-4)
-
-    # 4. Match taxa between tree and alignment
-    tree_taxa = [term.name.strip("'\"") for term in tree_obj.get_terminals() if term.name]
-    taxa = [t for t in tree_taxa if t in seq_dict]
-    if not taxa:
-        # Try matching with stripped names
-        seq_keys_clean = {k.strip("'\""): k for k in seq_dict.keys()}
-        taxa = [seq_keys_clean[t] for t in tree_taxa if t in seq_keys_clean]
-        if not taxa:
-            # Try case-insensitive matching
-            seq_keys_lower = {k.strip("'\"").lower(): k for k in seq_dict.keys()}
-            matched_keys = []
-            for t in tree_taxa:
-                t_clean = t.strip("'\"").lower()
-                if t_clean in seq_keys_lower:
-                    matched_keys.append(seq_keys_lower[t_clean])
-            taxa = matched_keys
-            if not taxa:
+            # Attempt to find tree embedded in alignment
+            tree_obj = extract_tree_from_string_or_file(fa_path)
+            if tree_obj is None:
                 raise ValueError(
-                    f"No matching taxa found between tree terminals ({tree_taxa[:5]}...) "
-                    f"and alignment sequences ({list(seq_dict.keys())[:5]}...)."
+                    f"No tree specified (--tree), and no embedded phylogenetic tree found in alignment '{fa_path}'. "
+                    f"Please provide a tree via -t / --tree, or use --no-tree / --use-tn93 to estimate distances via TN93."
                 )
+            tree_source_desc = f"embedded in alignment ({fa_path})"
 
-    dropped_aln = len(seq_dict) - len(taxa)
-    dropped_tree = len(tree_taxa) - len(taxa)
-    if dropped_aln > 0 or dropped_tree > 0:
-        print(f"[*] Taxon Matching: Retained {len(taxa)} shared taxa ({dropped_aln} alignment sequences, {dropped_tree} tree terminals unshared).")
-    else:
-        print(f"[*] Taxon Matching: 100% concordance ({len(taxa)} shared taxa).")
+        # 3. Branch length validation / HyPhy estimation
+        if not has_nonzero_branch_lengths(tree_obj):
+            if shutil.which("hyphy"):
+                print(f"[*] Tree ({tree_source_desc}) has no branch lengths. Estimating via HyPhy (HKY85)...")
+                est_tree = estimate_tree_branch_lengths_hyphy(seq_dict, tree_obj)
+                if est_tree is not None and has_nonzero_branch_lengths(est_tree):
+                    tree_obj = est_tree
+                    print(f"[✓] HyPhy branch length estimation succeeded.")
+                else:
+                    print(f"[!] HyPhy estimation unsuccessful; enforcing minimum positive branch lengths.")
+            else:
+                print(f"[*] Tree ({tree_source_desc}) lacks branch lengths (HyPhy not found); enforcing default positive branch lengths.")
 
-    # Automated Duplicate Sequence & Tree Pruning
-    if prune_duplicates and len(taxa) > 1:
-        unique_taxa, dup_map, num_pruned = prune_identical_sequences(seq_dict, taxa)
-        if num_pruned > 0:
-            print(f"[*] Duplicate Taxon Pruning: Collapsed {num_pruned} identical duplicate sequence(s) ({len(taxa)} -> {len(unique_taxa)} unique haplotypes).")
-            taxa = unique_taxa
+        # Guarantee all branch lengths strictly positive
+        enforce_nonzero_branch_lengths(tree_obj, min_len=1e-4)
 
-    # Sequence length & reading frame validation
-    seq_lengths = {sp: len(seq_dict[sp]) for sp in taxa}
-    unique_lens = set(seq_lengths.values())
-    if len(unique_lens) > 1:
-        print(f"[!] Warning: Unequal sequence lengths detected in alignment: {unique_lens}. Padding shorter sequences with gaps.")
+        # 4. Match taxa between tree and alignment
+        tree_taxa = [term.name.strip("'\"") for term in tree_obj.get_terminals() if term.name]
+        taxa = [t for t in tree_taxa if t in seq_dict]
+        if not taxa:
+            # Try matching with stripped names
+            seq_keys_clean = {k.strip("'\""): k for k in seq_dict.keys()}
+            taxa = [seq_keys_clean[t] for t in tree_taxa if t in seq_keys_clean]
+            if not taxa:
+                # Try case-insensitive matching
+                seq_keys_lower = {k.strip("'\"").lower(): k for k in seq_dict.keys()}
+                matched_keys = []
+                for t in tree_taxa:
+                    t_clean = t.strip("'\"").lower()
+                    if t_clean in seq_keys_lower:
+                        matched_keys.append(seq_keys_lower[t_clean])
+                taxa = matched_keys
+                if not taxa:
+                    raise ValueError(
+                        f"No matching taxa found between tree terminals ({tree_taxa[:5]}...) "
+                        f"and alignment sequences ({list(seq_dict.keys())[:5]}...)."
+                    )
 
-    first_seq = seq_dict[taxa[0]]
-    raw_len = len(first_seq)
-    if raw_len < 3:
-        raise ValueError(f"Alignment sequence length ({raw_len} bp) is less than 1 codon (3 bp).")
+        dropped_aln = len(seq_dict) - len(taxa)
+        dropped_tree = len(tree_taxa) - len(taxa)
+        if dropped_aln > 0 or dropped_tree > 0:
+            print(f"[*] Taxon Matching: Retained {len(taxa)} shared taxa ({dropped_aln} alignment sequences, {dropped_tree} tree terminals unshared).")
+        else:
+            print(f"[*] Taxon Matching: 100% concordance ({len(taxa)} shared taxa).")
 
-    if raw_len % 3 != 0:
-        print(f"[!] Notice: Alignment length ({raw_len} bp) is not divisible by 3. Trimming {raw_len % 3} trailing nucleotide(s).")
-    
-    L = raw_len // 3
-    n_taxa = len(taxa)
+        # Automated Duplicate Sequence & Tree Pruning
+        if prune_duplicates and len(taxa) > 1:
+            unique_taxa, dup_map, num_pruned = prune_identical_sequences(seq_dict, taxa)
+            if num_pruned > 0:
+                print(f"[*] Duplicate Taxon Pruning: Collapsed {num_pruned} identical duplicate sequence(s) ({len(taxa)} -> {len(unique_taxa)} unique haplotypes).")
+                taxa = unique_taxa
 
-    # 5. Fast pre-downsampling for massive sequence collections (N > 300)
-    if max_species is not None and len(taxa) > max_species:
-        # Uniformly stride downsample to 2 * max_species before computing distance matrix
-        stride = max(1, len(taxa) // (max_species * 2))
-        taxa = taxa[::stride][:max_species * 2]
+        # Sequence length & reading frame validation
+        seq_lengths = {sp: len(seq_dict[sp]) for sp in taxa}
+        unique_lens = set(seq_lengths.values())
+        if len(unique_lens) > 1:
+            print(f"[!] Warning: Unequal sequence lengths detected in alignment: {unique_lens}. Padding shorter sequences with gaps.")
 
-    # Compute distance matrix
-    dist_mat = compute_fast_dist_matrix(tree_obj, taxa)
+        first_seq = seq_dict[taxa[0]]
+        raw_len = len(first_seq)
+        if raw_len < 3:
+            raise ValueError(f"Alignment sequence length ({raw_len} bp) is less than 1 codon (3 bp).")
 
-    # If tree branch lengths are raw mutation counts (> 10.0) rather than substitutions per site,
-    # normalize by alignment codon length L to bring distances into standard evolutionary scale
-    if dist_mat.max() > 10.0:
-        dist_mat = dist_mat / L
+        if raw_len % 3 != 0:
+            print(f"[!] Notice: Alignment length ({raw_len} bp) is not divisible by 3. Trimming {raw_len % 3} trailing nucleotide(s).")
+        
+        L = raw_len // 3
+        n_taxa = len(taxa)
 
-    if max_species is not None and len(taxa) > max_species:
-        dist_mat, taxa = downsample_taxa_faith_pd(dist_mat, taxa, max_species)
-        print(f"[*] Faith's PD Species Downsampling: Selected {len(taxa)} taxa maximizing tree diversity.")
+        # 5. Fast pre-downsampling for massive sequence collections (N > 300)
+        if max_species is not None and len(taxa) > max_species:
+            # Uniformly stride downsample to 2 * max_species before computing distance matrix
+            stride = max(1, len(taxa) // (max_species * 2))
+            taxa = taxa[::stride][:max_species * 2]
+
+        # Compute distance matrix
+        dist_mat = compute_fast_dist_matrix(tree_obj, taxa)
+
+        # If tree branch lengths are raw mutation counts (> 10.0) rather than substitutions per site,
+        # normalize by alignment codon length L to bring distances into standard evolutionary scale
+        if dist_mat.max() > 10.0:
+            dist_mat = dist_mat / L
+
+        if max_species is not None and len(taxa) > max_species:
+            dist_mat, taxa = downsample_taxa_faith_pd(dist_mat, taxa, max_species)
+            print(f"[*] Faith's PD Species Downsampling: Selected {len(taxa)} taxa maximizing tree diversity.")
 
     n_taxa = len(taxa)
     mds_coords = compute_mds_coordinates(dist_mat, n_components=4)

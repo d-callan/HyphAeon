@@ -361,7 +361,8 @@ def run_phenotype_association(
     alpha: float = 0.05,
     cpu: bool = False,
     batch_size: int = 64,
-    progress: bool = True
+    progress: bool = True,
+    use_tn93: bool = False
 ) -> Dict[str, Any]:
     """
     Executes directional Phenotype-Genotype association (PhyloWAS) on a codon alignment
@@ -373,11 +374,13 @@ def run_phenotype_association(
 
     # 2. Load Alignment, Tree, and Extract Tree Cache
     c_tensor, a_tensor, d_mat, z_coords, inv_mask, taxa, L = load_alignment_and_tree(
-        alignment_path, tree_path, prune_duplicates=True
+        alignment_path, tree_path, prune_duplicates=True, use_tn93=use_tn93
     )
-    tree_obj = Phylo.read(tree_path, 'newick') if tree_path and os.path.exists(tree_path) else None
-    if tree_obj is None:
-        tree_obj = extract_tree_from_string_or_file(tree_path if tree_path else alignment_path)
+    tree_obj = None
+    if not use_tn93:
+        tree_obj = Phylo.read(tree_path, 'newick') if tree_path and os.path.exists(tree_path) else None
+        if tree_obj is None:
+            tree_obj = extract_tree_from_string_or_file(tree_path if tree_path else alignment_path)
 
     N = len(taxa)
 

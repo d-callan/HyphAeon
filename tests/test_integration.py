@@ -166,3 +166,45 @@ def test_busted_cli_runs_and_produces_valid_output(examples_dir, dummy_weights, 
     assert "p_Simes" in df.columns
     assert "Omnibus_LRT" in df.columns
     assert len(df) == 1
+
+
+def test_cli_runs_with_no_tree(examples_dir, dummy_weights, tmp_path):
+    """Test that hyphaeon meme runs end-to-end with --no-tree without any tree input."""
+    fa = os.path.join(examples_dir, "bat_oas1.fasta")
+    out_csv = str(tmp_path / "bat_oas1_no_tree.csv")
+
+    cmd = [
+        sys.executable, "-m", "hyphaeon.cli", "meme",
+        "-a", fa, "--no-tree", "-w", dummy_weights,
+        "-c", out_csv, "--cpu"
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    assert result.returncode == 0, f"CLI --no-tree failed: {result.stderr}"
+    assert os.path.exists(out_csv), "CSV output not created"
+
+    actual = pd.read_csv(out_csv)
+    assert list(actual.columns) == EXPECTED_COLUMNS
+    assert len(actual) == 351
+    assert (actual["site"] == np.arange(1, 352)).all()
+    for col in ("hyphaeon_lrt", "p_value"):
+        assert np.isfinite(actual[col]).all()
+
+
+def test_cli_runs_with_use_tn93(examples_dir, dummy_weights, tmp_path):
+    """Test that hyphaeon meme runs end-to-end with --use-tn93 without any tree input."""
+    fa = os.path.join(examples_dir, "bat_oas1.fasta")
+    out_csv = str(tmp_path / "bat_oas1_use_tn93.csv")
+
+    cmd = [
+        sys.executable, "-m", "hyphaeon.cli", "meme",
+        "-a", fa, "--use-tn93", "-w", dummy_weights,
+        "-c", out_csv, "--cpu"
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    assert result.returncode == 0, f"CLI --use-tn93 failed: {result.stderr}"
+    assert os.path.exists(out_csv), "CSV output not created"
+
+    actual = pd.read_csv(out_csv)
+    assert list(actual.columns) == EXPECTED_COLUMNS
+    assert len(actual) == 351
+

@@ -90,3 +90,37 @@ class TestLoadAlignmentAndTreeFasta:
         dist = d[0].numpy()  # d is (1, N, N), d[0] is the (N, N) matrix
         assert np.allclose(np.diag(dist), 0.0)
         assert np.allclose(dist, dist.T)
+
+    def test_use_tn93_without_tree(self, fasta_file):
+        c, a, d, z, inv, taxa, L = load_alignment_and_tree(fasta_file, use_tn93=True)
+        assert L == 4
+        assert len(taxa) == 3
+        dist = d[0].numpy()
+        assert np.allclose(np.diag(dist), 0.0)
+        assert np.allclose(dist, dist.T)
+        assert (dist >= 0.0).all()
+        assert z.shape == (1, len(taxa), 4)
+
+    def test_nwk_path_tn93_alias(self, fasta_file):
+        c, a, d, z, inv, taxa, L = load_alignment_and_tree(fasta_file, nwk_path="tn93")
+        assert L == 4
+        assert len(taxa) == 3
+        dist = d[0].numpy()
+        assert np.allclose(np.diag(dist), 0.0)
+        assert np.allclose(dist, dist.T)
+
+    def test_compute_tn93_distance_matrix_direct(self):
+        from hyphaeon.dataset import compute_tn93_distance_matrix
+        seq_dict = {
+            "s1": "ATGAAATTT",
+            "s2": "ATGAAATTC",
+            "s3": "ATGCAATTC"
+        }
+        taxa = ["s1", "s2", "s3"]
+        mat = compute_tn93_distance_matrix(seq_dict, taxa)
+        assert mat.shape == (3, 3)
+        assert np.allclose(np.diag(mat), 0.0)
+        assert np.allclose(mat, mat.T)
+        assert mat[0, 1] > 0.0
+        assert mat[0, 2] > mat[1, 2]
+
