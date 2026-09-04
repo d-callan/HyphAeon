@@ -16,6 +16,7 @@ import pytest
 from hyphaeon.epistasis import (
     compute_branch_coselection_network,
     extract_epistatic_sectors_tse,
+    compute_sector_permutation_test,
     run_epistatic_analysis,
     run_insilico_selection_dms,
     compute_transformer_attributions,
@@ -151,6 +152,12 @@ class TestExtractEpistaticSectors:
             assert "sites" in sec
             assert "spectral_coherence" in sec
             assert 0.0 <= sec["spectral_coherence"] <= 1.0
+            assert "p_perm" in sec
+            assert 0.0 <= sec["p_perm"] <= 1.0
+            assert "null_coherence_mean" in sec
+            assert "null_coherence_std" in sec
+            assert "null_coherence_95" in sec
+            assert "isotropic_baseline" in sec
             assert "pars_signature" in sec
 
     def test_focal_taxon_signature(self):
@@ -192,6 +199,91 @@ class TestExtractEpistaticSectors:
         if len(sectors) > 1:
             coherences = [s["spectral_coherence"] for s in sectors]
             assert coherences == sorted(coherences, reverse=True)
+
+    def test_max_perm_p_filter(self):
+        G = nx.Graph()
+        for s in range(1, 6):
+            G.add_node(s, ref="A", lrt=2.0)
+        G.add_edge(1, 2, weight=0.8, shared=2, cesi=1.0, fdr_q=0.01)
+        G.add_edge(2, 3, weight=0.7, shared=2, cesi=0.9, fdr_q=0.01)
+
+        attr = np.random.default_rng(0).random((5, 6)).astype(np.float32)
+        lrts = np.full(5, 2.0, dtype=np.float32)
+        aas = list("ACDEF")
+
+        # Impossible threshold (< 0) filters everything out
+        sec_none = extract_epistatic_sectors_tse(G, attr, lrts, aas, max_perm_p=-0.01)
+        assert sec_none == []
+
+
+# ---------------------------------------------------------------------------
+# compute_sector_permutation_test — Monte Carlo significance testing
+# ---------------------------------------------------------------------------
+
+class TestComputeSectorPermutationTest:
+    def test_coherent_sector_is_statistically_significant(self):
+        L, N, K = 50, 40, 5
+        rng = np.random.default_rng(42)
+        attr = rng.normal(0, 1, size=(L, N)).astype(np.float32)
+        base = rng.normal(0, 1, size=N).astype(np.float32)
+        coherent_sites = [5, 10, 15, 20, 25]
+        for s in coherent_sites:
+            attr[s] = base + 0.05 * rng.normal(0, 1, size=N).astype(np.float32)
+
+        sub_A = attr[coherent_sites]
+        cov = sub_A @ sub_A.T
+        eigs = np.linalg.eigvalsh(cov)
+        obs_c = float(eigs[-1] / np.trace(cov))
+
+        stats = compute_sector_permutation_test(
+            attributions=attr,
+            site_indices=coherent_sites,
+            observed_coherence=obs_c,
+            n_permutations=2000,
+            rng_seed=42
+        )
+        assert stats["p_perm"] < 0.01
+        assert stats["null_coherence_mean"] < obs_c
+        assert 0.0 <= stats["isotropic_baseline"] <= 1.0
+
+    def test_random_sector_not_significant(self):
+        L, N = 50, 40
+        rng = np.random.default_rng(42)
+        attr = rng.normal(0, 1, size=(L, N)).astype(np.float32)
+        random_sites = [0, 1, 2, 3, 4]
+        sub_A = attr[random_sites]
+        cov = sub_A @ sub_A.T
+        eigs = np.linalg.eigvalsh(cov)
+        obs_c = float(eigs[-1] / np.trace(cov))
+
+        stats = compute_sector_permutation_test(
+            attributions=attr,
+            site_indices=random_sites,
+            observed_coherence=obs_c,
+            n_permutations=2000,
+            rng_seed=42
+        )
+        assert stats["p_perm"] > 0.10
+
+    def test_small_alignment_edge_case(self):
+        attr = np.ones((3, 4), dtype=np.float32)
+        stats = compute_sector_permutation_test(
+            attributions=attr,
+            site_indices=[0, 1, 2, 3],  # K=4 > L=3
+            observed_coherence=0.8,
+            n_permutations=100
+        )
+        assert stats["p_perm"] == 1.0
+
+    def test_reproducibility_with_seed(self):
+        L, N = 30, 20
+        rng = np.random.default_rng(99)
+        attr = rng.random((L, N)).astype(np.float32)
+        sites = [2, 4, 6]
+        res1 = compute_sector_permutation_test(attr, sites, 0.6, n_permutations=500, rng_seed=42)
+        res2 = compute_sector_permutation_test(attr, sites, 0.6, n_permutations=500, rng_seed=42)
+        assert res1["p_perm"] == res2["p_perm"]
+        assert res1["null_coherence_mean"] == res2["null_coherence_mean"]
 
 
 # ---------------------------------------------------------------------------

@@ -707,6 +707,9 @@ def cmd_epistasis(args):
             min_lrt=getattr(args, "min_lrt", 1.0),
             min_clique_size=getattr(args, "min_clique_size", 3),
             max_overlap=getattr(args, "max_overlap", 0.50),
+            min_coherence=getattr(args, "min_coherence", 0.50),
+            n_permutations=getattr(args, "n_permutations", 10000),
+            max_perm_p=getattr(args, "max_perm_p", None),
             run_dms=not getattr(args, "no_dms", False),
             cpu=getattr(args, "cpu", False),
             use_tn93=use_tn93
@@ -744,8 +747,23 @@ def cmd_epistasis(args):
     if sectors:
         print("\nDiscovered Epistatic Sectors (Two-Stage Seed-and-Extend):")
         for sec in sectors[:8]:
+            p_perm_val = sec.get("p_perm")
+            if p_perm_val is not None:
+                if p_perm_val < 1e-4:
+                    p_str = "p_perm < 0.0001 ***"
+                elif p_perm_val < 0.001:
+                    p_str = f"p_perm = {p_perm_val:.4f} **"
+                elif p_perm_val < 0.05:
+                    p_str = f"p_perm = {p_perm_val:.4f} *"
+                else:
+                    p_str = f"p_perm = {p_perm_val:.4f} (ns)"
+                null_mean = sec.get("null_coherence_mean")
+                null_str = f", null mean: {null_mean:.3f}" if null_mean is not None else ""
+                stat_line = f"  • Spectral Coherence C(S): {sec['spectral_coherence']:.4f} ({p_str}{null_str}) | Mean LRT: {sec['mean_lrt']:.2f}"
+            else:
+                stat_line = f"  • Spectral Coherence C(S): {sec['spectral_coherence']:.4f} | Mean LRT: {sec['mean_lrt']:.2f}"
             print(f"\nSector #{sec['sector_id']} (Size K = {sec['size']} residues): Sites {sec['sites']}")
-            print(f"  • Spectral Coherence C(S): {sec['spectral_coherence']:.4f} | Mean LRT: {sec['mean_lrt']:.2f}")
+            print(stat_line)
             print(f"  • Consensus Signature: {sec['pars_signature']}")
             if sec.get("focal_taxon"):
                 print(f"  • Focal Species ({sec['focal_taxon']}) Signature: {sec['focal_signature']}")
@@ -1035,6 +1053,9 @@ def main():
     epi_parser.add_argument("--min-lrt", type=float, default=1.0, help="Minimum site selection drive (LRT threshold)")
     epi_parser.add_argument("--min-clique-size", type=int, default=3, help="Minimum clique seed size for epistatic sectors")
     epi_parser.add_argument("--max-overlap", type=float, default=0.50, help="Maximum Jaccard overlap allowed between discovered sectors")
+    epi_parser.add_argument("--min-coherence", type=float, default=0.50, help="Minimum spectral coherence ratio C(S) for epistatic sectors (default: 0.50)")
+    epi_parser.add_argument("--n-permutations", type=int, default=10000, help="Number of random K-site subset Monte Carlo permutations for sector significance testing (default: 10000)")
+    epi_parser.add_argument("--max-perm-p", type=float, default=None, help="Maximum permutation p-value threshold to retain sectors (default: None, retain all C(S) >= min_coherence)")
     epi_parser.add_argument("--no-dms", action="store_true", help="Skip 19-amino-acid in silico Selection DMS sweep")
     epi_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
     epi_parser.add_argument("-o", "--output", help="Optional path to output JSON results")

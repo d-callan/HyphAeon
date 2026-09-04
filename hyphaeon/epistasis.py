@@ -221,6 +221,88 @@ def compute_branch_coselection_network(
     sig_pairs.sort(key=lambda x: x["cesi"], reverse=True)
     return sig_pairs, G
 
+def compute_sector_permutation_test(
+    attributions: np.ndarray,
+    site_indices: List[int],
+    observed_coherence: float,
+    n_permutations: int = 10000,
+    active_only: bool = True,
+    rng_seed: Optional[int] = 42
+) -> Dict[str, float]:
+    """
+    Evaluates statistical significance of an epistatic sector's spectral coherence
+    against an empirical null distribution of random K-site subsets drawn from
+    the same alignment attributions.
+    
+    Computes:
+      p_perm = (1 / B) * sum( I( C(S_rand) >= C(S_obs) ) )
+      null_mean = E[ C(S_rand) ]
+      null_std  = Std[ C(S_rand) ]
+      null_95   = 95th percentile of C(S_rand)
+      isotropic_baseline = 1 / K
+    """
+    K = len(site_indices)
+    L, N = attributions.shape
+    
+    if active_only:
+        site_norms = np.linalg.norm(attributions, axis=1)
+        candidate_pool = np.where(site_norms > 1e-9)[0]
+    else:
+        candidate_pool = np.arange(L)
+        
+    num_candidates = len(candidate_pool)
+    if num_candidates < K or K < 2 or n_permutations <= 0:
+        return {
+            "p_perm": 1.0,
+            "null_coherence_mean": float(observed_coherence),
+            "null_coherence_std": 0.0,
+            "null_coherence_95": float(observed_coherence),
+            "isotropic_baseline": float(1.0 / K) if K > 0 else 1.0
+        }
+        
+    rng = np.random.default_rng(rng_seed)
+    batch_size = min(n_permutations, 25000)
+    greater_equal_count = 0
+    null_coherences = []
+    
+    while sum(len(x) for x in null_coherences) < n_permutations:
+        cur_b = min(batch_size, n_permutations - sum(len(x) for x in null_coherences))
+        if cur_b <= 0:
+            break
+            
+        perm_indices = np.empty((cur_b, K), dtype=np.int64)
+        for i in range(cur_b):
+            perm_indices[i] = rng.choice(candidate_pool, size=K, replace=False)
+            
+        sub_A = attributions[perm_indices]  # [cur_b, K, N]
+        cov = np.einsum('bkn,bln->bkl', sub_A, sub_A)  # [cur_b, K, K]
+        traces = np.trace(cov, axis1=1, axis2=2)
+        eigs = np.linalg.eigvalsh(cov)[:, -1]
+        eigs = np.maximum(eigs, 0.0)
+        
+        valid_mask = traces > 1e-9
+        batch_coherences = np.zeros(cur_b, dtype=np.float32)
+        batch_coherences[valid_mask] = eigs[valid_mask] / traces[valid_mask]
+        batch_coherences[~valid_mask] = 1.0 / K
+        
+        greater_equal_count += int(np.sum(batch_coherences >= (observed_coherence - 1e-7)))
+        null_coherences.append(batch_coherences)
+        
+    all_null = np.concatenate(null_coherences)
+    actual_b = len(all_null)
+    p_val = float(greater_equal_count / actual_b) if actual_b > 0 else 1.0
+    null_mean = float(np.mean(all_null))
+    null_std = float(np.std(all_null))
+    null_95 = float(np.percentile(all_null, 95))
+    
+    return {
+        "p_perm": p_val,
+        "null_coherence_mean": null_mean,
+        "null_coherence_std": null_std,
+        "null_coherence_95": null_95,
+        "isotropic_baseline": float(1.0 / K)
+    }
+
 def extract_epistatic_sectors_tse(
     G: nx.Graph,
     attributions: np.ndarray,
@@ -231,12 +313,16 @@ def extract_epistatic_sectors_tse(
     min_coherence: float = 0.50,
     focal_taxon: Optional[str] = None,
     a_np: Optional[np.ndarray] = None,
-    taxa: Optional[List[str]] = None
+    taxa: Optional[List[str]] = None,
+    n_permutations: int = 10000,
+    max_perm_p: Optional[float] = None,
+    rng_seed: Optional[int] = 42
 ) -> List[Dict[str, Any]]:
     """
     Two-Stage Seed-and-Extend (TSE) epistatic sector mining using greedy modularity
-    community decomposition and spectral coherence filtering (C(S) >= 0.50)
-    on the continuous attribution co-selection graph.
+    community decomposition, spectral coherence filtering (C(S) >= 0.50), and
+    Monte Carlo random K-site permutation testing (p_perm) on the continuous
+    attribution co-selection graph.
     """
     if G.number_of_edges() == 0:
         return []
@@ -283,6 +369,21 @@ def extract_epistatic_sectors_tse(
         if coherence < min_coherence or len(site_indices) < 2:
             continue
             
+        # Monte Carlo random K-site subset permutation test
+        perm_stats = compute_sector_permutation_test(
+            attributions=attributions,
+            site_indices=site_indices,
+            observed_coherence=coherence,
+            n_permutations=n_permutations,
+            active_only=True,
+            rng_seed=rng_seed
+        )
+        p_perm = perm_stats["p_perm"]
+        
+        # Optional permutation significance filter
+        if max_perm_p is not None and p_perm > max_perm_p:
+            continue
+            
         shared_taxa_cnt = int(np.sum(np.all(sub_A > 0, axis=0)))
         mean_lrt_val = float(np.mean(lrts[site_indices]))
         
@@ -319,6 +420,11 @@ def extract_epistatic_sectors_tse(
             "size": len(sorted_sites),
             "sites": [s + 1 for s in sorted_sites],
             "spectral_coherence": coherence,
+            "p_perm": p_perm,
+            "null_coherence_mean": perm_stats["null_coherence_mean"],
+            "null_coherence_std": perm_stats["null_coherence_std"],
+            "null_coherence_95": perm_stats["null_coherence_95"],
+            "isotropic_baseline": perm_stats["isotropic_baseline"],
             "shared_taxa": shared_taxa_cnt,
             "shared_branches": shared_taxa_cnt,
             "mean_lrt": mean_lrt_val,
@@ -534,6 +640,9 @@ def run_epistatic_analysis(
     min_clique_size: int = 3,
     max_overlap: float = 0.50,
     min_coherence: float = 0.50,
+    n_permutations: int = 10000,
+    max_perm_p: Optional[float] = None,
+    rng_seed: Optional[int] = 42,
     run_dms: bool = True,
     skip_dms: bool = False,
     cpu: bool = False,
@@ -574,7 +683,8 @@ def run_epistatic_analysis(
     sectors = extract_epistatic_sectors_tse(
         G, leaf_attr, lrts, consensus_aas,
         min_clique_size=min_clique_size, max_overlap=max_overlap, min_coherence=min_coherence,
-        focal_taxon=focal_taxon, a_np=a_tensor.squeeze(-1).numpy(), taxa=taxa
+        focal_taxon=focal_taxon, a_np=a_tensor.squeeze(-1).numpy(), taxa=taxa,
+        n_permutations=n_permutations, max_perm_p=max_perm_p, rng_seed=rng_seed
     )
 
     # 5. Run ESSM specifically on the identified epistatic sector positions
@@ -663,3 +773,4 @@ run_epistasis_analysis = run_epistatic_analysis
 run_epistatic_sector_mining = run_epistatic_analysis
 compute_selection_dms_essm = run_insilico_selection_dms
 extract_epistatic_sectors = extract_epistatic_sectors_tse
+compute_sector_permutation = compute_sector_permutation_test
