@@ -25,13 +25,13 @@ projection engines, plus a pooled MEME concordance workflow:
 1. **`hyphaeon meme` (Site-Level Diversifying Selection)**:
    Neural episodic positive selection inference ($>100\times$ faster than standard numerical MLE and codon-MCMC models like HyPhy MEME/FEL) using Tree-RoPE 4D geometric branch embeddings and axial tree attention.
 2. **`hyphaeon epistasis` (3D Co-Evolution & Epistatic Sectors)**:
-   Multi-scale epistatic sector mining implementing phylogenetic branch attribution, exact tree hypergeometric tests, Jaccard overlap suppression, and contact map recovery ($C_\beta - C_\beta < 8\text{\AA}$).
+   Multi-scale epistatic sector mining implementing phylogenetic branch attribution, exact tree hypergeometric tests, Jaccard overlap suppression, contact map recovery ($C_\beta - C_\beta < 8\text{\AA}$), and vectorized Monte Carlo permutation significance testing (`--n-permutations`, `--max-perm-p`).
 3. **`hyphaeon dms` (Digital Deep Mutational Scanning & CPDs)**:
    In silico Selection Deep Mutational Scanning. Performs high-throughput sweeps of all 19 alternative amino acids across every codon position in seconds, calculating the **Epistatic Selection Sensitivity Matrix (ESSM)**, Intrinsic Mutational Plasticity ($\mathbf{E}_{i,i}$), and de novo predicting compensatory partners ($s_{\text{comp}}$) that rescue human disease mutations (Compensated Pathogenic Deviations).
 4. **`hyphaeon busted` (Alignment-Wide Omnibus Selection)**:
    Multi-query cross-attention pooling head that evaluates whole-gene episodic selection and filters Synonymous Rate Variation (SRV) false positives in milliseconds.
 5. **`hyphaeon phenotype` (PhyloWAS)**:
-   Directional phenotype-genotype association mapping on the unit hypersphere $\mathbb{S}^{M-1}$. Computes spectral trait energies ($\Psi_{\text{Spectral}}$), exact sequenced-taxa null scaling $p$-values, Benjamini-Hochberg FDR $q$-values, and **Phenotype-Associated Residue Signatures (PARS)**.
+   Directional phenotype-genotype association mapping on the unit hypersphere $\mathbb{S}^{M-1}$. Computes spectral trait energies ($\Psi_{\text{Spectral}}$), exact sequenced-taxa null scaling $p$-values, Benjamini-Hochberg FDR $q$-values, **Phenotype-Associated Residue Signatures (PARS)**, macromolecular trait sector permutation testing (`--n-permutations`, `--max-perm-p`), and gene-level Brownian motion liability permulations (`--permulations`).
 6. **`hyphaeon evaluate` (HyPhy MEME Concordance)**:
    Dataset-level evaluation of HyphAeon site predictions against matched HyPhy
    MEME results, with site pooling across genes and machine-readable metrics.
@@ -67,8 +67,15 @@ All example alignments and phylogenetic trees required to reproduce these analys
 ### Example 1: Inter-Site Epistasis & Branch Co-Selection in HIV-1 Reverse Transcriptase
 
 ```bash
-# Run branch co-selection, sector mining, and export co-selection network
-hyphaeon epistasis -a examples/HIV1_RT.fasta -t examples/HIV1_RT.nwk -o examples/HIV1_RT_epistasis.json -c examples/HIV1_RT_edges.csv --graphml examples/HIV1_RT_coselection.graphml
+# Run branch co-selection, sector mining, and export co-selection network with Monte Carlo permutation testing
+hyphaeon epistasis \
+  -a examples/HIV1_RT.fasta \
+  -t examples/HIV1_RT.nwk \
+  --n-permutations 10000 \
+  --max-perm-p 0.05 \
+  -o examples/HIV1_RT_epistasis.json \
+  -c examples/HIV1_RT_edges.csv \
+  --graphml examples/HIV1_RT_coselection.graphml
 ```
 
 #### Key Biological Discoveries:
@@ -77,6 +84,13 @@ hyphaeon epistasis -a examples/HIV1_RT.fasta -t examples/HIV1_RT.nwk -o examples
      $$\text{F116} \longleftrightarrow \text{Q151} \quad (\text{Co-Sel} = 0.8660, \; p_{\text{hyper}} = 7.02 \times 10^{-9}, \; \text{FDR } q = 1.17 \times 10^{-7})$$
 2. **Autonomous Dissection of Mutually Exclusive Pathways (TAM-1 vs. TAM-2)**:
    * HyphAeon's branch co-selection metric autonomously isolates the **TAM-1 triad** (`M41L + L210W + T215Y`, $q < 10^{-7}$) from the mutually antagonistic **TAM-2 cluster** (`D67N + K70R + K219Q`, $q < 10^{-3}$).
+
+#### Monte Carlo Permutation Testing for Epistatic Sectors:
+To distinguish authentic structural/functional sectors from stochastic subsets of variable sites, HyphAeon tests the spectral coherence of candidate sectors against an empirical null distribution:
+* **Vectorized Permutation Engine (`--n-permutations <int>`, default: `10000`)**: For a discovered sector $\mathcal{S}$ of size $K$, samples $B$ random $K$-site subgraphs uniformly without replacement from active candidate sites. Coherence is computed across null batches via tensor contraction and Hermitian eigenvalue decomposition:
+  $$C(\mathcal{S}) = \frac{\lambda_1(\mathbf{A}[\mathcal{S}, :] \mathbf{A}[\mathcal{S}, :]^\top)}{\text{Tr}(\mathbf{A}[\mathcal{S}, :] \mathbf{A}[\mathcal{S}, :]^\top)}$$
+* **Output Metrics**: Each sector reports empirical one-sided $p_{\text{perm}} = \frac{1}{B} \sum_{b=1}^B \mathbb{I}(C(\mathcal{S}^{(b)}) \ge C(\mathcal{S}))$, null mean $\mathbb{E}[C_{\text{null}}]$, standard deviation, 95th percentile cutoff $C_{95}$, and theoretical isotropic baseline $1/K$. Set `--n-permutations 0` to disable permutation testing.
+* **Empirical Filtering (`--max-perm-p <float>`, default: `None`)**: Retains only sectors whose spectral coherence satisfies $p_{\text{perm}} \le \text{threshold}$ (e.g., `--max-perm-p 0.05`).
 
 ---
 
@@ -92,9 +106,25 @@ hyphaeon dms -a examples/HIV1_RT.fasta -t examples/HIV1_RT.nwk -o examples/HIV1_
 ### Example 3: Convergent Sensory Adaptation & Spectral Tuning in Rhodopsin
 
 ```bash
-# Run PhyloWAS for marine diving mammal visual adaptation
-hyphaeon phenotype -a examples/RHO.fasta -fg "turTru,balMus,balPhys,orcOrc,delDelp,phyCat,phoVit,halGryp,mirLeo,zalCali,odoRos" -o examples/RHO_marine_phenotype.json -c examples/RHO_marine_sites.csv
+# Run PhyloWAS with trait sector permutation testing and gene-level phylogenetic permulations
+hyphaeon phenotype \
+  -a examples/RHO.fasta \
+  -fg "turTru,balMus,balPhys,orcOrc,delDelp,phyCat,phoVit,halGryp,mirLeo,zalCali,odoRos" \
+  --n-permutations 10000 \
+  --max-perm-p 0.05 \
+  --permulations 1000 \
+  -o examples/RHO_marine_phenotype.json \
+  -c examples/RHO_marine_sites.csv
 ```
+
+#### Multi-Scale Permutation & Null Testing in PhyloWAS:
+HyphAeon implements two complementary null testing layers addressing distinct evolutionary hypotheses:
+1. **Macromolecular Trait Sector Permutations (`--n-permutations <int>`, default: `10000`; `--max-perm-p <float>`, default: `None`)**:
+   * Following single-site phenotype association ($\text{FDR } q \le \alpha$), HyphAeon extracts coherent epistatic sectors among trait-associated residues.
+   * Tests whether trait sector coherence $C(\mathcal{S})$ significantly exceeds random $K$-site subgraphs sampled across the alignment ($p_{\text{perm}} \le \text{max\_perm\_p}$), confirming that convergent phenotype adaptation drives coordinated macromolecular re-organization rather than unlinked mutations.
+2. **Gene-Level Brownian Motion Liability Permulations (`--permulations <int>`, default: `0` / parametric)**:
+   * Simulates neutral continuous phenotype evolution along the phylogenetic tree using Brownian motion (Saputra et al. 2021 / RERconverge null model).
+   * Computes empirical gene-level $p$-values ($p_{\text{gene}}$) testing whether the length-normalized spectral energy ($\bar{\Psi}$) or maximum site association ($\rho_{\max}$) exceeds neutral phylogenetic drift.
 
 ---
 
@@ -243,10 +273,32 @@ python train.py \
 | :--- | :--- | :--- |
 | `hyphaeon meme` | Site-Level Selection | Fast per-codon LRT & selection rate prediction ($>10,000\times$ faster than MLE). |
 | `hyphaeon evaluate` | MEME Concordance | Pooled ROC-AUC, LRT correlations, PPV, and FPR for folders or a single matched gene. |
-| `hyphaeon epistasis` | 3D Epistatic Sectors | Co-selection networks, hypergeometric tree overlaps, and 3D contact recovery. |
+| `hyphaeon epistasis` | 3D Epistatic Sectors | Co-selection networks, hypergeometric tree overlaps, and Monte Carlo sector permutations. |
 | `hyphaeon dms` | Digital DMS | 19-AA in silico perturbation sweeps and Compensated Pathogenic Deviation mapping. |
 | `hyphaeon busted` | Alignment Omnibus | Alignment-wide episodic selection testing and SRV false-positive filtering. |
-| `hyphaeon phenotype`| Directional PhyloWAS | Directional trait mapping on the unit hypersphere across convergent clades. |
+| `hyphaeon phenotype`| Directional PhyloWAS | Directional trait mapping on the unit hypersphere, trait sector permutations, and liability permulations. |
+
+### Key Permutation Testing Arguments:
+
+#### `hyphaeon epistasis`
+| Flag | Type | Default | Description |
+| :--- | :---: | :---: | :--- |
+| `--n-permutations` | `int` | `10000` | Number of random $K$-site subset Monte Carlo permutations for sector significance testing (set `0` to disable). |
+| `--max-perm-p` | `float` | `None` | Maximum empirical permutation $p$-value threshold to retain sectors (default retains all $C(\mathcal{S}) \ge \text{min\_coherence}$). |
+| `--min-coherence` | `float` | `0.50` | Minimum spectral coherence ratio $C(\mathcal{S}) = \lambda_1 / \text{Tr}$ for candidate sectors. |
+| `--min-clique-size` | `int` | `3` | Minimum clique seed size for epistatic sectors. |
+| `--max-overlap` | `float` | `0.50` | Maximum Jaccard overlap allowed between discovered sectors. |
+| `--no-tree` / `--use-tn93` | `flag` | `False` | Estimate pairwise evolutionary distances directly from alignment via TN93 (skips tree). |
+
+#### `hyphaeon phenotype`
+| Flag | Type | Default | Description |
+| :--- | :---: | :---: | :--- |
+| `--n-permutations` | `int` | `10000` | Number of random $K$-site subset Monte Carlo permutations for trait sector significance testing (set `0` to disable). |
+| `--max-perm-p` | `float` | `None` | Maximum permutation $p$-value threshold to retain trait sectors (default retains all $C(\mathcal{S}) \ge 0.45$). |
+| `--permulations` | `int` | `0` | Number of Brownian motion phylogenetic permulations for gene-level empirical $p$-values (RERconverge null model; default `0` / parametric). |
+| `--alpha` | `float` | `0.05` | Benjamini-Hochberg FDR significance threshold for trait-associated sites. |
+| `--continuous` | `flag` | `False` | Treat trait values as continuous phylogenetic contrasts rather than discrete foreground/background. |
+| `--min-taxa` | `int` | `4` | Minimum sequenced taxa required per site. |
 
 ---
 

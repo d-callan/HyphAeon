@@ -146,3 +146,47 @@ $$\mathcal{L}(\widehat{\mathrm{LRT}}, \mathrm{LRT}) = \begin{cases} 0.5 (\wideha
 | **Per-Gene Latency ($L=1,000, N=20$)** | $\sim 60\text{--}180\text{ seconds}$ | **$0.8\text{ seconds}$** | **$100\times\text{--}250\times$ faster** |
 | **Deep Tree Latency ($L=1,000, N=256$)** | $\sim 25\text{--}45\text{ minutes}$ | **$2.4\text{ seconds}$** | **$600\times\text{--}1,100\times$ faster** |
 | **Hardware Requirement** | Multi-core HPC cluster | Standard laptop CPU / GPU | Zero infrastructure setup |
+
+---
+
+## 8. Vectorized Monte Carlo Permutation Testing for Epistatic & Trait Sectors
+
+### 8.1 Spectral Coherence Formulation
+For a discovered epistatic or trait-associated sector $\mathcal{S}$ containing $K = |\mathcal{S}|$ sites, let $\mathbf{A}[\mathcal{S}, :] \in \mathbb{R}^{K \times N}$ denote the row-sliced transformer phylogenetic attribution matrix across $N$ taxa (or branches). The intra-sector covariance matrix is:
+
+$$\mathbf{C}_\mathcal{S} = \mathbf{A}[\mathcal{S}, :] \mathbf{A}[\mathcal{S}, :]^\top \in \mathbb{R}^{K \times K}$$
+
+The **Spectral Coherence Ratio** $C(\mathcal{S})$ measures the concentration of multi-residue evolutionary variation along the principal collective co-selection axis:
+
+$$C(\mathcal{S}) = \frac{\lambda_1(\mathbf{C}_\mathcal{S})}{\operatorname{Tr}(\mathbf{C}_\mathcal{S})} = \frac{\lambda_1(\mathbf{C}_\mathcal{S})}{\sum_{i=1}^K \lambda_i(\mathbf{C}_\mathcal{S})}$$
+
+where $\lambda_1 \ge \lambda_2 \ge \dots \ge \lambda_K \ge 0$ are the eigenvalues of the positive semi-definite matrix $\mathbf{C}_\mathcal{S}$.
+* For an idealized single-mode sector where all $K$ sites co-vary perfectly, $\lambda_1 = \operatorname{Tr}(\mathbf{C}_\mathcal{S})$ and $C(\mathcal{S}) \to 1.0$.
+* For an isotropic null system where sites vary independently, all eigenvalues are equal and $C(\mathcal{S}) \to \frac{1}{K}$.
+
+### 8.2 Graph Null Hypothesis & Permutation Engine
+To test whether the observed spectral coherence $C(\mathcal{S})$ reflects genuine coordinated evolutionary adaptation rather than an artifact of high background substitution rates, HyphAeon defines a non-parametric graph permutation test:
+* **Candidate Pool**: Active sites $\mathcal{V}_{\text{active}} = \{s \in [1, L] : \|\mathbf{A}[s, :]\|_2 > 10^{-9}\}$.
+* **Null Sampling**: Samples $B$ random subsets $\mathcal{S}^{(b)} \subset \mathcal{V}_{\text{active}}$ of identical cardinality $|\mathcal{S}^{(b)}| = K$ uniformly without replacement.
+* **Vectorized Tensor Batches**: To ensure negligible runtime overhead, the $B$ null permutations (default $B = 10,000$) are evaluated in vectorized batches (up to $B_{\text{batch}} = 25,000$):
+  $$\mathbf{C}^{(b)} = \operatorname{einsum}\left(\text{'bkn,bln}\to\text{bkl'},\; \mathbf{A}[\mathcal{S}^{(b)}, :],\; \mathbf{A}[\mathcal{S}^{(b)}, :]\right)$$
+  $$\lambda_1^{(b)} = \max\left(\operatorname{eigvalsh}\left(\mathbf{C}^{(b)}\right)\right)$$
+  $$C(\mathcal{S}^{(b)}) = \frac{\lambda_1^{(b)}}{\operatorname{Tr}(\mathbf{C}^{(b)})}$$
+
+### 8.3 Statistical Metrics & Filtering
+For each candidate sector, HyphAeon computes:
+1. **Empirical Permutation $p$-value**:
+   $$p_{\text{perm}} = \frac{1}{B} \sum_{b=1}^B \mathbb{I}\left(C(\mathcal{S}^{(b)}) \ge C(\mathcal{S}) - 10^{-7}\right)$$
+2. **Null Distribution Moments**:
+   $$\mathbb{E}[C_{\text{null}}] = \frac{1}{B} \sum_{b=1}^B C(\mathcal{S}^{(b)}), \quad \sigma(C_{\text{null}}) = \sqrt{\frac{1}{B}\sum_{b=1}^B \left(C(\mathcal{S}^{(b)}) - \mathbb{E}[C_{\text{null}}]\right)^2}$$
+3. **Upper Percentile Cutoff ($C_{95}$)**: The empirical 95th percentile of $\{C(\mathcal{S}^{(b)})\}_{b=1}^B$.
+4. **Isotropic Baseline**: Theoretical lower limit $1/K$.
+
+When `--max-perm-p <threshold>` is specified, candidate sectors with $p_{\text{perm}} > \text{threshold}$ are pruned from final reporting and network exports.
+
+### 8.4 Two-Tier Null Architecture in PhyloWAS (`hyphaeon phenotype`)
+In phenotype-genotype association mapping, HyphAeon disentangles two distinct hierarchical questions:
+* **Tier 1: Macromolecular Trait Sector Coherence (`--n-permutations`, `--max-perm-p`)**:
+  Tests whether trait-associated sites ($\text{FDR } q \le \alpha$) form structurally/mechanistically coordinated epistatic sectors that exceed random $K$-site combinations.
+* **Tier 2: Gene-Level Liability Permulations (`--permulations`)**:
+  Simulates continuous trait evolution along the phylogeny under a Brownian motion drift process (Saputra et al. 2021 / RERconverge null model) to test whether alignment-wide directional spectral energy $\bar{\Psi} = \Psi / \sqrt{L}$ or peak site association $\rho_{\max}$ exceeds neutral phylogenetic drift.
