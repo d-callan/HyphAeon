@@ -1004,6 +1004,85 @@ def cmd_filter(args):
     if args.csv:
         print(f"[✓] Artifact audit log written to: {args.csv}")
 
+def cmd_temporal(args):
+    """Executes continuous temporal attribution regression, two-stage statistical filtering, and dynamic wave decomposition."""
+    from .temporal import run_temporal_surveillance
+
+    use_tn93 = getattr(args, "no_tree", False) or getattr(args, "use_tn93", False) or (getattr(args, "tree", None) == "tn93")
+
+    prefix = getattr(args, "output", None)
+    if prefix:
+        if prefix.endswith('.csv') or prefix.endswith('.json'):
+            prefix = os.path.splitext(prefix)[0]
+    elif getattr(args, "output_prefix", None):
+        prefix = args.output_prefix
+    else:
+        aln_stem = Path(args.alignment).stem
+        prefix = os.path.join("temporal_output", aln_stem)
+
+    run_temporal_surveillance(
+        alignment_path=args.alignment,
+        tree_path=getattr(args, "tree", None),
+        dates_source=getattr(args, "dates", None),
+        output_prefix=prefix,
+        bandwidth=getattr(args, "bandwidth", None),
+        num_time_points=getattr(args, "time_points", 250),
+        n_permutations=getattr(args, "permutations", 1000),
+        perm_alpha=getattr(args, "perm_alpha", 0.05),
+        min_r2_fpca=getattr(args, "min_r2", 0.35),
+        tau_peak=getattr(args, "tau_peak", 1e-4),
+        tau_auc=getattr(args, "tau_auc", None),
+        date_col=getattr(args, "date_col", None),
+        strain_col=getattr(args, "strain_col", None),
+        root_taxon=getattr(args, "root_taxon", None),
+        weights_path=getattr(args, "weights", DEFAULT_WEIGHTS_ENV),
+        variant=getattr(args, "variant", DEFAULT_VARIANT_ENV),
+        batch_size=getattr(args, "batch_size", None),
+        max_species=getattr(args, "max_species", None),
+        cpu=getattr(args, "cpu", False),
+        plot=getattr(args, "plot", False)
+    )
+
+def cmd_splits(args):
+    """Executes Spectral Graph Bisection via Cross-Taxa Attention Maps & MDS Fusion."""
+    from .splits import run_spectral_splits
+    use_tn93 = getattr(args, "no_tree", False) or getattr(args, "use_tn93", False) or (getattr(args, "tree", None) == "tn93")
+    res = run_spectral_splits(
+        alignment_path=args.alignment,
+        tree_path=getattr(args, "tree", None),
+        use_tn93=use_tn93,
+        weights_path=getattr(args, "weights", DEFAULT_WEIGHTS_ENV),
+        min_clade_size=getattr(args, "min_clade_size", 2),
+        max_depth=getattr(args, "max_depth", 10),
+        device=None if not getattr(args, "cpu", False) else torch.device("cpu")
+    )
+    print("=" * 80)
+    print("🌿 HyphAeon Spectral Graph Bisection Complete!")
+    print(f"   Taxa: {len(res['taxa'])} | Alignment Codon Length: {res['L']}")
+    print(f"   Primary Root Split Eigengap: {res['eigengap']:.4f} | Fiedler Value: {res['fiedler_val']:.4f}")
+    print("=" * 80)
+    root_s = res['root_split']
+    print(f"\nPrimary Macro-Clade Split:")
+    print(f"  • Left Clade ({root_s['left_count']} taxa): {', '.join(root_s['left_clade'][:8])}{'...' if root_s['left_count'] > 8 else ''}")
+    print(f"  • Right Clade ({root_s['right_count']} taxa): {', '.join(root_s['right_clade'][:8])}{'...' if root_s['right_count'] > 8 else ''}")
+    print(f"\nDerived Hierarchical Newick Tree:\n{res['newick']}")
+
+    if getattr(args, "output", None):
+        with open(args.output, "w") as f:
+            f.write(res['newick'] + "\n")
+        print(f"\n[✓] Newick tree saved to: {args.output}")
+
+    if getattr(args, "csv", None):
+        import csv
+        with open(args.csv, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["taxon", "primary_clade", "split_eigengap"])
+            for t in root_s['left_clade']:
+                writer.writerow([t, "Left", res['eigengap']])
+            for t in root_s['right_clade']:
+                writer.writerow([t, "Right", res['eigengap']])
+        print(f"[✓] Split assignments saved to: {args.csv}")
+
 def main():
 
     parser = argparse.ArgumentParser(
@@ -1146,7 +1225,36 @@ def main():
     # 8. List-models Subcommand
     list_parser = subparsers.add_parser("list-models", help="List available model variants from Hugging Face")
 
-    # 7. Pooled HyphAeon-vs-MEME evaluation
+    # 9. Temporal Surveillance Subcommand
+    temp_parser = subparsers.add_parser(
+        "temporal",
+        aliases=["surveillance", "longitudinal"],
+        help="Run continuous temporal selection regression, two-stage filtering, and dynamic wave decomposition"
+    )
+    temp_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
+    temp_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded, or if --no-tree/--use-tn93 is set)")
+    temp_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93")
+    temp_parser.add_argument("--use-tn93", action="store_true", help="Estimate pairwise distances directly from alignment using TN93 (skips tree)")
+    temp_parser.add_argument("-d", "--dates", default=None, help="Path to Nextstrain Auspice JSON, metadata CSV/TSV, or omitted to auto-extract timestamps from FASTA headers")
+    temp_parser.add_argument("--date-col", default=None, help="Column name for sample collection date in metadata CSV/TSV")
+    temp_parser.add_argument("--strain-col", default=None, help="Column name for taxon / strain identifier in metadata CSV/TSV")
+    temp_parser.add_argument("--root-taxon", default=None, help="Reference taxon to use as ancestral root founder (default: consensus of earliest 5%% sampled taxa)")
+    temp_parser.add_argument("-bw", "--bandwidth", type=float, default=None, help="Gaussian kernel smoothing bandwidth in years (default: auto ~5%% of timespan)")
+    temp_parser.add_argument("-o", "--output", help="Output file prefix for results (<prefix>_sites_summary.csv, _curves.csv, _waves.csv, _summary.json)")
+    temp_parser.add_argument("-B", "--permutations", type=int, default=1000, help="Number of date-shuffling permutations for Stage 2 empirical p-values (default: 1000)")
+    temp_parser.add_argument("--perm-alpha", type=float, default=0.05, help="FDR significance cutoff for Stage 2 permutation test (default: 0.05)")
+    temp_parser.add_argument("--min-r2", type=float, default=0.35, help="Minimum dynamic wave alignment R^2 threshold for confirmed sweeps (default: 0.35)")
+    temp_parser.add_argument("--tau-peak", type=float, default=1e-4, help="Stage 1 peak selection intensity energy floor (default: 1e-4)")
+    temp_parser.add_argument("--tau-auc", type=float, default=None, help="Stage 1 cumulative area under curve energy floor (default: auto)")
+    temp_parser.add_argument("--time-points", type=int, default=250, help="Number of continuous temporal grid points (default: 250)")
+    temp_parser.add_argument("--plot", action="store_true", help="Generate publication-grade 4-panel PDF and PNG figures")
+    temp_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
+    temp_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from HF (default: {DEFAULT_VARIANT})")
+    temp_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: adaptive hardware budget)")
+    temp_parser.add_argument("-s", "--max-species", type=int, default=None, help="Maximum number of taxa to include")
+    temp_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
+
+    # 10. Pooled HyphAeon-vs-MEME evaluation
     eval_parser = subparsers.add_parser(
         "evaluate",
         help="Evaluate folders of site predictions against matched HyPhy MEME results",
@@ -1154,6 +1262,23 @@ def main():
     )
     from .evaluation import configure_parser as configure_evaluation_parser
     configure_evaluation_parser(eval_parser)
+
+    # 11. Spectral Graph Bisection (Phylogenetic Splits) Subcommand
+    splits_parser = subparsers.add_parser(
+        "splits",
+        aliases=["split", "clades", "bisection"],
+        help="Recover well-supported phylogenetic splits via spectral graph bisection of cross-taxa attention and MDS geometry"
+    )
+    splits_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
+    splits_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded, or if --no-tree/--use-tn93 is set)")
+    splits_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93")
+    splits_parser.add_argument("--use-tn93", action="store_true", help="Estimate pairwise distances directly from alignment using TN93 (skips tree)")
+    splits_parser.add_argument("--min-clade-size", type=int, default=2, help="Minimum clade size to continue recursive bisection (default: 2)")
+    splits_parser.add_argument("--max-depth", type=int, default=10, help="Maximum tree hierarchy depth (default: 10)")
+    splits_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file")
+    splits_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
+    splits_parser.add_argument("-o", "--output", help="Optional path to output derived hierarchical Newick tree (.nwk)")
+    splits_parser.add_argument("-c", "--csv", help="Optional path to output split clade membership table (.csv)")
 
     args = parser.parse_args()
     if args.command in ["meme", "predict", "site-selection"]:
@@ -1170,6 +1295,10 @@ def main():
         cmd_disease(args)
     elif args.command in ["filter", "mask", "qc", "clean"]:
         cmd_filter(args)
+    elif args.command in ["temporal", "surveillance", "longitudinal"]:
+        cmd_temporal(args)
+    elif args.command in ["splits", "split", "clades", "bisection"]:
+        cmd_splits(args)
     elif args.command == "list-models":
         list_models()
     elif args.command == "evaluate":

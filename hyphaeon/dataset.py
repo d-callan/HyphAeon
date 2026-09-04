@@ -440,11 +440,21 @@ def prune_identical_sequences(seq_dict: Dict[str, str], taxa: List[str]) -> Tupl
     num_pruned = len(taxa) - len(unique_taxa)
     return unique_taxa, dup_map, num_pruned
 
-def compute_tn93_distance_matrix(seq_dict: Dict[str, str], taxa: List[str], fa_path: Optional[str] = None) -> np.ndarray:
+def compute_tn93_distance_matrix(
+    seq_dict: Dict[str, str],
+    taxa: List[str],
+    fa_path: Optional[str] = None,
+    threshold: float = 100.0
+) -> np.ndarray:
     """
     Computes pairwise Tamura-Nei 93 (TN93) genetic distance matrix directly from sequences.
     Prefers the high-speed compiled 'tn93' C binary if available in PATH, falling back
     to the Python 'tn93' package (from tn93.tn93 import TN93).
+
+    threshold: Distance cutoff for TN93 reporting. Set to a high value (default 100.0) so that
+    no divergent pairwise distances are prematurely omitted from deep alignments. If the installed
+    tn93 binary strictly bounds distance to [0, 1] (e.g. stock <= v1.0.15), it automatically retries
+    with threshold=1.0.
     """
     n = len(taxa)
     dist_mat = np.zeros((n, n), dtype=np.float32)
@@ -462,28 +472,40 @@ def compute_tn93_distance_matrix(seq_dict: Dict[str, str], taxa: List[str], fa_p
             with open(tmp_fa, "w") as f:
                 for t in taxa:
                     f.write(f">{t}\n{seq_dict[t]}\n")
-            cmd = [tn93_bin, "-t", "1.0", "-l", "1", "-q", "-o", out_csv, tmp_fa]
+            
+            # Call tn93 with higher threshold so divergent pairs are not omitted
+            cmd = [tn93_bin, "-t", f"{threshold:.1f}", "-l", "1", "-q", "-o", out_csv, tmp_fa]
+            binary_success = False
             try:
                 subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                if os.path.exists(out_csv) and os.path.getsize(out_csv) > 0:
-                    with open(out_csv, "r") as cf:
-                        reader = csv.DictReader(cf)
-                        for row in reader:
-                            id1 = row.get("ID1")
-                            id2 = row.get("ID2")
-                            d_str = row.get("Distance")
-                            if id1 in taxa_idx and id2 in taxa_idx and d_str is not None:
-                                try:
-                                    d_val = float(d_str)
-                                    i, j = taxa_idx[id1], taxa_idx[id2]
-                                    dist_mat[i, j] = d_val
-                                    dist_mat[j, i] = d_val
-                                except ValueError:
-                                    pass
-                    used_binary = True
+                binary_success = True
+            except subprocess.CalledProcessError:
+                if threshold > 1.0:
+                    # Stock tn93 binaries (<= v1.0.15) enforce distance threshold in [0, 1].
+                    # Gracefully retry with threshold 1.0 (the maximum allowed by stock builds).
+                    cmd_fallback = [tn93_bin, "-t", "1.0", "-l", "1", "-q", "-o", out_csv, tmp_fa]
+                    try:
+                        subprocess.run(cmd_fallback, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        binary_success = True
+                    except Exception as e:
+                        print(f"[!] Warning: tn93 binary execution failed ({e}); falling back to Python TN93.")
             except Exception as e:
                 print(f"[!] Warning: tn93 binary execution failed ({e}); falling back to Python TN93.")
-                used_binary = False
+
+            if binary_success and os.path.exists(out_csv) and os.path.getsize(out_csv) > 0:
+                # Vectorized parse of the tn93 pairwise CSV (O(pairs) Python loop -> numpy scatter).
+                import pandas as pd
+                df = pd.read_csv(out_csv, usecols=["ID1", "ID2", "Distance"])
+                ii = df["ID1"].map(taxa_idx).to_numpy(dtype="float64")
+                jj = df["ID2"].map(taxa_idx).to_numpy(dtype="float64")
+                dd = pd.to_numeric(df["Distance"], errors="coerce").to_numpy()
+                valid = ~(np.isnan(ii) | np.isnan(jj) | np.isnan(dd))
+                ii = ii[valid].astype(np.intp)
+                jj = jj[valid].astype(np.intp)
+                dd = dd[valid].astype(np.float32)
+                dist_mat[ii, jj] = dd
+                dist_mat[jj, ii] = dd
+                used_binary = True
 
     if not used_binary:
         try:
@@ -512,17 +534,15 @@ def compute_tn93_distance_matrix(seq_dict: Dict[str, str], taxa: List[str], fa_p
                 "(or install the tn93 binary from https://github.com/veg/tn93)."
             )
 
-    # Impute missing/saturated off-diagonal distances with maximum observed distance or 1.0
-    max_d = float(dist_mat.max()) if dist_mat.max() > 0 else 0.1
-    for i in range(n):
-        for j in range(i + 1, n):
-            if dist_mat[i, j] <= 0.0 and seq_dict[taxa[i]] != seq_dict[taxa[j]]:
-                dist_mat[i, j] = 1e-4
-                dist_mat[j, i] = 1e-4
-            elif dist_mat[i, j] <= 0.0 and dist_mat.max() > 0:
-                dist_mat[i, j] = max(1.0, max_d)
-                dist_mat[j, i] = max(1.0, max_d)
-
+    # Impute missing/zero off-diagonal distances (vectorized).
+    # Identical sequences are pruned upstream (prune_identical_sequences).
+    # Any zero off-diagonal entry represents a divergent pair whose distance
+    # exceeded the threshold or was saturated -> impute with max observed distance or 1.0.
+    np.fill_diagonal(dist_mat, 0.0)
+    off_zero = (dist_mat <= 0.0)
+    np.fill_diagonal(off_zero, False)
+    max_d = float(dist_mat.max()) if dist_mat.max() > 0 else 1.0
+    dist_mat[off_zero] = max(1.0, max_d)
     np.fill_diagonal(dist_mat, 0.0)
     return dist_mat
 

@@ -17,24 +17,31 @@
 
 ---
 
+> [!TIP]
+> **Migrating from HyPhy?** See our comprehensive [**HyPhy to HyphAeon Migration Guide**](MIGRATION_GUIDE.md) for direct method-by-method translations (`hyphy meme` → `hyphaeon meme`, `busted` → `hyphaeon busted`, `contrast-fel` → `hyphaeon phenotype`, `prime` → `hyphaeon dms`) and biological recipes categorized by empirical data regime.
+
 ## 🚀 Key Capabilities & Unified Commands
 
 HyphAeon integrates five complementary phylogenetic deep learning and geometric
 projection engines, plus a pooled MEME concordance workflow:
 
 1. **`hyphaeon meme` (Site-Level Diversifying Selection)**:
-   Neural episodic positive selection inference ($>100\times$ faster than standard numerical MLE and codon-MCMC models like HyPhy MEME/FEL) using Tree-RoPE 4D geometric branch embeddings and axial tree attention.
+   Neural episodic positive selection inference (>100× faster than standard numerical MLE and codon-MCMC models like HyPhy MEME/FEL) using Tree-RoPE 4D geometric branch embeddings and axial tree attention.
 2. **`hyphaeon epistasis` (3D Co-Evolution & Epistatic Sectors)**:
-   Multi-scale epistatic sector mining implementing phylogenetic branch attribution, exact tree hypergeometric tests, Jaccard overlap suppression, contact map recovery ($C_\beta - C_\beta < 8\text{\AA}$), and vectorized Monte Carlo permutation significance testing (`--n-permutations`, `--max-perm-p`).
+   Multi-scale epistatic sector mining implementing phylogenetic branch attribution, exact tree hypergeometric tests, Jaccard overlap suppression, contact map recovery (C<sub>β</sub>–C<sub>β</sub> < 8 Å), and vectorized Monte Carlo permutation significance testing (`--n-permutations`, `--max-perm-p`).
 3. **`hyphaeon dms` (Digital Deep Mutational Scanning & CPDs)**:
-   In silico Selection Deep Mutational Scanning. Performs high-throughput sweeps of all 19 alternative amino acids across every codon position in seconds, calculating the **Epistatic Selection Sensitivity Matrix (ESSM)**, Intrinsic Mutational Plasticity ($\mathbf{E}_{i,i}$), and de novo predicting compensatory partners ($s_{\text{comp}}$) that rescue human disease mutations (Compensated Pathogenic Deviations).
+   In silico Selection Deep Mutational Scanning. Performs high-throughput sweeps of all 19 alternative amino acids across every codon position in seconds, calculating the **Epistatic Selection Sensitivity Matrix (ESSM)**, Intrinsic Mutational Plasticity (E<sub>i,i</sub>), and de novo predicting compensatory partners (s<sub>comp</sub>) that rescue human disease mutations (Compensated Pathogenic Deviations).
 4. **`hyphaeon busted` (Alignment-Wide Omnibus Selection)**:
    Multi-query cross-attention pooling head that evaluates whole-gene episodic selection and filters Synonymous Rate Variation (SRV) false positives in milliseconds.
 5. **`hyphaeon phenotype` (PhyloWAS)**:
-   Directional phenotype-genotype association mapping on the unit hypersphere $\mathbb{S}^{M-1}$. Computes spectral trait energies ($\Psi_{\text{Spectral}}$), exact sequenced-taxa null scaling $p$-values, Benjamini-Hochberg FDR $q$-values, **Phenotype-Associated Residue Signatures (PARS)**, macromolecular trait sector permutation testing (`--n-permutations`, `--max-perm-p`), and gene-level Brownian motion liability permulations (`--permulations`).
+   Directional phenotype-genotype association mapping on the unit hypersphere S<sup>M-1</sup>. Computes spectral trait energies (Ψ<sub>Spectral</sub>), exact sequenced-taxa null scaling p-values, Benjamini-Hochberg FDR q-values, **Phenotype-Associated Residue Signatures (PARS)**, macromolecular trait sector permutation testing (`--n-permutations`, `--max-perm-p`), and gene-level Brownian motion liability permulations (`--permulations`).
 6. **`hyphaeon evaluate` (HyPhy MEME Concordance)**:
    Dataset-level evaluation of HyphAeon site predictions against matched HyPhy
    MEME results, with site pooling across genes and machine-readable metrics.
+7. **`hyphaeon temporal` (Continuous Surveillance Dynamics & Sweep Velocity)**:
+   Time-resolved episodic selection tracking using continuous logistic trajectory regression, positive sweep velocity v<sub>s</sub>(t) = max(0, d/dt â<sub>s</sub>(t)), Dynamic Time Warping (DTW) wave decomposition, and temporal SVD factor loadings. See the [**Temporal Analysis Operational Guide**](TEMPORAL_ANALYSIS_GUIDE.md).
+8. **`hyphaeon splits` (Spectral Graph Bisection & Tree-Free Clade Discovery)**:
+   Recovers well-supported phylogenetic macro-clades and deep hierarchical bipartitions by fusing pairwise continuous 4D MDS geometry with discrete cross-taxa attention maps. Delivers up to 28× speedups over traditional ML tree search without requiring pre-computed phylogenies. See the [**Spectral Splits & Benchmarking Report**](SPECTRAL_SPLITS_BENCHMARK.md).
 
 ---
 
@@ -69,7 +76,7 @@ a custom wheel, or a CPU-only build on a server without GPU).
 
 All example alignments and phylogenetic trees required to reproduce these analyses are bundled directly in the `examples/` directory:
 
-| Dataset | Alignment File | Tree File | Taxa ($N$) | Codons ($L$) | Description & Biological Domain |
+| Dataset | Alignment File | Tree File | Taxa (N) | Codons (L) | Description & Biological Domain |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **HIV-1 RT** | [`examples/HIV1_RT.fasta`](examples/HIV1_RT.fasta) | [`examples/HIV1_RT.nwk`](examples/HIV1_RT.nwk) | 476 | 335 | Retroviral Reverse Transcriptase polymerase domain (drug resistance & epistasis). |
 | **Rhodopsin** | [`examples/RHO.fasta`](examples/RHO.fasta) | Embedded / Auto | 710 | 349 | Mammalian Rhodopsin visual pigments (deep-sea diving sensory adaptation). |
@@ -98,16 +105,22 @@ hyphaeon epistasis \
 #### Key Biological Discoveries:
 1. **Unsupervised Discovery of Multi-Drug Catalytic Complexes (Q151M MDR Complex)**:
    * HyphAeon places the co-evolution of residue 116 with residue 151 at **#1 overall** across all candidate pairs:
-     $$\text{F116} \longleftrightarrow \text{Q151} \quad (\text{Co-Sel} = 0.8660, \; p_{\text{hyper}} = 7.02 \times 10^{-9}, \; \text{FDR } q = 1.17 \times 10^{-7})$$
+     > **F116 ⟷ Q151** (Co-Sel = 0.8660, p<sub>hyper</sub> = 7.02 × 10⁻⁹, FDR q = 1.17 × 10⁻⁷)
 2. **Autonomous Dissection of Mutually Exclusive Pathways (TAM-1 vs. TAM-2)**:
-   * HyphAeon's branch co-selection metric autonomously isolates the **TAM-1 triad** (`M41L + L210W + T215Y`, $q < 10^{-7}$) from the mutually antagonistic **TAM-2 cluster** (`D67N + K70R + K219Q`, $q < 10^{-3}$).
+   * HyphAeon's branch co-selection metric autonomously isolates the **TAM-1 triad** (`M41L + L210W + T215Y`, q < 10⁻⁷) from the mutually antagonistic **TAM-2 cluster** (`D67N + K70R + K219Q`, q < 10⁻³).
 
 #### Monte Carlo Permutation Testing for Epistatic Sectors:
 To distinguish authentic structural/functional sectors from stochastic subsets of variable sites, HyphAeon tests the spectral coherence of candidate sectors against an empirical null distribution:
-* **Vectorized Permutation Engine (`--n-permutations <int>`, default: `10000`)**: For a discovered sector $\mathcal{S}$ of size $K$, samples $B$ random $K$-site subgraphs uniformly without replacement from active candidate sites. Coherence is computed across null batches via tensor contraction and Hermitian eigenvalue decomposition:
-  $$C(\mathcal{S}) = \frac{\lambda_1(\mathbf{A}[\mathcal{S}, :] \mathbf{A}[\mathcal{S}, :]^\top)}{\text{Tr}(\mathbf{A}[\mathcal{S}, :] \mathbf{A}[\mathcal{S}, :]^\top)}$$
-* **Output Metrics**: Each sector reports empirical one-sided $p_{\text{perm}} = \frac{1}{B} \sum_{b=1}^B \mathbb{I}(C(\mathcal{S}^{(b)}) \ge C(\mathcal{S}))$, null mean $\mathbb{E}[C_{\text{null}}]$, standard deviation, 95th percentile cutoff $C_{95}$, and theoretical isotropic baseline $1/K$. Set `--n-permutations 0` to disable permutation testing.
-* **Empirical Filtering (`--max-perm-p <float>`, default: `None`)**: Retains only sectors whose spectral coherence satisfies $p_{\text{perm}} \le \text{threshold}$ (e.g., `--max-perm-p 0.05`).
+* **Vectorized Permutation Engine (`--n-permutations <int>`, default: `10000`)**: For a discovered sector S of size K, samples B random K-site subgraphs uniformly without replacement from active candidate sites. Coherence is computed across null batches via tensor contraction and Hermitian eigenvalue decomposition:
+  ```text
+  C(S) = λ₁(A[S, :] A[S, :]ᵀ) / Tr(A[S, :] A[S, :]ᵀ)
+  ```
+* **Output Metrics**: Each sector reports empirical one-sided permutation p-value:
+  ```text
+  p_perm = (1/B) Σ I(C(S^(b)) ≥ C(S))
+  ```
+  along with null mean E[C<sub>null</sub>], standard deviation, 95th percentile cutoff C<sub>95</sub>, and theoretical isotropic baseline 1/K. Set `--n-permutations 0` to disable permutation testing.
+* **Empirical Filtering (`--max-perm-p <float>`, default: `None`)**: Retains only sectors whose spectral coherence satisfies `p_perm ≤ threshold` (e.g., `--max-perm-p 0.05`).
 
 ---
 
@@ -137,11 +150,11 @@ hyphaeon phenotype \
 #### Multi-Scale Permutation & Null Testing in PhyloWAS:
 HyphAeon implements two complementary null testing layers addressing distinct evolutionary hypotheses:
 1. **Macromolecular Trait Sector Permutations (`--n-permutations <int>`, default: `10000`; `--max-perm-p <float>`, default: `None`)**:
-   * Following single-site phenotype association ($\text{FDR } q \le \alpha$), HyphAeon extracts coherent epistatic sectors among trait-associated residues.
-   * Tests whether trait sector coherence $C(\mathcal{S})$ significantly exceeds random $K$-site subgraphs sampled across the alignment ($p_{\text{perm}} \le \text{max\_perm\_p}$), confirming that convergent phenotype adaptation drives coordinated macromolecular re-organization rather than unlinked mutations.
+   * Following single-site phenotype association (FDR q ≤ α), HyphAeon extracts coherent epistatic sectors among trait-associated residues.
+   * Tests whether trait sector coherence C(S) significantly exceeds random K-site subgraphs sampled across the alignment (p<sub>perm</sub> ≤ max_perm_p), confirming that convergent phenotype adaptation drives coordinated macromolecular re-organization rather than unlinked mutations.
 2. **Gene-Level Brownian Motion Liability Permulations (`--permulations <int>`, default: `0` / parametric)**:
    * Simulates neutral continuous phenotype evolution along the phylogenetic tree using Brownian motion (Saputra et al. 2021 / RERconverge null model).
-   * Computes empirical gene-level $p$-values ($p_{\text{gene}}$) testing whether the length-normalized spectral energy ($\bar{\Psi}$) or maximum site association ($\rho_{\max}$) exceeds neutral phylogenetic drift.
+   * Computes empirical gene-level p-values (p<sub>gene</sub>) testing whether the length-normalized spectral energy (Ψ̄) or maximum site association (ρ<sub>max</sub>) exceeds neutral phylogenetic drift.
 
 ---
 
@@ -159,11 +172,11 @@ hyphaeon meme -a examples/Smc6.fasta -t examples/Smc6.nwk --filter --filter-out-
 ```
 
 #### 1. Mechanistic Feature Attribution (`--attribute`):
-* **Single-Taxon Counterfactual Perturbation ($\Delta\text{LRT}$)**: In silico mutates each non-consensus species back to ancestral state to rank driving taxa by marginal selection evidence explained ($\%\text{ Signal Explained}$).
-* **Evolutionary Epoch Decomposition**: Classifies selection timing by weighted root patristic depth into **Recent Terminal / Tip Sweep** ($\ge 0.60$), **Intermediate Subclade Burst** ($0.35\text{--}0.60$), and **Deep Ancestral / Basal Divergence** ($< 0.35$), separating **Recurrent Multi-Lineage Adaptation** from single-lineage sweeps.
+* **Single-Taxon Counterfactual Perturbation (ΔLRT)**: In silico mutates each non-consensus species back to ancestral state to rank driving taxa by marginal selection evidence explained (% Signal Explained).
+* **Evolutionary Epoch Decomposition**: Classifies selection timing by weighted root patristic depth into **Recent Terminal / Tip Sweep** (≥ 0.60), **Intermediate Subclade Burst** (0.35–0.60), and **Deep Ancestral / Basal Divergence** (< 0.35), separating **Recurrent Multi-Lineage Adaptation** from single-lineage sweeps.
 
 #### 2. Automated Alignment Error Screening (`--filter`):
-* **Dual-Stage Algorithm**: Detects 1D selective clusters via exact upper-tail hypergeometric scan ($p_{\text{local}} \le 0.01$), then evaluates the Outlier Contamination Index ($\text{OCI} \ge 0.25$) to flag private frameshifts ($\ge 3$ contiguous radical mutations in an isolated leaf against conserved species).
+* **Dual-Stage Algorithm**: Detects 1D selective clusters via exact upper-tail hypergeometric scan (p<sub>local</sub> ≤ 0.01), then evaluates the Outlier Contamination Index (OCI ≥ 0.25) to flag private frameshifts (≥ 3 contiguous radical mutations in an isolated leaf against conserved species).
 * **Surgical In-Place Masking**: Automatically masks only the guilty taxon's anomalous span with `NNN` and re-evaluates the cleaned alignment in milliseconds, eliminating false positives while preserving legitimate multi-species selection.
 
 ---
@@ -207,11 +220,11 @@ mixed in the same invocation.
 | Output | Definition |
 | :--- | :--- |
 | Total sites | Number of site IDs shared by the matched prediction/MEME pairs. |
-| Pearson $r$ | Pearson correlation between HyphAeon `hyphaeon_lrt` and MEME LRT over all pooled evaluated sites. |
-| Spearman $\rho$ | Spearman rank correlation between the same pooled LRT values. |
-| ROC-AUC at $\alpha$ | MEME `p-value <= alpha` supplies the binary reference label; continuous HyphAeon `hyphaeon_lrt` supplies the ranking score. |
-| PPV at $\alpha$ | $TP/(TP+FP)$, where MEME and HyphAeon calls both use `p_value <= alpha`. |
-| FPR at $\alpha$ | $FP/(FP+TN)$, where MEME and HyphAeon calls both use `p_value <= alpha`. |
+| Pearson r | Pearson correlation between HyphAeon `hyphaeon_lrt` and MEME LRT over all pooled evaluated sites. |
+| Spearman ρ | Spearman rank correlation between the same pooled LRT values. |
+| ROC-AUC at α | MEME `p-value <= alpha` supplies the binary reference label; continuous HyphAeon `hyphaeon_lrt` supplies the ranking score. |
+| PPV at α | TP / (TP + FP), where MEME and HyphAeon calls both use `p_value <= alpha`. |
+| FPR at α | FP / (FP + TN), where MEME and HyphAeon calls both use `p_value <= alpha`. |
 
 A true positive is a site called significant by both MEME and HyphAeon. A true
 negative is a site called non-significant by both. The JSON report includes the
@@ -253,6 +266,25 @@ be supplied with `--prediction-suffix` and `--meme-suffix`.
 
 ---
 
+### Example 6: Spectral Graph Bisection & Tree-Free Phylogenetic Splits (`hyphaeon splits`)
+
+```bash
+# Basic Tree-Free Macro-Split Discovery (Outputs Newick Tree & Clade CSV)
+hyphaeon splits \
+  -a examples/bat_oas1.fasta \
+  --no-tree \
+  -o examples/bat_oas1_spectral_tree.nwk \
+  -c examples/bat_oas1_clades.csv \
+  --cpu
+```
+
+#### Spectral Bisection Architecture:
+* **Multi-Modal Affinity Fusion**: Combines cross-taxa attention matrices ($\bar{\mathbf{A}}$) from the axial transformer, continuous 4D metric space from Multidimensional Scaling (MDS) on pairwise distances, and sequence-level latent representations into a fused affinity matrix $\mathbf{A}_{\text{fused}} = \mathbf{S}_{\text{attn}} \odot \mathbf{K}_{\text{MDS}} \odot \mathbf{K}_{\text{emb}}$.
+* **Normalized Graph Laplacian & Fiedler Vector**: Partitions taxa along the Fiedler vector $\mathbf{v}_2$ of $\mathbf{L}_{\text{sym}} = \mathbf{I} - \mathbf{D}^{-1/2} \mathbf{A}_{\text{fused}} \mathbf{D}^{-1/2}$, quantifying macro-clade split stability via the spectral eigengap $\Delta\lambda = \lambda_3 - \lambda_2$.
+* **Comprehensive Benchmarks**: See [`SPECTRAL_SPLITS_BENCHMARK.md`](SPECTRAL_SPLITS_BENCHMARK.md) for full benchmarks against IQ-TREE 2, RAxML-NG, FastTree, and Neighbor-Joining across empirical datasets.
+
+---
+
 ## 🛠️ Retraining & Fine-Tuning HyphAeon
 
 ### 1. Build per-gene training tensors
@@ -288,21 +320,23 @@ python train.py \
 
 | Command | Action | Description |
 | :--- | :--- | :--- |
-| `hyphaeon meme` | Site-Level Selection | Fast per-codon LRT & selection rate prediction ($>10,000\times$ faster than MLE). |
+| `hyphaeon meme` | Site-Level Selection | Fast per-codon LRT & selection rate prediction (>10,000× faster than MLE). |
 | `hyphaeon evaluate` | MEME Concordance | Pooled ROC-AUC, LRT correlations, PPV, and FPR for folders or a single matched gene. |
 | `hyphaeon epistasis` | 3D Epistatic Sectors | Co-selection networks, hypergeometric tree overlaps, and Monte Carlo sector permutations. |
 | `hyphaeon dms` | Digital DMS | 19-AA in silico perturbation sweeps and Compensated Pathogenic Deviation mapping. |
 | `hyphaeon busted` | Alignment Omnibus | Alignment-wide episodic selection testing and SRV false-positive filtering. |
 | `hyphaeon phenotype`| Directional PhyloWAS | Directional trait mapping on the unit hypersphere, trait sector permutations, and liability permulations. |
+| `hyphaeon temporal` | Dynamic Surveillance | Continuous logistic trajectory regression, sweep velocity, DTW waves, and temporal SVD. |
+| `hyphaeon splits` | Spectral Bisection | Tree-free phylogenetic macro-splits via cross-taxa attention and MDS graph Laplacian. |
 
 ### Key Permutation Testing Arguments:
 
 #### `hyphaeon epistasis`
 | Flag | Type | Default | Description |
 | :--- | :---: | :---: | :--- |
-| `--n-permutations` | `int` | `10000` | Number of random $K$-site subset Monte Carlo permutations for sector significance testing (set `0` to disable). |
-| `--max-perm-p` | `float` | `None` | Maximum empirical permutation $p$-value threshold to retain sectors (default retains all $C(\mathcal{S}) \ge \text{min\_coherence}$). |
-| `--min-coherence` | `float` | `0.50` | Minimum spectral coherence ratio $C(\mathcal{S}) = \lambda_1 / \text{Tr}$ for candidate sectors. |
+| `--n-permutations` | `int` | `10000` | Number of random K-site subset Monte Carlo permutations for sector significance testing (set `0` to disable). |
+| `--max-perm-p` | `float` | `None` | Maximum empirical permutation p-value threshold to retain sectors (default retains all C(S) ≥ min_coherence). |
+| `--min-coherence` | `float` | `0.50` | Minimum spectral coherence ratio C(S) = λ₁ / Tr for candidate sectors. |
 | `--min-clique-size` | `int` | `3` | Minimum clique seed size for epistatic sectors. |
 | `--max-overlap` | `float` | `0.50` | Maximum Jaccard overlap allowed between discovered sectors. |
 | `--no-tree` / `--use-tn93` | `flag` | `False` | Estimate pairwise evolutionary distances directly from alignment via TN93 (skips tree). Requires the optional `tn93` package (`pip install hyphaeon[tn93]`) or the `tn93` binary on PATH. |
@@ -310,12 +344,25 @@ python train.py \
 #### `hyphaeon phenotype`
 | Flag | Type | Default | Description |
 | :--- | :---: | :---: | :--- |
-| `--n-permutations` | `int` | `10000` | Number of random $K$-site subset Monte Carlo permutations for trait sector significance testing (set `0` to disable). |
-| `--max-perm-p` | `float` | `None` | Maximum permutation $p$-value threshold to retain trait sectors (default retains all $C(\mathcal{S}) \ge 0.45$). |
-| `--permulations` | `int` | `0` | Number of Brownian motion phylogenetic permulations for gene-level empirical $p$-values (RERconverge null model; default `0` / parametric). |
+| `--n-permutations` | `int` | `10000` | Number of random K-site subset Monte Carlo permutations for trait sector significance testing (set `0` to disable). |
+| `--max-perm-p` | `float` | `None` | Maximum permutation p-value threshold to retain trait sectors (default retains all C(S) ≥ 0.45). |
+| `--permulations` | `int` | `0` | Number of Brownian motion phylogenetic permulations for gene-level empirical p-values (RERconverge null model; default `0` / parametric). |
 | `--alpha` | `float` | `0.05` | Benjamini-Hochberg FDR significance threshold for trait-associated sites. |
 | `--continuous` | `flag` | `False` | Treat trait values as continuous phylogenetic contrasts rather than discrete foreground/background. |
 | `--min-taxa` | `int` | `4` | Minimum sequenced taxa required per site. |
+
+#### `hyphaeon splits`
+| Flag | Type | Default | Description |
+| :--- | :---: | :---: | :--- |
+| `-a` / `--alignment` | `path` | Required | Path to in-frame codon FASTA or NEXUS alignment. |
+| `-t` / `--tree` | `path` | `None` | Optional Newick/NEXUS phylogenetic tree (optional if embedded, or if `--no-tree`/`--use-tn93` is set). |
+| `--no-tree` / `--use-tn93` | `flag` | `False` | Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment via TN93. Requires `tn93` (`pip install hyphaeon[tn93]`) or the `tn93` binary on PATH. |
+| `--min-clade-size` | `int` | `2` | Minimum clade size floor to terminate recursive bisection. |
+| `--max-depth` | `int` | `10` | Maximum tree hierarchy recursion depth. |
+| `-o` / `--output` | `path` | `None` | Optional path to export derived hierarchical Newick tree (`.nwk`). |
+| `-c` / `--csv` | `path` | `None` | Optional path to export split clade membership assignments (`.csv`). |
+| `-w` / `--weights` | `path` | `None` | Path to local model weights file (overrides HF download). |
+| `--cpu` | `flag` | `False` | Force CPU execution. |
 
 ---
 
