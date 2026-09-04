@@ -371,3 +371,23 @@ class TestPermulations:
         assert first_site["p_assoc_perm"] is not None
         assert 0.0 <= first_site["p_assoc_perm"] <= 1.0
 
+    def test_run_phenotype_association_with_sector_permutations(self, examples_dir, dummy_weights):
+        fa = os.path.join(examples_dir, "Smc6.fasta")
+        nwk = os.path.join(examples_dir, "Smc6.nwk")
+
+        res = run_phenotype_association(
+            alignment_path=fa,
+            tree_path=nwk,
+            weights_path=dummy_weights,
+            foreground="homSap*,panTro*,panPan*",
+            n_permutations=100,
+            cpu=True,
+        )
+        assert "trait_sectors" in res
+        for sec in res["trait_sectors"]:
+            assert "p_perm" in sec
+            assert "null_coherence_mean" in sec
+            assert "null_coherence_95" in sec
+            assert "isotropic_baseline" in sec
+            assert 0.0 <= sec["p_perm"] <= 1.0
+

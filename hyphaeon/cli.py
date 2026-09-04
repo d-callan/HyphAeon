@@ -624,7 +624,9 @@ def cmd_phenotype(args):
             min_taxa_per_site=getattr(args, "min_taxa", 4),
             alpha=getattr(args, "alpha", 0.05),
             cpu=getattr(args, "cpu", False),
-            use_tn93=use_tn93
+            use_tn93=use_tn93,
+            n_permutations=getattr(args, "n_permutations", 10000),
+            max_perm_p=getattr(args, "max_perm_p", None)
         )
     except Exception as e:
         print(f"\n[!] Phenotype Association Error: {e}")
@@ -664,7 +666,22 @@ def cmd_phenotype(args):
         print(f"🧬 Inferred Epistatic Sectors Across Trait-Associated Sites ({len(trait_sectors)} passing C(S) >= 0.45):")
         for sec in trait_sectors:
             sec_sites_str = ", ".join([f"{sec['sites'][i]}" for i in range(len(sec['sites']))])
-            print(f"  • Sector {sec['sector_id']}: Codons [ {sec_sites_str} ] | Size: {sec['size']} | Coherence C(S): {sec['spectral_coherence']:.3f} | Mean LRT: {sec['mean_lrt']:.2f}")
+            p_perm_val = sec.get("p_perm")
+            if p_perm_val is not None:
+                if p_perm_val < 1e-4:
+                    p_str = "p_perm < 0.0001 ***"
+                elif p_perm_val < 0.001:
+                    p_str = f"p_perm = {p_perm_val:.4f} **"
+                elif p_perm_val < 0.05:
+                    p_str = f"p_perm = {p_perm_val:.4f} *"
+                else:
+                    p_str = f"p_perm = {p_perm_val:.4f} (ns)"
+                null_mean = sec.get("null_coherence_mean")
+                null_95 = sec.get("null_coherence_95")
+                null_str = f", null: {null_mean:.3f}, 95th: {null_95:.3f}" if null_mean is not None else ""
+                print(f"  • Sector {sec['sector_id']}: Codons [ {sec_sites_str} ] | Size: {sec['size']} | Coherence C(S): {sec['spectral_coherence']:.3f} ({p_str}{null_str}) | Mean LRT: {sec['mean_lrt']:.2f}")
+            else:
+                print(f"  • Sector {sec['sector_id']}: Codons [ {sec_sites_str} ] | Size: {sec['size']} | Coherence C(S): {sec['spectral_coherence']:.3f} | Mean LRT: {sec['mean_lrt']:.2f}")
 
     coselection_pairs = res.get("coselection_pairs", [])
     if coselection_pairs:
@@ -1035,6 +1052,8 @@ def main():
     pheno_parser.add_argument("--permulations", type=int, default=0, help="Number of Brownian motion phylogenetic permulations for empirical p-values (RERconverge null model; default: 0 / parametric)")
     pheno_parser.add_argument("--min-taxa", type=int, default=4, help="Minimum sequenced taxa required per site")
     pheno_parser.add_argument("--alpha", type=float, default=0.05, help="FDR significance threshold")
+    pheno_parser.add_argument("--n-permutations", type=int, default=10000, help="Number of random K-site subset Monte Carlo permutations for trait sector significance testing (default: 10000)")
+    pheno_parser.add_argument("--max-perm-p", type=float, default=None, help="Maximum permutation p-value threshold to retain trait sectors (default: None, retain all C(S) >= 0.45)")
     pheno_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
     pheno_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     pheno_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")

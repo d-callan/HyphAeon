@@ -362,7 +362,9 @@ def run_phenotype_association(
     cpu: bool = False,
     batch_size: int = 64,
     progress: bool = True,
-    use_tn93: bool = False
+    use_tn93: bool = False,
+    n_permutations: int = 10000,
+    max_perm_p: Optional[float] = None
 ) -> Dict[str, Any]:
     """
     Executes directional Phenotype-Genotype association (PhyloWAS) on a codon alignment
@@ -612,7 +614,9 @@ def run_phenotype_association(
                     min_clique_size=2,
                     min_coherence=0.45,
                     a_np=a_np,
-                    taxa=taxa
+                    taxa=taxa,
+                    n_permutations=n_permutations,
+                    max_perm_p=max_perm_p
                 )
 
     return {
