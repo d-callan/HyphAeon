@@ -18,29 +18,27 @@
 ---
 
 > [!TIP]
-> **Migrating from HyPhy?** See our comprehensive [**HyPhy to HyphAeon Migration Guide**](MIGRATION_GUIDE.md) for direct method-by-method translations (`hyphy meme` → `hyphaeon meme`, `busted` → `hyphaeon busted`, `contrast-fel` → `hyphaeon phenotype`, `prime` → `hyphaeon dms`) and biological recipes categorized by empirical data regime.
+> **Migrating from HyPhy?** See our comprehensive [**HyPhy to HyphAeon Migration Guide**](MIGRATION_GUIDE.md) for direct method-by-method translations (`hyphy meme` → `hyphaeon meme`, `contrast-fel` → `hyphaeon phenotype`, `prime` → `hyphaeon dms`) and biological recipes categorized by empirical data regime.
 
 ## 🚀 Key Capabilities & Unified Commands
 
-HyphAeon integrates five complementary phylogenetic deep learning and geometric
+HyphAeon integrates six complementary phylogenetic deep learning and geometric
 projection engines, plus a pooled MEME concordance workflow:
 
 1. **`hyphaeon meme` (Site-Level Diversifying Selection)**:
-   Neural episodic positive selection inference (>100× faster than standard numerical MLE and codon-MCMC models like HyPhy MEME/FEL) using Tree-RoPE 4D geometric branch embeddings and axial tree attention.
+   Neural episodic positive selection inference (100×–1,100× faster than standard numerical MLE and codon-MCMC models like HyPhy MEME/FEL; see ARCHITECTURE.md for detailed benchmarks) using Tree-RoPE 4D geometric branch embeddings and axial tree attention.
 2. **`hyphaeon epistasis` (3D Co-Evolution & Epistatic Sectors)**:
    Multi-scale epistatic sector mining implementing phylogenetic branch attribution, exact tree hypergeometric tests, Jaccard overlap suppression, contact map recovery (C<sub>β</sub>–C<sub>β</sub> < 8 Å), and vectorized Monte Carlo permutation significance testing (`--n-permutations`, `--max-perm-p`).
 3. **`hyphaeon dms` (Digital Deep Mutational Scanning & CPDs)**:
    In silico Selection Deep Mutational Scanning. Performs high-throughput sweeps of all 19 alternative amino acids across every codon position in seconds, calculating the **Epistatic Selection Sensitivity Matrix (ESSM)**, Intrinsic Mutational Plasticity (E<sub>i,i</sub>), and de novo predicting compensatory partners (s<sub>comp</sub>) that rescue human disease mutations (Compensated Pathogenic Deviations).
-4. **`hyphaeon busted` (Alignment-Wide Omnibus Selection)**:
-   Multi-query cross-attention pooling head that evaluates whole-gene episodic selection and filters Synonymous Rate Variation (SRV) false positives in milliseconds.
-5. **`hyphaeon phenotype` (PhyloWAS)**:
+4. **`hyphaeon phenotype` (PhyloWAS)**:
    Directional phenotype-genotype association mapping on the unit hypersphere S<sup>M-1</sup>. Computes spectral trait energies (Ψ<sub>Spectral</sub>), exact sequenced-taxa null scaling p-values, Benjamini-Hochberg FDR q-values, **Phenotype-Associated Residue Signatures (PARS)**, macromolecular trait sector permutation testing (`--n-permutations`, `--max-perm-p`), and gene-level Brownian motion liability permulations (`--permulations`).
-6. **`hyphaeon evaluate` (HyPhy MEME Concordance)**:
+5. **`hyphaeon evaluate` (HyPhy MEME Concordance)**:
    Dataset-level evaluation of HyphAeon site predictions against matched HyPhy
    MEME results, with site pooling across genes and machine-readable metrics.
-7. **`hyphaeon temporal` (Continuous Surveillance Dynamics & Sweep Velocity)**:
+6. **`hyphaeon temporal` (Continuous Surveillance Dynamics & Sweep Velocity)**:
    Time-resolved episodic selection tracking using continuous logistic trajectory regression, positive sweep velocity v<sub>s</sub>(t) = max(0, d/dt â<sub>s</sub>(t)), Dynamic Time Warping (DTW) wave decomposition, and temporal SVD factor loadings. See the [**Temporal Analysis Operational Guide**](TEMPORAL_ANALYSIS_GUIDE.md).
-8. **`hyphaeon splits` (Spectral Graph Bisection & Tree-Free Clade Discovery)**:
+7. **`hyphaeon splits` (Spectral Graph Bisection & Tree-Free Clade Discovery)**:
    Recovers well-supported phylogenetic macro-clades and deep hierarchical bipartitions by fusing pairwise continuous 4D MDS geometry with discrete cross-taxa attention maps. Delivers up to 28× speedups over traditional ML tree search without requiring pre-computed phylogenies. See the [**Spectral Splits & Benchmarking Report**](SPECTRAL_SPLITS_BENCHMARK.md).
 
 ---
@@ -79,7 +77,7 @@ All example alignments and phylogenetic trees required to reproduce these analys
 | Dataset | Alignment File | Tree File | Taxa (N) | Codons (L) | Description & Biological Domain |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **HIV-1 RT** | [`examples/HIV1_RT.fasta`](examples/HIV1_RT.fasta) | [`examples/HIV1_RT.nwk`](examples/HIV1_RT.nwk) | 476 | 335 | Retroviral Reverse Transcriptase polymerase domain (drug resistance & epistasis). |
-| **Rhodopsin** | [`examples/RHO.fasta`](examples/RHO.fasta) | Embedded / Auto | 710 | 349 | Mammalian Rhodopsin visual pigments (deep-sea diving sensory adaptation). |
+| **Rhodopsin** | [`examples/RHO.fasta`](examples/RHO.fasta) | Auto (TN93) | 710 | 349 | Mammalian Rhodopsin visual pigments (deep-sea diving sensory adaptation). No tree file provided; uses TN93 distance estimation. |
 | **Smc6** | [`examples/Smc6.fasta`](examples/Smc6.fasta) | [`examples/Smc6.nwk`](examples/Smc6.nwk) | 20 | 1,097 | Primate Smc6 structural maintenance of chromosomes (antiviral host restriction). |
 | **Bat OAS1** | [`examples/bat_oas1.fasta`](examples/bat_oas1.fasta) | [`examples/bat_oas1.nwk`](examples/bat_oas1.nwk) | 18 | 351 | Chiropteran OAS1 2'-5'-oligoadenylate synthetase (innate immunity escape). |
 | **Camelid VHH** | [`examples/camelid.fasta`](examples/camelid.fasta) | [`examples/camelid.nwk`](examples/camelid.nwk) | 212 | 96 | Camelid single-domain antibody heavy-chain variable domain (antigenic diversity). |
@@ -320,11 +318,10 @@ python training/train.py \
 
 | Command | Action | Description |
 | :--- | :--- | :--- |
-| `hyphaeon meme` | Site-Level Selection | Fast per-codon LRT & selection rate prediction (>10,000× faster than MLE). |
+| `hyphaeon meme` | Site-Level Selection | Fast per-codon LRT & selection rate prediction (100×–1,100× faster than MLE). |
 | `hyphaeon evaluate` | MEME Concordance | Pooled ROC-AUC, LRT correlations, PPV, and FPR for folders or a single matched gene. |
 | `hyphaeon epistasis` | 3D Epistatic Sectors | Co-selection networks, hypergeometric tree overlaps, and Monte Carlo sector permutations. |
 | `hyphaeon dms` | Digital DMS | 19-AA in silico perturbation sweeps and Compensated Pathogenic Deviation mapping. |
-| `hyphaeon busted` | Alignment Omnibus | Alignment-wide episodic selection testing and SRV false-positive filtering. |
 | `hyphaeon phenotype`| Directional PhyloWAS | Directional trait mapping on the unit hypersphere, trait sector permutations, and liability permulations. |
 | `hyphaeon temporal` | Dynamic Surveillance | Continuous logistic trajectory regression, sweep velocity, DTW waves, and temporal SVD. |
 | `hyphaeon splits` | Spectral Bisection | Tree-free phylogenetic macro-splits via cross-taxa attention and MDS graph Laplacian. |

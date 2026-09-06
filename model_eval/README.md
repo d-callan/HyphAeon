@@ -10,7 +10,7 @@ hosted on Hugging Face at `datamonkey/hyphaeon`, or a local checkpoint passed
 via `HYPHAEON_WEIGHTS`). It asks: *does this model, as shipped, behave correctly
 with respect to its phylogenetic inputs?*
 
-It is black-box with respect to training: it does not import `train.py`, does
+It is black-box with respect to training: it does not import `training/train.py`, does
 not depend on any particular training script, and re-evaluates whatever weights
 are currently published. When the model team pushes new weights to HF, these
 tests re-run against them automatically.
@@ -36,12 +36,11 @@ posteriors from the neural model. The paper calls this "Mode II:
 Selection-Informed" and contrasts it with "Mode I: Raw Mutation Baseline"
 (binary substitution counting).
 
-**The repo implements Mode I. The paper describes Mode II.** Mode II is not
-implemented in this repo. The `tests/methods/` suite tests what IS
-implemented (Mode I). When Mode II is implemented, its tests would belong
-here in `model_eval/` because they would depend on the neural model's
-per-branch output — output that the current model cannot produce reliably
-(see the xfailed invariance gates below).
+**Mode II is implemented** in the main codebase (`hyphaeon/phenotype.py`), which
+uses continuous Transformer Attribution Vectors (multi-head phylogenetic
+attention attributions and branch projections) rather than binary substitution
+counts. Mode I (raw mutation baseline) is used here in `model_eval/` as a
+baseline comparison. The `tests/` suite tests both modes.
 
 ## What this is NOT
 
