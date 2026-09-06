@@ -292,7 +292,7 @@ hyphaeon splits \
 Prepare one alignment and one official HyPhy MEME JSON result per gene. Trees may be supplied as matching Newick files or embedded in the alignments:
 
 ```bash
-python scripts/build_training_npz.py \
+python training/build_training_npz.py \
   --alignment_dir /path/to/training_alignments/ \
   --tree_dir /path/to/trees/ \
   --meme_dir /path/to/meme_results/ \
@@ -302,7 +302,7 @@ python scripts/build_training_npz.py \
 ### 2. Fine-tune the foundation model
 
 ```bash
-python train.py \
+python training/train.py \
   --data_dir /path/to/training_npz/ \
   --epochs 30 \
   --batch_size 1 \

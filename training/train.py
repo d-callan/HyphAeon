@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-train.py
---------
+training/train.py
+-----------------
 Clean training pipeline for HyphAeon (PhyloAxialTransformer).
 Supports mixed precision, cosine annealing learning rate scheduling, per-gene NPZ
 loading, and within-gene site batching.
