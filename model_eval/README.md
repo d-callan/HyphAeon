@@ -62,8 +62,7 @@ baseline comparison. The `tests/` suite tests both modes.
 
 - Real HyphAeon weights, resolved in this order:
   1. `HYPHAEON_WEIGHTS` env var pointing to a local `.pt` or `.safetensors` checkpoint.
-  2. Hugging Face download (`datamonkey/hyphaeon`, default variant). Requires
-     `HF_TOKEN` while the repo is gated. Cached locally after first download.
+  2. Hugging Face download (`datamonkey/hyphaeon`, default variant). Cached locally after first download.
 - Python deps: `pip install -e .[model_eval]` (installs `pytest` and
   `scikit-learn`, on top of the base package's torch/biopython/numpy/scipy).
 - Example data in `examples/` (shipped with the repo).
@@ -280,5 +279,5 @@ does not collect `model_eval/`.
 
 A separate workflow, `.github/workflows/model_eval.yml`, runs this suite on
 `workflow_dispatch` and on changes to `model_eval/`, `hyphaeon/model.py`, or
-`hyphaeon/dataset.py`. It does not run on every push. It requires the
-`HF_TOKEN` secret (for weight download) and uploads report artifacts.
+`hyphaeon/dataset.py`. It does not run on every push. It requires
+network access for weight download and uploads report artifacts.

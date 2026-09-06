@@ -41,9 +41,8 @@ from ._progress import ChunkProgress
 
 DEFAULT_VARIANT_ENV = os.environ.get("HYPHAEON_VARIANT", DEFAULT_VARIANT)
 
-# Default to package model.safetensors if it exists, otherwise check HYPHAEON_WEIGHTS
-_local_repo_weights = Path(__file__).resolve().parent.parent / "model.safetensors"
-DEFAULT_WEIGHTS_ENV = os.environ.get("HYPHAEON_WEIGHTS", str(_local_repo_weights) if _local_repo_weights.exists() else None)
+# Default to HYPHAEON_WEIGHTS env var if set, otherwise None (use HF download or local fallback in resolve_weights_path)
+DEFAULT_WEIGHTS_ENV = os.environ.get("HYPHAEON_WEIGHTS", None)
 
 def determine_adaptive_batch_size(num_species: int, total_sites: int, device: torch.device, user_batch_size: int = None) -> int:
     # DEPRECATED: retained for test/back-compat; delegates to compute_adaptive_safe_batch_size
@@ -576,8 +575,7 @@ def list_models():
     except Exception as e:
         print(f"[!] Could not fetch model list from Hugging Face: {e}")
         if "401" in str(e) or "Unauthorized" in str(e):
-            print("    The model repo may be gated. Set HF_TOKEN env var to authenticate.")
-            print("    Get a token at: https://huggingface.co/settings/tokens")
+            print("    Could not authenticate with Hugging Face. If accessing a private repo, set HF_TOKEN env var.")
         return
 
     if not variants:

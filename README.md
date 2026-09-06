@@ -65,6 +65,12 @@ You can always install a specific PyTorch build before installing HyphAeon if
 none of the above defaults suit your system (e.g. a particular CUDA version,
 a custom wheel, or a CPU-only build on a server without GPU).
 
+> [!NOTE]
+> **Model weights** are downloaded automatically from [Hugging Face](https://huggingface.co/datamonkey/hyphaeon)
+> on first use (cached in `~/.cache/hyphaeon/`). No authentication or token is
+> required. Use `--model-variant viral` to select the viral-tuned variant, or
+> `--weights /path/to/checkpoint` to use a local file.
+
 ---
 
 ## 📂 Included Benchmark Datasets
@@ -282,8 +288,8 @@ If you use **HyphAeon** in your research, please cite:
 
 ```bibtex
 @article{hyphaeon2026,
-  title={HyphAeon: A Deep-Time Phylogenetic Foundation Model for Multi-Scale Evolutionary, Structural, and Clinical Genomics},
-  author={Kosakovsky Pond, Sergei L. and team},
+  title={HyphAeon: Attention on Evolution Across Deep Time Transforms Comparative Genomics},
+  author={Kosakovsky Pond, Sergei L. and Weaver, Steven and Callan, Danielle and Zehr, Jordan D. and Lucaci, Alexander G. and Verdonk, Hannah and Selberg, Avery and Brown, Gallean and Chikina, Maria and Clark, Nathan and Makova, Kateryna D. and Martin, Darren P. and Nekrutenko, Anton},
   journal={Nature Methods / Nature Biotechnology (in submission)},
   year={2026}
 }
