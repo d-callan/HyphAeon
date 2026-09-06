@@ -20,6 +20,8 @@ import scipy.stats as stats
 import torch
 import networkx as nx
 
+_IS_DEV = (Path(__file__).resolve().parent.parent / ".git").exists()
+
 from .model import PhyloAxialTransformer, BustedMultiTaskHead
 from .dataset import load_alignment_and_tree
 from .weights import (
@@ -1174,23 +1176,24 @@ def main():
     dms_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     dms_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
 
-    # 5. BUSTED Omnibus Subcommand
-    busted_parser = subparsers.add_parser("busted", aliases=["omnibus", "gene-selection"], help="Run alignment-wide omnibus episodic selection inference (BUSTED / BUSTED+S emulation)")
-    busted_parser.add_argument("-a", "--alignment", default=None, help="Path to single in-frame codon alignment or comma-separated list")
-    busted_parser.add_argument("-d", "--dir", default=None, help="Path to directory containing alignment files for high-throughput batch processing")
-    busted_parser.add_argument("--pattern", default="*.aln,*.fa,*.fasta,*.nex,*.fna", help="Comma-separated glob patterns to match in --dir (default: *.aln,*.fa,*.fasta,*.nex,*.fna)")
-    busted_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded, or if --no-tree/--use-tn93 is set)")
-    busted_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93")
-    busted_parser.add_argument("--use-tn93", action="store_true", help="Estimate pairwise distances directly from alignment using TN93 (skips tree)")
-    busted_parser.add_argument("--tree-suffix", default=".raxml.bestTree", help="Suffix to append to alignment filename to locate matching tree (default: .raxml.bestTree)")
-    busted_parser.add_argument("--tree-dir", default=None, help="Optional directory containing corresponding phylogenetic trees")
-    busted_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
-    busted_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from HF (default: {DEFAULT_VARIANT})")
-    busted_parser.add_argument("-s", "--max-species", type=int, default=512, help="Maximum number of taxa (Farthest-Point Traversal subsampling if exceeded)")
-    busted_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Number of codon sites to process in parallel (default: adaptive; very large values may be capped to a hardware-safe threshold to prevent GPU OOM)")
-    busted_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
-    busted_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
-    busted_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
+    # 5. BUSTED Omnibus Subcommand (dev-only, not in preprint)
+    if _IS_DEV:
+        busted_parser = subparsers.add_parser("busted", aliases=["omnibus", "gene-selection"], help="Run alignment-wide omnibus episodic selection inference (BUSTED / BUSTED+S emulation)")
+        busted_parser.add_argument("-a", "--alignment", default=None, help="Path to single in-frame codon alignment or comma-separated list")
+        busted_parser.add_argument("-d", "--dir", default=None, help="Path to directory containing alignment files for high-throughput batch processing")
+        busted_parser.add_argument("--pattern", default="*.aln,*.fa,*.fasta,*.nex,*.fna", help="Comma-separated glob patterns to match in --dir (default: *.aln,*.fa,*.fasta,*.nex,*.fna)")
+        busted_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded, or if --no-tree/--use-tn93 is set)")
+        busted_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93")
+        busted_parser.add_argument("--use-tn93", action="store_true", help="Estimate pairwise distances directly from alignment using TN93 (skips tree)")
+        busted_parser.add_argument("--tree-suffix", default=".raxml.bestTree", help="Suffix to append to alignment filename to locate matching tree (default: .raxml.bestTree)")
+        busted_parser.add_argument("--tree-dir", default=None, help="Optional directory containing corresponding phylogenetic trees")
+        busted_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
+        busted_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from HF (default: {DEFAULT_VARIANT})")
+        busted_parser.add_argument("-s", "--max-species", type=int, default=512, help="Maximum number of taxa (Farthest-Point Traversal subsampling if exceeded)")
+        busted_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Number of codon sites to process in parallel (default: adaptive; very large values may be capped to a hardware-safe threshold to prevent GPU OOM)")
+        busted_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
+        busted_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
+        busted_parser.add_argument("-c", "--csv", help="Optional path to output CSV results")
 
     # 6. Disease Pathogenicity Subcommand
     disease_parser = subparsers.add_parser("disease", aliases=["pathogenicity", "variant", "clinvar"], help="Predict disease variant effect and pathogenicity using HyphAeon Transformer")
@@ -1256,14 +1259,15 @@ def main():
     temp_parser.add_argument("-s", "--max-species", type=int, default=None, help="Maximum number of taxa to include")
     temp_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
 
-    # 10. Pooled HyphAeon-vs-MEME evaluation
-    eval_parser = subparsers.add_parser(
-        "evaluate",
-        help="Evaluate folders of site predictions against matched HyPhy MEME results",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    from .evaluation import configure_parser as configure_evaluation_parser
-    configure_evaluation_parser(eval_parser)
+    # 10. Pooled HyphAeon-vs-MEME evaluation (dev-only, not in preprint)
+    if _IS_DEV:
+        eval_parser = subparsers.add_parser(
+            "evaluate",
+            help="Evaluate folders of site predictions against matched HyPhy MEME results",
+            formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        )
+        from .evaluation import configure_parser as configure_evaluation_parser
+        configure_evaluation_parser(eval_parser)
 
     # 11. Spectral Graph Bisection (Phylogenetic Splits) Subcommand
     splits_parser = subparsers.add_parser(

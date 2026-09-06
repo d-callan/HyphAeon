@@ -80,7 +80,7 @@ All example alignments and phylogenetic trees required to reproduce these analys
 | **Rhodopsin** | [`examples/RHO.fasta`](examples/RHO.fasta) | Auto (TN93) | 710 | 349 | Mammalian Rhodopsin visual pigments (deep-sea diving sensory adaptation). No tree file provided; uses TN93 distance estimation. |
 | **Smc6** | [`examples/Smc6.fasta`](examples/Smc6.fasta) | [`examples/Smc6.nwk`](examples/Smc6.nwk) | 20 | 1,097 | Primate Smc6 structural maintenance of chromosomes (antiviral host restriction). |
 | **Bat OAS1** | [`examples/bat_oas1.fasta`](examples/bat_oas1.fasta) | [`examples/bat_oas1.nwk`](examples/bat_oas1.nwk) | 18 | 351 | Chiropteran OAS1 2'-5'-oligoadenylate synthetase (innate immunity escape). |
-| **Camelid VHH** | [`examples/camelid.fasta`](examples/camelid.fasta) | [`examples/camelid.nwk`](examples/camelid.nwk) | 212 | 96 | Camelid single-domain antibody heavy-chain variable domain (antigenic diversity). |
+| **Camelid VHH** | [`examples/camelid.fasta`](examples/camelid.fasta) | [`examples/camelid.nwk`](examples/camelid.nwk) | 212 | 96 | Camelid single-domain antibody heavy-chain variable domain (antigenic diversity). Used for integration testing; no dedicated example section. |
 
 ---
 
@@ -325,6 +325,8 @@ python training/train.py \
 | `hyphaeon phenotype`| Directional PhyloWAS | Directional trait mapping on the unit hypersphere, trait sector permutations, and liability permulations. |
 | `hyphaeon temporal` | Dynamic Surveillance | Continuous logistic trajectory regression, sweep velocity, DTW waves, and temporal SVD. |
 | `hyphaeon splits` | Spectral Bisection | Tree-free phylogenetic macro-splits via cross-taxa attention and MDS graph Laplacian. |
+| `hyphaeon disease` | Pathogenicity Prediction | Predict disease variant effects and pathogenicity using HyphAeon attention attributions. |
+| `hyphaeon filter` | Alignment QC | Automated alignment error detection and surgical masking of anomalous regions. |
 
 ### Key Permutation Testing Arguments:
 
