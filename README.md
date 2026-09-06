@@ -23,7 +23,7 @@
 ## 🚀 Key Capabilities & Unified Commands
 
 HyphAeon integrates six complementary phylogenetic deep learning and geometric
-projection engines, plus a pooled MEME concordance workflow:
+projection engines:
 
 1. **`hyphaeon meme` (Site-Level Diversifying Selection)**:
    Neural episodic positive selection inference (100×–1,100× faster than standard numerical MLE and codon-MCMC models like HyPhy MEME/FEL; see ARCHITECTURE.md for detailed benchmarks) using Tree-RoPE 4D geometric branch embeddings and axial tree attention.
@@ -33,12 +33,9 @@ projection engines, plus a pooled MEME concordance workflow:
    In silico Selection Deep Mutational Scanning. Performs high-throughput sweeps of all 19 alternative amino acids across every codon position in seconds, calculating the **Epistatic Selection Sensitivity Matrix (ESSM)**, Intrinsic Mutational Plasticity (E<sub>i,i</sub>), and de novo predicting compensatory partners (s<sub>comp</sub>) that rescue human disease mutations (Compensated Pathogenic Deviations).
 4. **`hyphaeon phenotype` (PhyloWAS)**:
    Directional phenotype-genotype association mapping on the unit hypersphere S<sup>M-1</sup>. Computes spectral trait energies (Ψ<sub>Spectral</sub>), exact sequenced-taxa null scaling p-values, Benjamini-Hochberg FDR q-values, **Phenotype-Associated Residue Signatures (PARS)**, macromolecular trait sector permutation testing (`--n-permutations`, `--max-perm-p`), and gene-level Brownian motion liability permulations (`--permulations`).
-5. **`hyphaeon evaluate` (HyPhy MEME Concordance)**:
-   Dataset-level evaluation of HyphAeon site predictions against matched HyPhy
-   MEME results, with site pooling across genes and machine-readable metrics.
-6. **`hyphaeon temporal` (Continuous Surveillance Dynamics & Sweep Velocity)**:
+5. **`hyphaeon temporal` (Continuous Surveillance Dynamics & Sweep Velocity)**:
    Time-resolved episodic selection tracking using continuous logistic trajectory regression, positive sweep velocity v<sub>s</sub>(t) = max(0, d/dt â<sub>s</sub>(t)), Dynamic Time Warping (DTW) wave decomposition, and temporal SVD factor loadings. See the [**Temporal Analysis Operational Guide**](TEMPORAL_ANALYSIS_GUIDE.md).
-7. **`hyphaeon splits` (Spectral Graph Bisection & Tree-Free Clade Discovery)**:
+6. **`hyphaeon splits` (Spectral Graph Bisection & Tree-Free Clade Discovery)**:
    Recovers well-supported phylogenetic macro-clades and deep hierarchical bipartitions by fusing pairwise continuous 4D MDS geometry with discrete cross-taxa attention maps. Delivers up to 28× speedups over traditional ML tree search without requiring pre-computed phylogenies. See the [**Spectral Splits & Benchmarking Report**](SPECTRAL_SPLITS_BENCHMARK.md).
 
 ---
@@ -179,92 +176,7 @@ hyphaeon meme -a examples/Smc6.fasta -t examples/Smc6.nwk --filter --filter-out-
 
 ---
 
-### Example 5: Evaluate predictions against HyPhy MEME
-
-`hyphaeon evaluate` compares the site-level output of `hyphaeon meme` with
-HyPhy MEME used as the reference. Here, "true" means concordant with MEME; it
-does not imply independently established biological ground truth.
-
-#### Evaluate folders of genes
-
-Prediction and MEME files are paired by their exact gene-name stem:
-`Gene1.csv` matches `Gene1.MEME.json`. All matched sites from all genes are
-pooled before calculating metrics—metrics are not calculated per gene and then
-averaged.
-
-```bash
-hyphaeon evaluate \
-  --predictions-dir /path/to/hyphaeon_predictions/ \
-  --meme-dir /path/to/meme_results/ \
-  --output pooled_metrics.json
-```
-
-#### Evaluate one gene
-
-Pass a matched pair directly with `--prediction` and `--meme-result`:
-
-```bash
-hyphaeon evaluate \
-  --prediction /path/to/Gene1.csv \
-  --meme-result /path/to/Gene1.MEME.json \
-  --output Gene1_metrics.json
-```
-
-The filename stems must match. Directory flags and direct-file flags cannot be
-mixed in the same invocation.
-
-#### Metrics and classification rules
-
-| Output | Definition |
-| :--- | :--- |
-| Total sites | Number of site IDs shared by the matched prediction/MEME pairs. |
-| Pearson r | Pearson correlation between HyphAeon `hyphaeon_lrt` and MEME LRT over all pooled evaluated sites. |
-| Spearman ρ | Spearman rank correlation between the same pooled LRT values. |
-| ROC-AUC at α | MEME `p-value <= alpha` supplies the binary reference label; continuous HyphAeon `hyphaeon_lrt` supplies the ranking score. |
-| PPV at α | TP / (TP + FP), where MEME and HyphAeon calls both use `p_value <= alpha`. |
-| FPR at α | FP / (FP + TN), where MEME and HyphAeon calls both use `p_value <= alpha`. |
-
-A true positive is a site called significant by both MEME and HyphAeon. A true
-negative is a site called non-significant by both. The JSON report includes the
-full TP, FP, TN, and FN counts used for PPV and FPR.
-
-All matched sites are evaluated by default. Use `--variable-only` to exclude
-HyphAeon rows marked `is_invariable`; total-site counts still include those
-rows. Negative MEME LRT numerical artifacts are clamped to zero and reported
-as a warning.
-
-#### Output and input validation
-
-The default standard output is a compact report (illustrative values shown):
-
-```text
-Matched genes: 2
-Total sites: 450
-Evaluated sites: 450 (all matched sites)
-Pearson r (LRT): 0.412345
-Spearman rho (LRT): 0.501234
-
-Metric                 p <= 0.05    p <= 0.10
-ROC-AUC                  0.731000      0.749000
-PPV                      0.420000      0.465000
-FPR                      0.083000      0.121000
-```
-
-Use `--format json` for JSON on standard output or `--output FILE.json` to
-write the detailed report. The JSON includes input paths, aggregate counts,
-correlations, threshold metrics, both confusion matrices, per-gene counts, and
-warnings. Undefined metrics—for example, ROC-AUC when MEME has only one class—
-are represented as JSON `null`.
-
-By default, unmatched genes or unequal site sets stop evaluation to prevent
-silent misalignment. Folder mode supports `--allow-unmatched` to ignore genes
-without a counterpart. Both modes support `--allow-site-mismatch` to use the
-site intersection and report dropped counts. Custom filename conventions can
-be supplied with `--prediction-suffix` and `--meme-suffix`.
-
----
-
-### Example 6: Spectral Graph Bisection & Tree-Free Phylogenetic Splits (`hyphaeon splits`)
+### Example 5: Spectral Graph Bisection & Tree-Free Phylogenetic Splits (`hyphaeon splits`)
 
 ```bash
 # Basic Tree-Free Macro-Split Discovery (Outputs Newick Tree & Clade CSV)
@@ -319,7 +231,6 @@ python training/train.py \
 | Command | Action | Description |
 | :--- | :--- | :--- |
 | `hyphaeon meme` | Site-Level Selection | Fast per-codon LRT & selection rate prediction (100×–1,100× faster than MLE). |
-| `hyphaeon evaluate` | MEME Concordance | Pooled ROC-AUC, LRT correlations, PPV, and FPR for folders or a single matched gene. |
 | `hyphaeon epistasis` | 3D Epistatic Sectors | Co-selection networks, hypergeometric tree overlaps, and Monte Carlo sector permutations. |
 | `hyphaeon dms` | Digital DMS | 19-AA in silico perturbation sweeps and Compensated Pathogenic Deviation mapping. |
 | `hyphaeon phenotype`| Directional PhyloWAS | Directional trait mapping on the unit hypersphere, trait sector permutations, and liability permulations. |
