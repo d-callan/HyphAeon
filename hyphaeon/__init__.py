@@ -17,7 +17,7 @@ from .epistasis import (
 )
 from .disease import predict_disease_pathogenicity
 
-__version__ = "1.0.0"
+__version__ = "0.1.0"
 __all__ = [
     "PhyloAxialTransformer",
     "load_alignment_and_tree",
