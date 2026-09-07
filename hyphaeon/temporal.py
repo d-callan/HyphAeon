@@ -62,21 +62,43 @@ except ImportError:
     HAS_MATPLOTLIB = False
 
 
+# NumPy 1.x vs 2.x compatibility: np.trapz was removed in 2.0 in favor of np.trapezoid
+_trapezoid = getattr(np, "trapezoid", getattr(np, "trapz", None))
+
+
 # =========================================================================
 # 1. Flexible Date Parsing and Ingestion
 # =========================================================================
 
-def parse_date_to_decimal(val: Any) -> float:
+def parse_date_to_decimal(val: Any, time_units: str = "years") -> float:
     """
-    Converts various date representations into a float decimal year.
-    Supported inputs:
+    Converts various date representations into a float time coordinate.
+    Calendar (time_units='years'):
       - float or int: 2021.25 -> 2021.25
       - ISO string: "2021-04-15" -> 2021.2868
       - Partial ISO: "2021-04" or "2021-04-XX" -> 2021.2868 (mid-month)
       - Year only: "2021" or "2021-XX-XX" -> 2021.5 (mid-year)
       - Slash formatted: "2021/04/15" -> 2021.2868
+    Non-calendar (time_units in {'generations','days','arbitrary'}):
+      - any non-negative number, or the first number embedded in a string
+        ("gen_5000" -> 5000.0). No [1800,2100] gate.
     """
     if val is None or pd.isna(val):
+        return np.nan
+
+    # Non-calendar time coordinates: accept any non-negative real (no year gate)
+    if time_units in ("generations", "days", "arbitrary"):
+        try:
+            val_f = float(val)
+            return val_f if val_f >= 0.0 else np.nan
+        except (ValueError, TypeError):
+            pass
+        m = re.search(r'(\d+(?:\.\d+)?)', str(val))
+        if m:
+            try:
+                return float(m.group(1))
+            except ValueError:
+                return np.nan
         return np.nan
 
     if isinstance(val, (int, float)):
@@ -171,9 +193,25 @@ def parse_dates_from_auspice_json(json_path: Union[str, Path]) -> Dict[str, floa
     return dates
 
 
-def extract_date_from_string(name: str) -> float:
-    """Extracts date from a string or FASTA header using standard timestamp patterns."""
+def extract_date_from_string(name: str, time_units: str = "years") -> float:
+    """Extracts a time coordinate from a string / FASTA header using standard patterns."""
     if not name:
+        return np.nan
+
+    # Non-calendar: match embedded generation/day tokens e.g. _gen2000, |gen_5000,
+    # _20000gen, _g50000, or a bare trailing number after a delimiter (|5000).
+    # Prioritize explicit unit prefix/suffix before matching bare delimiter-bound numbers.
+    if time_units in ("generations", "days", "arbitrary"):
+        m = re.search(r'(?:[\|/_\-\s]|^)(?:gen|generation|g|day|d|t)[\-_]?(\d+(?:\.\d+)?)(?:[\|/_\-\s]|$)', name, re.IGNORECASE)
+        if not m:
+            m = re.search(r'(?:[\|/_\-\s]|^)(\d+(?:\.\d+)?)(?:gen|g|d)(?:[\|/_\-\s]|$)', name, re.IGNORECASE)
+        if not m:
+            m = re.search(r'(?:[\|/_\-\s]|^)(\d+(?:\.\d+)?)(?:[\|/_\-\s]|$)', name)
+        if m:
+            try:
+                return float(m.group(1))
+            except ValueError:
+                pass
         return np.nan
 
     # Pattern 1: ISO full date e.g. |2021-05-14 or /2021-05-14 or _2021-05-14
@@ -212,6 +250,7 @@ def parse_temporal_metadata(
     taxa: Optional[List[str]] = None,
     date_col: Optional[str] = None,
     strain_col: Optional[str] = None,
+    time_units: str = "years",
 ) -> Dict[str, float]:
     """
     Universal date ingestion dispatcher:
@@ -221,7 +260,7 @@ def parse_temporal_metadata(
     4. If None: extracts dates from taxa header strings.
     """
     if isinstance(dates_source, dict):
-        return {k: parse_date_to_decimal(v) for k, v in dates_source.items() if not np.isnan(parse_date_to_decimal(v))}
+        return {k: parse_date_to_decimal(v, time_units) for k, v in dates_source.items() if not np.isnan(parse_date_to_decimal(v, time_units))}
 
     dates: Dict[str, float] = {}
 
@@ -255,6 +294,8 @@ def parse_temporal_metadata(
             col_date = date_col
             if col_date is None or col_date not in df_meta.columns:
                 cand_dates = [
+                    'generation', 'generations', 'gen', 'timepoint', 'time',
+                    'day', 'days', 'transfer',
                     'date', 'num_date', 'collection_date', 'Collection Date',
                     'Date', 'submission_date', 'year', 'Collection_Date'
                 ]
@@ -272,7 +313,7 @@ def parse_temporal_metadata(
             if col_date is not None and col_date in df_meta.columns:
                 for _, row in df_meta.iterrows():
                     s_name = str(row[col_strain]).strip()
-                    d_val = parse_date_to_decimal(row[col_date])
+                    d_val = parse_date_to_decimal(row[col_date], time_units)
                     if not np.isnan(d_val):
                         dates[s_name] = d_val
 
@@ -282,7 +323,7 @@ def parse_temporal_metadata(
         if len(missing_taxa) > 0 and len(dates) == 0:
             # Attempt to extract from header strings
             for t in taxa:
-                d = extract_date_from_string(t)
+                d = extract_date_from_string(t, time_units)
                 if not np.isnan(d):
                     dates[t] = d
 
@@ -378,6 +419,9 @@ def run_temporal_surveillance(
     use_tn93: bool = False,
     plot: bool = False,
     domain_map: Optional[Dict[int, str]] = None,
+    time_units: str = "years",
+    sweep_mode: str = "auto",
+    keep_duplicates: bool = False,
 ) -> Dict[str, Any]:
     """
     Executes continuous model attribution regression, two-stage statistical filtering,
@@ -385,6 +429,15 @@ def run_temporal_surveillance(
     """
     device = get_device(cpu=cpu)
     t_start = time.time()
+
+    # Resolve experimental-evolution vs calendar behavior
+    non_calendar = time_units in ("generations", "days", "arbitrary")
+    if sweep_mode == "auto":
+        sweep_mode = "fixation" if non_calendar else "episodic"
+    # Identical longitudinal clones carry the temporal signal in fixation regimes,
+    # so preserve duplicates unless explicitly running the calendar/episodic path.
+    prune_dups = not (keep_duplicates or non_calendar)
+    unit_label = {"years": "yrs", "generations": "gen", "days": "days", "arbitrary": "units"}.get(time_units, "units")
 
     print("\n" + "=" * 85)
     print(f"[*] HyphAeon Temporal Surveillance Engine")
@@ -400,7 +453,7 @@ def run_temporal_surveillance(
     # 2. Alignment and Tree Preparation
     c, a, d, z, inv, taxa, L, tree_cache = prepare_alignment(
         alignment_path, tree_path, model=model, device=device,
-        max_species=max_species, prune_duplicates=True, use_tn93=use_tn93
+        max_species=max_species, prune_duplicates=prune_dups, use_tn93=use_tn93
     )
     N_taxa = len(taxa)
     n_inv = int(np.sum(inv))
@@ -409,7 +462,8 @@ def run_temporal_surveillance(
 
     # 3. Ingest Temporal Information
     date_dict = parse_temporal_metadata(
-        dates_source=dates_source, taxa=taxa, date_col=date_col, strain_col=strain_col
+        dates_source=dates_source, taxa=taxa, date_col=date_col, strain_col=strain_col,
+        time_units=time_units
     )
     taxa_dates = np.array([date_dict.get(t, np.nan) for t in taxa], dtype=np.float32)
     valid_taxa_mask = ~np.isnan(taxa_dates)
@@ -430,10 +484,15 @@ def run_temporal_surveillance(
         raise ValueError(f"Sampled timespan is non-positive (t_min={t_min}, t_max={t_max}).")
 
     if bandwidth is None or bandwidth <= 0:
-        bandwidth = float(np.clip(timespan * 0.05, 0.05, 2.0))
+        if time_units == "years":
+            bandwidth = float(np.clip(timespan * 0.05, 0.05, 2.0))
+        else:
+            # No ceiling: for wide generation/day spans a 2.0-unit cap underflows the
+            # Gaussian weight to 0 for samples spaced by hundreds/thousands of units.
+            bandwidth = float(max(timespan * 0.05, (timespan / max(num_time_points, 1)) * 2.0))
 
-    print(f"[✓] Time-stamped taxa: {N}/{N_taxa} ({100 * N / N_taxa:.1f}%) | Timespan: {t_min:.2f} - {t_max:.2f} ({timespan:.2f} yrs)")
-    print(f"[✓] Smoothing Kernel: Gaussian Nadaraya-Watson with Bandwidth h = {bandwidth:.3f} yrs")
+    print(f"[✓] Time-stamped taxa: {N}/{N_taxa} ({100 * N / N_taxa:.1f}%) | Timespan: {t_min:.2f} - {t_max:.2f} ({timespan:.2f} {unit_label}) | units={time_units}, mode={sweep_mode}")
+    print(f"[✓] Smoothing Kernel: Gaussian Nadaraya-Watson with Bandwidth h = {bandwidth:.3f} {unit_label}")
 
     # 4. Infer Root / Ancestral State
     root_aas, root_indices = infer_root_sequence(
@@ -489,15 +548,38 @@ def run_temporal_surveillance(
 
     curves_matrix = leaf_attributions @ norm_weights.T  # [L, T] prevalence
 
-    # 8b. Sweep Velocity (Positive Temporal Rate of Change)
-    # v_s(t) = max(0, d/dt a_s(t))
-    # Isolates active selective sweep episodes rather than static post-fixation retention.
-    velocity_matrix = np.maximum(0.0, np.gradient(curves_matrix, dense_t, axis=1))
+    # 8b. Sweep metric on a SCALE-INVARIANT normalized time axis t~ in [0,1].
+    # Differentiating w.r.t. t~ multiplies da/dt by the timespan, so the metric is
+    # dimensionless whether time is in years or 100,000 generations (fixes the
+    # generation-scale derivative underflow). Two regimes:
+    #   episodic  : v_s(t~) = max(0, d a_s / d t~)   — active turnover (viral)
+    #   fixation  : shift_s(t~) = a_s(t~) - a_s(0)   — permanent step-fixation (LTEE)
+    norm_dense_t = np.linspace(0.0, 1.0, T)
+    # Calendar/episodic keeps the original real-time gradient axis (byte-identical
+    # viral behavior); non-calendar uses normalized time so the derivative and its
+    # floors are scale-invariant across arbitrary generation spans.
+    grad_t = norm_dense_t if non_calendar else dense_t
 
-    # Compute trajectory metrics based on active sweep velocity
-    peak_intensities = np.max(velocity_matrix, axis=1)  # [L]
-    aucs = np.trapz(velocity_matrix, dense_t, axis=1)  # [L]
-    peak_times = dense_t[np.argmax(velocity_matrix, axis=1)]  # [L]
+    def _metric(curves):
+        if sweep_mode == "fixation":
+            return curves - curves[:, :1]  # cumulative amplitude shift from baseline
+        return np.maximum(0.0, np.gradient(curves, grad_t, axis=1))
+
+    velocity_matrix = _metric(curves_matrix)  # [L,T]; named for downstream reuse
+    if sweep_mode == "fixation":
+        # Attention is distributed across taxa, so the raw attribution trajectory scales
+        # as ~1/N_taxa. Normalizing by the per-site mean attention converts the amplitude
+        # and velocity into an (attention-weighted) derived-state fraction in [0,1], making
+        # the energy floor independent of taxon count and matching velocity/intensity scales for t_half.
+        site_scale = mean_attns.mean(axis=1) + 1e-8   # [L] mean per-taxon attention
+        velocity_matrix = velocity_matrix / site_scale[:, None]
+        peak_intensities = np.ptp(curves_matrix, axis=1) / site_scale                       # max - min amplitude
+        aucs = _trapezoid(np.maximum(0.0, velocity_matrix), norm_dense_t, axis=1)
+        peak_times = dense_t[np.argmax(np.abs(velocity_matrix), axis=1)]
+    else:
+        peak_intensities = np.max(velocity_matrix, axis=1)  # [L]
+        aucs = _trapezoid(velocity_matrix, grad_t, axis=1)  # [L]
+        peak_times = dense_t[np.argmax(velocity_matrix, axis=1)]  # [L]
 
     t_half_start = np.zeros(L, dtype=np.float32)
     t_half_end = np.zeros(L, dtype=np.float32)
@@ -514,11 +596,19 @@ def run_temporal_surveillance(
                 t_half_end[s] = dense_t[idx[-1]]
                 fwhm_arr[s] = dense_t[idx[-1]] - dense_t[idx[0]]
 
-    # 9. STAGE 1 FILTER: Energy Floor (on active sweep velocity)
-    if tau_auc is None:
-        tau_auc = 0.01e-3 * max(1.0, timespan / 5.0)
-    if tau_peak is None or tau_peak == 1e-4:
-        tau_peak = 0.5e-4
+    # 9. STAGE 1 FILTER: Energy Floor. On the normalized axis the floors are
+    # dimensionless and independent of timespan (fixes tau_auc inflation on long
+    # generation timelines, where the old timespan-scaled floor could never be met).
+    if non_calendar:
+        if tau_auc is None:
+            tau_auc = 0.005   # dimensionless area on normalized time
+        if tau_peak is None or tau_peak == 1e-4:
+            tau_peak = 0.010  # dimensionless peak amplitude shift
+    else:
+        if tau_auc is None:
+            tau_auc = 0.01e-3 * max(1.0, timespan / 5.0)
+        if tau_peak is None or tau_peak == 1e-4:
+            tau_peak = 0.5e-4
 
     stage1_mask = (~inv) & (peak_intensities >= tau_peak) & (aucs >= tau_auc)
     cand_indices = np.where(stage1_mask)[0]
@@ -531,10 +621,31 @@ def run_temporal_surveillance(
     q_perm = np.ones(L, dtype=np.float32)
     r2_fpca = np.zeros(L, dtype=np.float32)
 
+    def _perm_stat(curves):
+        # Test statistic for the date-shuffling null, matched to the sweep regime:
+        #   fixation : directional Pearson correlation of the smoothed trajectory
+        #              with time. A genuine fixation rises monotonically, so corr is
+        #              large & positive regardless of WHERE in the timeline the
+        #              transition sits (robust to early vs late sweeps); date-shuffling
+        #              scatters derived states across time, driving corr to ~0. Signed
+        #              (rewards rising derived-state sweeps), and unlike variance /
+        #              amplitude / third-contrasts it is insensitive to transition
+        #              location and to the derived-state base rate.
+        #   episodic : variance of the positive velocity pulse (unchanged; viral).
+        if sweep_mode == "fixation":
+            tt = norm_dense_t - norm_dense_t.mean()
+            cc = curves - curves.mean(axis=1, keepdims=True)
+            num = (cc * tt[None, :]).sum(axis=1)
+            den = np.sqrt((cc ** 2).sum(axis=1) * (tt ** 2).sum()) + 1e-12
+            return num / den
+        v = np.maximum(0.0, np.gradient(curves, grad_t, axis=1))
+        return np.var(v, axis=1)
+
     if n_stage1 > 0:
         cand_attrs = leaf_attributions[cand_indices]  # [C, N]
-        cand_curves = velocity_matrix[cand_indices]  # [C, T]
-        v_obs = np.var(cand_curves, axis=1)  # [C]
+        cand_curves = velocity_matrix[cand_indices]  # [C, T] (metric, for fPCA/SVD)
+        cand_prev = curves_matrix[cand_indices]      # [C, T] (smoothed prevalence)
+        v_obs = _perm_stat(cand_prev)  # [C]
 
         print(f"[*] Running {B} date-shuffling permutations across {n_stage1} candidates...")
         rng = np.random.RandomState(42)
@@ -546,8 +657,7 @@ def run_temporal_surveillance(
                 p_idx = rng.permutation(N)
                 W_p = norm_weights[:, p_idx]
                 c_p = cand_attrs @ W_p.T
-                v_p_mat = np.maximum(0.0, np.gradient(c_p, dense_t, axis=1))
-                v_p = np.var(v_p_mat, axis=1)
+                v_p = _perm_stat(c_p)
                 perm_exceed += (v_p >= v_obs).astype(np.int32)
 
         p_cand = (1.0 + perm_exceed) / (B + 1.0)
@@ -568,12 +678,23 @@ def run_temporal_surveillance(
         else:
             r2_fpca[cand_indices] = 1.0
 
-    is_confirmed_sweep = stage1_mask & (p_perm <= perm_alpha) & (r2_fpca >= min_r2_fpca)
-    if np.sum(is_confirmed_sweep) == 0 and n_stage1 > 0:
+    # Solitary / asynchronous clonal-interference sweeps (few candidate sites, or any
+    # experimental-evolution run) cannot form a collective multi-wave SVD signature, so
+    # the fPCA R^2 gate is inapplicable — confirm on permutation significance alone.
+    # Passing --min-r2 0.0 also selects this regime.
+    solitary_regime = (n_stage1 <= 3) or non_calendar or (min_r2_fpca <= 0.0)
+    if solitary_regime:
+        is_confirmed_sweep = stage1_mask & (p_perm <= perm_alpha)
+    else:
+        is_confirmed_sweep = stage1_mask & (p_perm <= perm_alpha) & (r2_fpca >= min_r2_fpca)
+    # Static-LRT escape hatch only in the calendar/epidemic regime (avoids reintroducing
+    # static-selection noise into experimental-evolution results).
+    if np.sum(is_confirmed_sweep) == 0 and n_stage1 > 0 and not solitary_regime:
         is_confirmed_sweep = stage1_mask & ((p_perm <= 0.10) | (lrts >= 3.84))
 
     n_sweeps = int(np.sum(is_confirmed_sweep))
-    print(f"[✓] Stage 2 Filter: {n_sweeps} confirmed episodic sweeps (p_perm <= {perm_alpha}, R2 >= {min_r2_fpca})")
+    _r2_note = "n/a (solitary regime)" if solitary_regime else f"R2 >= {min_r2_fpca}"
+    print(f"[✓] Stage 2 Filter: {n_sweeps} confirmed {sweep_mode} sweeps (p_perm <= {perm_alpha}, {_r2_note})")
 
     # 11. Cross-Classification vs Static Scans
     class_labels = []

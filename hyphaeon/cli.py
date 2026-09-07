@@ -1040,6 +1040,10 @@ def cmd_temporal(args):
         batch_size=getattr(args, "batch_size", None),
         max_species=getattr(args, "max_species", None),
         cpu=getattr(args, "cpu", False),
+        use_tn93=use_tn93,
+        time_units=getattr(args, "time_units", "years"),
+        sweep_mode=getattr(args, "sweep_mode", "auto"),
+        keep_duplicates=getattr(args, "keep_duplicates", False),
         plot=getattr(args, "plot", False)
     )
 
@@ -1247,6 +1251,9 @@ def main():
     temp_parser.add_argument("--tau-peak", type=float, default=1e-4, help="Stage 1 peak selection intensity energy floor (default: 1e-4)")
     temp_parser.add_argument("--tau-auc", type=float, default=None, help="Stage 1 cumulative area under curve energy floor (default: auto)")
     temp_parser.add_argument("--time-points", type=int, default=250, help="Number of continuous temporal grid points (default: 250)")
+    temp_parser.add_argument("--time-units", choices=["years", "generations", "days", "arbitrary"], default="years", help="Time coordinate of sample timestamps. Non-'years' disables the calendar-year gate, kernel ceiling, and (by default) duplicate pruning — required for experimental-evolution / LTEE generation axes (default: years)")
+    temp_parser.add_argument("--sweep-mode", choices=["episodic", "fixation", "auto"], default="auto", help="'episodic': positive velocity max(0,da/dt) (viral turnover). 'fixation': cumulative amplitude shift a(t)-a(t0) (experimental-evolution permanent fixation). 'auto': fixation when --time-units!=years, else episodic (default: auto)")
+    temp_parser.add_argument("--keep-duplicates", action="store_true", help="Do not collapse identical longitudinal clones before regression (auto-enabled when --time-units!=years)")
     temp_parser.add_argument("--plot", action="store_true", help="Generate publication-grade 4-panel PDF and PNG figures")
     temp_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
     temp_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from HF (default: {DEFAULT_VARIANT})")
