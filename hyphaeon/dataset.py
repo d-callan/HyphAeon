@@ -60,15 +60,15 @@ def _warn_internal_stops(seq_dict: Dict[str, str], L: int, taxa: List[str]) -> N
     """Warn if any sequence has internal stop codons, which may indicate a frameshift."""
     worst_taxon = None
     worst_stops = 0
+    internal_limit = max(0, (L - 1) * 3)
     for t in taxa:
         seq = seq_dict.get(t, "")
-        trimmed = seq[:L * 3]
-        stops = sum(1 for i in range(0, len(trimmed), 3)
-                    if CODON_TO_AA.get(trimmed[i:i+3].upper(), '') == '*')
+        stops = sum(1 for i in range(0, min(len(seq), internal_limit), 3)
+                    if CODON_TO_AA.get(seq[i:i+3].upper(), '') == '*')
         if stops > worst_stops:
             worst_stops = stops
             worst_taxon = t
-    if worst_stops > 1:
+    if worst_stops >= 1:
         print(f"[!] Warning: {worst_stops} internal stop codon(s) found in '{worst_taxon}'. "
               f"This may indicate a frameshift or pseudogene. "
               f"Verify that the alignment is in-frame (codon-aligned).")

@@ -20,7 +20,8 @@ import scipy.stats as stats
 import torch
 import networkx as nx
 
-_IS_DEV = (Path(__file__).resolve().parent.parent / ".git").exists()
+_IS_DEV = (Path(__file__).resolve().parent.parent / ".git").exists() or \
+          os.environ.get("HYPHAEON_DEV", "0").lower() in ("1", "true")
 
 from .model import PhyloAxialTransformer, BustedMultiTaskHead
 from .dataset import load_alignment_and_tree
