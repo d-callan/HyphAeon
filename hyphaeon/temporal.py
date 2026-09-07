@@ -62,6 +62,10 @@ except ImportError:
     HAS_MATPLOTLIB = False
 
 
+# NumPy 1.x vs 2.x compatibility: np.trapz was removed in 2.0 in favor of np.trapezoid
+_trapezoid = getattr(np, "trapezoid", getattr(np, "trapz", None))
+
+
 # =========================================================================
 # 1. Flexible Date Parsing and Ingestion
 # =========================================================================
@@ -196,8 +200,13 @@ def extract_date_from_string(name: str, time_units: str = "years") -> float:
 
     # Non-calendar: match embedded generation/day tokens e.g. _gen2000, |gen_5000,
     # _20000gen, _g50000, or a bare trailing number after a delimiter (|5000).
+    # Prioritize explicit unit prefix/suffix before matching bare delimiter-bound numbers.
     if time_units in ("generations", "days", "arbitrary"):
-        m = re.search(r'(?:[\|/_\-\s]|^)(?:gen|generation|g|day|d|t)?[\-_]?(\d+(?:\.\d+)?)(?:gen|g|d)?(?:[\|/_\-\s]|$)', name, re.IGNORECASE)
+        m = re.search(r'(?:[\|/_\-\s]|^)(?:gen|generation|g|day|d|t)[\-_]?(\d+(?:\.\d+)?)(?:[\|/_\-\s]|$)', name, re.IGNORECASE)
+        if not m:
+            m = re.search(r'(?:[\|/_\-\s]|^)(\d+(?:\.\d+)?)(?:gen|g|d)(?:[\|/_\-\s]|$)', name, re.IGNORECASE)
+        if not m:
+            m = re.search(r'(?:[\|/_\-\s]|^)(\d+(?:\.\d+)?)(?:[\|/_\-\s]|$)', name)
         if m:
             try:
                 return float(m.group(1))
@@ -558,20 +567,18 @@ def run_temporal_surveillance(
 
     velocity_matrix = _metric(curves_matrix)  # [L,T]; named for downstream reuse
     if sweep_mode == "fixation":
-        peak_intensities = np.ptp(curves_matrix, axis=1)                       # max - min amplitude
-        aucs = np.trapezoid(np.maximum(0.0, velocity_matrix), norm_dense_t, axis=1)
-        peak_times = dense_t[np.argmax(np.abs(velocity_matrix), axis=1)]
         # Attention is distributed across taxa, so the raw attribution trajectory scales
         # as ~1/N_taxa. Normalizing by the per-site mean attention converts the amplitude
-        # into an (attention-weighted) derived-state fraction in [0,1], making the energy
-        # floor independent of taxon count (an absolute floor rejects real fixations in
-        # large longitudinal panels). The permutation statistic is already scale-free.
+        # and velocity into an (attention-weighted) derived-state fraction in [0,1], making
+        # the energy floor independent of taxon count and matching velocity/intensity scales for t_half.
         site_scale = mean_attns.mean(axis=1) + 1e-8   # [L] mean per-taxon attention
-        peak_intensities = peak_intensities / site_scale
-        aucs = aucs / site_scale
+        velocity_matrix = velocity_matrix / site_scale[:, None]
+        peak_intensities = np.ptp(curves_matrix, axis=1) / site_scale                       # max - min amplitude
+        aucs = _trapezoid(np.maximum(0.0, velocity_matrix), norm_dense_t, axis=1)
+        peak_times = dense_t[np.argmax(np.abs(velocity_matrix), axis=1)]
     else:
         peak_intensities = np.max(velocity_matrix, axis=1)  # [L]
-        aucs = np.trapezoid(velocity_matrix, grad_t, axis=1)  # [L]
+        aucs = _trapezoid(velocity_matrix, grad_t, axis=1)  # [L]
         peak_times = dense_t[np.argmax(velocity_matrix, axis=1)]  # [L]
 
     t_half_start = np.zeros(L, dtype=np.float32)

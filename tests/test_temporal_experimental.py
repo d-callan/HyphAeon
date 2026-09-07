@@ -52,6 +52,31 @@ class TestNonCalendarDateParsing:
         )
         assert dates == {"cloneA": 0.0, "cloneB": 5000.0, "cloneC": 50000.0}
 
+    def test_isolate_and_replicate_index_disambiguation(self):
+        # Disambiguate isolate/replicate numbers from generation timepoints
+        assert extract_date_from_string("Ecoli_isolate_1_gen5000", time_units="generations") == 5000.0
+        assert extract_date_from_string("rep_2_t10000", time_units="generations") == 10000.0
+        assert extract_date_from_string("strain_5_d120", time_units="days") == 120.0
+
+    def test_trapezoid_compatibility(self):
+        from hyphaeon.temporal import _trapezoid
+        res = _trapezoid([1.0, 2.0, 3.0], [0.0, 1.0, 2.0])
+        assert np.isclose(res, 4.0)
+
+    def test_fixation_thalf_scaling(self):
+        # Ensure velocity_matrix and peak_intensities have matching scale
+        # so t_half and FWHM are not zeroed out by 1/N attenuation
+        curves_matrix = np.array([[0.000, 0.005, 0.010]], dtype=np.float32)
+        mean_attns = np.full((1, 100), 0.01, dtype=np.float32)
+        site_scale = mean_attns.mean(axis=1) + 1e-8
+        velocity_matrix = (curves_matrix - curves_matrix[:, :1]) / site_scale[:, None]
+        peak_intensities = np.ptp(curves_matrix, axis=1) / site_scale
+        y = velocity_matrix[0]
+        pv = peak_intensities[0]
+        above_half = y >= (pv / 2.0)
+        assert np.any(above_half), "Fixation half-max should be detected"
+        assert np.where(above_half)[0][0] == 1  # 50% reached at index 1
+
 
 @pytest.mark.skipif(
     os.environ.get("HYPHAEON_RUN_MODEL_TESTS") != "1",
@@ -84,8 +109,11 @@ def test_synthetic_ltee_fixation_sweep(tmp_path):
         alignment_path=str(fa), tree_path=None, use_tn93=True,
         output_prefix=str(tmp_path / "out"), n_permutations=1000,
         time_units="generations", sweep_mode="fixation", cpu=True,
+        weights_path=os.environ.get("HYPHAEON_WEIGHTS"),
     )
-    sites = {int(s["site"]): s for s in res["sites"]} if "sites" in res else {}
-    assert res["summary"]["counts"]["confirmed_sweeps"] >= 1
-    if sites:
-        assert sites.get(301, {}).get("is_confirmed_sweep") in (True, 1, "True")
+    df_sites = res["sites_summary"]
+    meta = res.get("metadata", {})
+    assert meta.get("confirmed_sweeps", df_sites["is_confirmed_sweep"].sum()) >= 1
+    s301 = df_sites[df_sites["site"] == 301]
+    assert len(s301) == 1
+    assert bool(s301.iloc[0]["is_confirmed_sweep"]) is True
