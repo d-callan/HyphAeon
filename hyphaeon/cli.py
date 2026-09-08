@@ -1085,11 +1085,13 @@ def cmd_splits(args):
 
 def main():
 
+    from . import __version__
     parser = argparse.ArgumentParser(
         prog="hyphaeon",
         description="HyphAeon: Ultra-Fast Neural Selection Inference, Phenotype-Genotype Mapping, and Epistatic Sector Mining",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
+    parser.add_argument("--version", action="version", version=f"hyphaeon {__version__}")
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
 
     # 1. MEME Subcommand
