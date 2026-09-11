@@ -86,6 +86,8 @@ All example alignments and phylogenetic trees required to reproduce these analys
 | **Smc6** | [`examples/Smc6.fasta`](examples/Smc6.fasta) | [`examples/Smc6.nwk`](examples/Smc6.nwk) | 20 | 1,097 | Primate Smc6 structural maintenance of chromosomes (antiviral host restriction). |
 | **Bat OAS1** | [`examples/bat_oas1.fasta`](examples/bat_oas1.fasta) | [`examples/bat_oas1.nwk`](examples/bat_oas1.nwk) | 18 | 351 | Chiropteran OAS1 2'-5'-oligoadenylate synthetase (innate immunity escape). |
 | **Camelid VHH** | [`examples/camelid.fasta`](examples/camelid.fasta) | [`examples/camelid.nwk`](examples/camelid.nwk) | 212 | 96 | Camelid single-domain antibody heavy-chain variable domain (antigenic diversity). Used for integration testing; no dedicated example section. |
+| **Randall FP** | [`examples/randall_asr/fp_leaves_codon.fasta`](examples/randall_asr/fp_leaves_codon.fasta) | [`examples/randall_asr/RandallBenchmarkTree.newick`](examples/randall_asr/RandallBenchmarkTree.newick) | 19 | 226 | Experimental phylogeny with known true ancestors (Randall et al. 2016). ASR benchmark; see [validation notes](examples/randall_asr/VALIDATION_NOTES.md). |
+| **AMA1** | [`examples/ama1/ama1_codon_aln.fasta`](examples/ama1/ama1_codon_aln.fasta) | — | 7 | 470 | Apicomplexan AMA1 adhesin domain (malarial invasion). ASR example dataset. |
 
 ---
 
@@ -184,7 +186,44 @@ hyphaeon meme -a examples/Smc6.fasta -t examples/Smc6.nwk --filter --filter-out-
 
 ---
 
-### Example 5: Spectral Graph Bisection & Tree-Free Phylogenetic Splits (`hyphaeon splits`)
+### Example 5: Ancestral Sequence Candidate Scoring (`hyphaeon ancestral`)
+
+```bash
+# Centroid mode: single ancestor, no tree (TN93 distances), outgroup-rooted
+hyphaeon ancestral -a examples/randall_asr/fp_leaves_codon.fasta --no-tree --outgroup 01 --lambda-dist 1.0 -k 5 --fasta examples/randall_asr/ancestors.fasta -o examples/randall_asr/results.json
+
+# Per-node mode: one ancestor per internal tree node (requires tree)
+hyphaeon ancestral -a examples/randall_asr/fp_leaves_codon.fasta -t examples/randall_asr/RandallBenchmarkTree.newick --per-node --fasta examples/randall_asr/per_node.fasta -o examples/randall_asr/per_node.json
+```
+
+**EXPERIMENTAL / PROTOTYPE** — HyphAeon-informed ancestral sequence candidate scoring. This is *not* classical tree-based ASR (PAML, FastML, IQ-TREE). HyphAeon is topology-blind (star-tree invariant per `model_eval/invariance/`) and exposes no character-state decoder head, so it cannot emit per-internal-node states the way classical marginal reconstruction can.
+
+Instead, this reframes the problem to match what the model actually is:
+
+- The natural object is a **single "centroid ancestor"** sitting at the origin of the model's 4D MDS distance embedding — exactly where the model places its internal `[ROOT]` token.
+- The base reconstruction signal comes from observed tips, weighted by patristic proximity to the centroid. This needs no model at all.
+- HyphAeon enters **only as re-scorers / constraints** on top of that base:
+  - **Selection LRT** → per-site reconstruction confidence
+  - **Digital DMS** → per-state selection-signal sensitivity (a regulariser)
+  - **Co-selection** → joint / epistatic compatibility across site pairs
+
+The key contribution over standard ASR is the **epistatic term**: classical marginal ASR reconstructs each site independently, whereas the co-selection network penalises ancestral candidates that combine individually-plausible states that are jointly never observed.
+
+**Key parameters:**
+- `--outgroup`: Root the ancestor at an outgroup taxon's MDS position (fuzzy match).
+- `--lambda-dist`: Steepness of exponential distance weighting (lower = flatter, outgroup contributes more).
+- `--lambda-plast`: Weight of DMS selection-sensitivity regulariser.
+- `--lambda-epi`: Weight of epistatic co-occurrence term.
+- `--per-node`: Reconstruct one ancestor per internal tree node (requires `-t/--tree`).
+- `--node-tip-context-weight`: Soft descendant mask (0.0 = hard mask, 1.0 = no mask).
+- `--joint-pass`: Joint consistency pass strength (mixes child logprobs with parent's reconstructed sequence).
+- `--weak-node-boost`: Scale up DMS/epistatic lambdas for nodes with few descendants.
+
+**Benchmark:** Validated against the Randall et al. (2016) experimental FP phylogeny with 18 known true ancestors. See [`examples/randall_asr/VALIDATION_NOTES.md`](examples/randall_asr/VALIDATION_NOTES.md) for full results, and [`model_eval/concordance/test_ancestral_concordance.py`](model_eval/concordance/test_ancestral_concordance.py) for automated concordance tests. Parameter sweeps are available via `python scripts/sweep_ancestral_params.py`.
+
+---
+
+### Example 6: Spectral Graph Bisection & Tree-Free Phylogenetic Splits (`hyphaeon splits`)
 
 ```bash
 # Basic Tree-Free Macro-Split Discovery (Outputs Newick Tree & Clade CSV)
@@ -246,6 +285,7 @@ python training/train.py \
 | `hyphaeon splits` | Spectral Bisection | Tree-free phylogenetic macro-splits via cross-taxa attention and MDS graph Laplacian. |
 | `hyphaeon disease` | Pathogenicity Prediction | Predict disease variant effects and pathogenicity using HyphAeon attention attributions. |
 | `hyphaeon filter` | Alignment QC | Automated alignment error detection and surgical masking of anomalous regions. |
+| `hyphaeon ancestral` | Ancestral Scoring | **(EXPERIMENTAL)** HyphAeon-informed ancestral sequence candidate scoring with epistatic constraints. |
 
 ### Key Permutation Testing Arguments:
 

@@ -1083,6 +1083,106 @@ def cmd_splits(args):
                 writer.writerow([t, "Right", res['eigengap']])
         print(f"[✓] Split assignments saved to: {args.csv}")
 
+def cmd_ancestral(args):
+    use_tn93 = getattr(args, "no_tree", False) or getattr(args, "use_tn93", False) or (getattr(args, "tree", None) == "tn93")
+    print("[*] Executing HyphAeon-informed Ancestral Sequence Candidate Scoring (EXPERIMENTAL)...")
+    print(f"[*] Alignment: {args.alignment}")
+    if use_tn93:
+        print("[*] Tree:      (skipped; estimating pairwise distances via TN93)")
+    elif args.tree:
+        print(f"[*] Tree:      {args.tree}")
+    else:
+        print("[*] Tree:      (extracting from alignment)")
+    if getattr(args, "outgroup", None):
+        print(f"[*] Outgroup:  {args.outgroup}")
+
+    if getattr(args, "per_node", False):
+        if use_tn93:
+            print("\n[!] --per-node requires a phylogenetic tree, but --no-tree/--use-tn93 was set.")
+            print("    Provide -t/--tree and remove --no-tree/--use-tn93 to use per-node mode.")
+            sys.exit(1)
+        if not getattr(args, "tree", None):
+            print("\n[!] --per-node requires a phylogenetic tree, but no tree was provided.")
+            print("    Provide -t/--tree to use per-node mode.")
+            sys.exit(1)
+        print("[*] Mode:      per-node (one ancestor per internal tree node)")
+
+    t0 = time.time()
+    try:
+        from .ancestral import run_ancestral_reconstruction
+        res = run_ancestral_reconstruction(
+            alignment_path=args.alignment,
+            tree_path=args.tree,
+            weights_path=args.weights,
+            variant=getattr(args, "variant", None),
+            use_tn93=use_tn93,
+            outgroup=getattr(args, "outgroup", None),
+            top_k=args.top_k,
+            lambda_dist=args.lambda_dist,
+            lambda_plast=args.lambda_plast,
+            lambda_epi=args.lambda_epi,
+            search_sweeps=args.sweeps,
+            cpu=getattr(args, "cpu", False),
+            seed=args.seed,
+            progress=True,
+            per_node=getattr(args, "per_node", False),
+            node_tip_context_weight=getattr(args, "node_tip_context_weight", 0.0),
+            joint_pass=getattr(args, "joint_pass", 0.0),
+            weak_node_boost=getattr(args, "weak_node_boost", 0.0),
+        )
+    except ValueError as e:
+        print(f"\n[!] Ancestral Reconstruction Error: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n[!] Ancestral Reconstruction Error: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+    elapsed = time.time() - t0
+    print("\n" + "=" * 72)
+    print(f"Ancestral candidate scoring complete in {elapsed:.2f}s")
+    print(f"  Taxa: {res['n_taxa']} | Sites: {res['n_sites']} | "
+          f"Co-selection edges: {res['n_coselection_edges']}")
+    if res.get("outgroup"):
+        print(f"  Outgroup: {res['outgroup']}")
+    if res.get("per_node"):
+        print(f"  Per-node mode: {res['n_nodes']} internal nodes")
+    print("=" * 72)
+
+    if res.get("per_node"):
+        for node_info in res["nodes"]:
+            label = node_info["node_label"]
+            best = node_info["candidates"][0]
+            print(f"\n  [{label}]  best total={best['total_score']:.3f}  "
+                  f"(base={best['base_score']:.3f}, dms={best['dms_score']:.3f}, "
+                  f"epi={best['epi_score']:.3f})")
+            print(f"    {best['sequence']}")
+    else:
+        for rank, cand in enumerate(res["candidates"], start=1):
+            print(f"\n#{rank}  total={cand['total_score']:.3f}  "
+                  f"(base={cand['base_score']:.3f}, dms={cand['dms_score']:.3f}, "
+                  f"epi={cand['epi_score']:.3f})")
+            print(f"    {cand['sequence']}")
+
+    if getattr(args, "output", None):
+        write_json(args.output, res)
+        print(f"\n[\u2713] JSON written to {args.output}")
+    if getattr(args, "fasta", None):
+        ensure_parent_directory(args.fasta)
+        with open(args.fasta, "w", encoding="utf-8") as fh:
+            if res.get("per_node"):
+                for node_info in res["nodes"]:
+                    label = node_info["node_label"]
+                    best = node_info["candidates"][0]
+                    fh.write(f">{label} score={best['total_score']:.4f}\n")
+                    fh.write(best["sequence"] + "\n")
+            else:
+                for rank, cand in enumerate(res["candidates"], start=1):
+                    fh.write(f">ancestor_candidate_{rank} score={cand['total_score']:.4f}\n")
+                    fh.write(cand["sequence"] + "\n")
+        print(f"[\u2713] FASTA written to {args.fasta}")
+
 def main():
 
     from . import __version__
@@ -1227,10 +1327,42 @@ def main():
     filter_parser.add_argument("--min-run-length", type=int, default=3, help="Minimum consecutive mismatch run length in single taxon (default: 3)")
     filter_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
 
-    # 8. List-models Subcommand
+    # 8. Ancestral Sequence Candidate Scoring Subcommand
+    anc_parser = subparsers.add_parser("ancestral", aliases=["asr"], help="EXPERIMENTAL: HyphAeon-informed ancestral sequence candidate scoring")
+    anc_parser.add_argument("-a", "--alignment", required=True, help="Path to in-frame codon FASTA or NEXUS alignment")
+    anc_parser.add_argument("-t", "--tree", default=None, help="Optional Newick/NEXUS phylogenetic tree (optional if embedded, or if --no-tree/--use-tn93 is set)")
+    anc_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93")
+    anc_parser.add_argument("--use-tn93", action="store_true", help="Estimate pairwise distances directly from alignment using TN93 (skips tree)")
+    anc_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
+    anc_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from HF (default: {DEFAULT_VARIANT})")
+    anc_parser.add_argument("--outgroup", default=None, help="Outgroup taxon name (fuzzy match) to root the ancestor at its MDS position")
+    anc_parser.add_argument("-k", "--top-k", type=int, default=5, help="Number of candidate sequences to emit")
+    anc_parser.add_argument("--lambda-dist", type=float, default=4.0, help="Steepness of exponential distance weighting for tip contributions (default: 4.0). Lower values (e.g. 1.0-2.0) give a flatter weighting where distant/outgroup taxa contribute more; higher values (e.g. 6.0-8.0) concentrate weight on the closest taxa. When using a closely related outgroup, lower this to prevent the outgroup from dominating the reconstruction.")
+    anc_parser.add_argument("--lambda-plast", type=float, default=0.15, help="Weight of DMS selection-sensitivity regulariser (default: 0.15)")
+    anc_parser.add_argument("--lambda-epi", type=float, default=0.50, help="Weight of epistatic co-occurrence term (default: 0.50)")
+    anc_parser.add_argument("--sweeps", type=int, default=3, help="Max DMS/optimise alternation sweeps per seed")
+    anc_parser.add_argument("--seed", type=int, default=0, help="Random seed for stochastic seed candidates")
+    anc_parser.add_argument("--per-node", action="store_true", help="Reconstruct one ancestor per internal tree node (requires -t/--tree)")
+    anc_parser.add_argument("--node-tip-context-weight", type=float, default=0.0,
+                           help="Non-descendant tip weight scaling in per-node mode (default: %(default)s). "
+                                "0.0 = hard mask (descendants only), 1.0 = no mask (all tips contribute). "
+                                "Intermediate values allow non-descendants to contribute weak phylogenetic signal.")
+    anc_parser.add_argument("--joint-pass", type=float, default=0.0,
+                           help="Joint consistency pass strength (default: %(default)s). "
+                                "0.0 = disabled (pure marginal). >0.0 mixes each node's base logprobs with "
+                                "a soft prior from its parent's reconstructed sequence. 1.0 = parent dominates.")
+    anc_parser.add_argument("--weak-node-boost", type=float, default=0.0,
+                           help="Boost DMS/epistatic lambdas for nodes with few descendants (default: %(default)s). "
+                                "0.0 = uniform lambdas. >0.0 scales lambdas up to (1+boost) for 2-tip nodes. "
+                                "Tests whether epistasis matters most when phylogenetic signal is weak.")
+    anc_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
+    anc_parser.add_argument("-o", "--output", default=None, help="Optional path to output JSON results")
+    anc_parser.add_argument("--fasta", default=None, help="Optional path to output candidate sequences in FASTA format")
+
+    # 9. List-models Subcommand
     list_parser = subparsers.add_parser("list-models", help="List available model variants from Hugging Face")
 
-    # 9. Temporal Surveillance Subcommand
+    # 10. Temporal Surveillance Subcommand
     temp_parser = subparsers.add_parser(
         "temporal",
         aliases=["surveillance", "longitudinal"],
@@ -1305,6 +1437,8 @@ def main():
         cmd_disease(args)
     elif args.command in ["filter", "mask", "qc", "clean"]:
         cmd_filter(args)
+    elif args.command in ["ancestral", "asr"]:
+        cmd_ancestral(args)
     elif args.command in ["temporal", "surveillance", "longitudinal"]:
         cmd_temporal(args)
     elif args.command in ["splits", "split", "clades", "bisection"]:
