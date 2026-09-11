@@ -52,20 +52,9 @@ is needed regardless of which install path you choose.
 | :--- | :--- | :--- | :--- |
 | **pip** (default) | `pip install hyphaeon` | CUDA-bundled wheel (~550 MB) | NVIDIA GPU if driver matches; else CPU |
 | **pip** (CPU-only) | `pip install torch --index-url https://download.pytorch.org/whl/cpu` then `pip install hyphaeon` | CPU-only wheel (~200 MB) | CPU |
-| **Bioconda** | `conda install -c bioconda hyphaeon` | CPU-only `pytorch` from conda-forge | CPU by default; swap in `pytorch-gpu` for GPU |
+| **Bioconda** | `conda install -c bioconda hyphaeon` | CPU-only `pytorch` from conda-forge | CPU only |
 | **NVIDIA Jetson** | See [issue #31](https://github.com/veg/HyphAeon/issues/31) | JetPack-native wheel (cp38 only) | Jetson GPU |
 
-To use a GPU with Bioconda, install conda-forge's GPU PyTorch variant first:
-
-```bash
-conda create -n hyphaeon-gpu -c conda-forge pytorch-gpu
-conda activate hyphaeon-gpu
-conda install -c bioconda hyphaeon
-```
-
-You can always install a specific PyTorch build before installing HyphAeon if
-none of the above defaults suit your system (e.g. a particular CUDA version,
-a custom wheel, or a CPU-only build on a server without GPU).
 
 > [!NOTE]
 > **Model weights** are downloaded automatically from [Hugging Face](https://huggingface.co/datamonkey/hyphaeon)
