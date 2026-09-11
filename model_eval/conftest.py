@@ -12,7 +12,6 @@ import os
 import sys
 from pathlib import Path
 
-import numpy as np
 import pytest
 import torch
 
@@ -21,8 +20,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from hyphaeon.model import PhyloAxialTransformer
-from hyphaeon import dataset as ds
 from hyphaeon.inference import load_model
 
 EXAMPLES_DIR = REPO_ROOT / "examples"
@@ -243,6 +240,184 @@ def all_datasets(real_datasets, sim_datasets):
 @pytest.fixture
 def artifacts_dir():
     return str(ARTIFACTS_DIR)
+
+
+# ---------------------------------------------------------------------------
+# PhyloWAS (phenotype association) fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def phylowas_runner(weights_info):
+    """Functional fixture: run Mode II PhyloWAS on a given alignment.
+
+    Returns a callable ``runner(alignment_path, tree_path=..., **kw)`` that
+    delegates to ``hyphaeon.phenotype.run_phenotype_association``. Each call
+    re-loads the model from the session weights path (the function does this
+    internally); the weights resolution is session-scoped.
+    """
+    from hyphaeon.phenotype import run_phenotype_association
+
+    def runner(alignment_path, tree_path=None, **kwargs):
+        return run_phenotype_association(
+            alignment_path=alignment_path,
+            tree_path=tree_path,
+            weights_path=weights_info[0],
+            progress=False,
+            **kwargs,
+        )
+
+    return runner
+
+
+@pytest.fixture(scope="session")
+def sister_taxa_7_result(phylowas_runner, smc6_paths):
+    """Mode II PhyloWAS on Smc6 with 7 sister-taxa foreground.
+
+    Session-scoped so the expensive neural inference runs once and is reused
+    by both TestPhylogeneticConfounding and TestSisterTaxaConfounding.
+    """
+    from _harness import get_taxa, fg_string
+
+    fa, nwk = smc6_paths
+    taxa = get_taxa(fa, nwk)
+    return phylowas_runner(fa, tree_path=nwk, foreground=fg_string(taxa, 7))
+
+
+# ---------------------------------------------------------------------------
+# ESSM (epistatic sector mining) fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def essm_runner(weights_info):
+    """Functional fixture: run Mode II ESSM on a given alignment.
+
+    Returns a callable ``runner(alignment_path, tree_path=..., **kw)`` that
+    delegates to ``hyphaeon.epistasis.run_epistatic_analysis``. Each call
+    re-loads the model from the session weights path.
+    """
+    from hyphaeon.epistasis import run_epistatic_analysis
+
+    def runner(alignment_path, tree_path=None, **kwargs):
+        return run_epistatic_analysis(
+            alignment_path=alignment_path,
+            tree_path=tree_path,
+            weights_path=weights_info[0],
+            progress=False,
+            **kwargs,
+        )
+
+    return runner
+
+
+@pytest.fixture(scope="session")
+def essm_smc6_result(essm_runner, smc6_paths):
+    """Mode II ESSM on Smc6 with default parameters.
+
+    Session-scoped so the expensive neural inference + DMS runs once and is
+    reused by all TestCoSelectionNetwork / TestSectors / TestDMS tests and
+    the mode-comparison epistasis tests.
+    """
+    fa, nwk = smc6_paths
+    return essm_runner(fa, tree_path=nwk)
+
+
+@pytest.fixture(scope="session")
+def essm_smc6_max_fdr_1(essm_runner, smc6_paths):
+    """Mode II ESSM on Smc6 with max_fdr=1.0, min_sim=0.0, min_lrt=0.0.
+
+    Relaxed filters so all candidate edges are retained — used by the
+    epistasis independence tests to verify filter behavior.
+    """
+    fa, nwk = smc6_paths
+    return essm_runner(fa, tree_path=nwk, max_fdr=1.0, min_sim=0.0,
+                       min_lrt=0.0, min_shared=1, min_cesi=0.0)
+
+
+# ---------------------------------------------------------------------------
+# Mode I baseline fixtures (phylogeny-blind, no weights required)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def mode_i_phylowas_runner():
+    """Functional fixture: run Mode I PhyloWAS on a given alignment.
+
+    Returns a callable ``runner(alignment_path, **kw)`` that delegates to
+    ``_mode_i_baseline.run_phenotype_association_mode_i``. No model or
+    weights needed — Mode I is pure binary substitution counting.
+    """
+    from _mode_i_baseline import run_phenotype_association_mode_i
+
+    def runner(alignment_path, **kwargs):
+        return run_phenotype_association_mode_i(alignment_path, **kwargs)
+
+    return runner
+
+
+@pytest.fixture(scope="session")
+def mode_i_essm_runner():
+    """Functional fixture: run Mode I ESSM on a given alignment.
+
+    Returns a callable ``runner(alignment_path, **kw)`` that delegates to
+    ``_mode_i_baseline.run_epistatic_sector_mining_mode_i``. No model or
+    weights needed.
+    """
+    from _mode_i_baseline import run_epistatic_sector_mining_mode_i
+
+    def runner(alignment_path, **kwargs):
+        return run_epistatic_sector_mining_mode_i(alignment_path, **kwargs)
+
+    return runner
+
+
+# ---------------------------------------------------------------------------
+# Simulated data fixtures for mode-comparison tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def sim_alignments(sim_datasets):
+    """Alias for sim_datasets, used by mode-comparison tests.
+
+    The mode-comparison tests were written against a ``sim_alignments``
+    fixture name; ``sim_datasets`` provides the same data (list of dicts
+    with ``fa``, ``nwk``, ``taxa`` keys).
+    """
+    return sim_datasets
+
+
+@pytest.fixture(scope="session")
+def injected_dataset(seqgen_available):
+    """Simulated alignment with injected positive selection on a clade.
+
+    Uses ``_sim.inject_selection`` to create an alignment with radical AA
+    changes on a clade of taxa. Returns a dict with ``fa``, ``nwk``,
+    ``taxa``, ``selected_taxa``, ``selected_sites`` (0-based), and
+    ``selected_1idx`` (1-based set) keys.
+    """
+    from _sim import simulate_neutral_alignment, inject_selection, purge_stop_codons
+    from hyphaeon.dataset import parse_alignment_sequences
+
+    # Simulate a neutral alignment with low mutation rate so the background
+    # is nearly constant at injected sites, purge stop codons (seq-gen
+    # produces them under raw nucleotide substitution; real coding sequences
+    # never have them and Mode I treats them as gaps, corrupting the
+    # analysis), then inject radical AA changes on a clade of 7 taxa.
+    # With 7/30 fg taxa and a low-mutation background, the Poisson test has
+    # enough power to detect the injected shared substitutions.
+    sim_fa, sim_nwk = simulate_neutral_alignment(
+        n_taxa=30, n_codons=100, tree_depth=0.05, scale=0.1, seed=42)
+    sim_fa, _ = purge_stop_codons(sim_fa, seed=42)
+    mod_fa, selected_sites, n_sel_taxa, selected_taxa = inject_selection(
+        sim_fa, sim_nwk, n_taxa=30, n_codons=100,
+        n_selected_sites=10, n_selected_branches=7, seed=42)
+    taxa = list(parse_alignment_sequences(mod_fa).keys())
+    return {
+        "fa": mod_fa,
+        "nwk": sim_nwk,
+        "taxa": taxa,
+        "selected_taxa": selected_taxa,
+        "selected_sites": selected_sites,
+        "selected_1idx": {s + 1 for s in selected_sites},
+    }
 
 
 # ---------------------------------------------------------------------------

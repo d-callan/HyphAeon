@@ -20,7 +20,6 @@ from io import StringIO
 
 import numpy as np
 import torch
-import scipy.stats as stats
 from Bio import Phylo
 from Bio.Phylo.BaseTree import Clade
 
@@ -283,3 +282,30 @@ def majority_invariant(results, threshold):
         return False
     n_inv = sum(1 for _, r in valid if r >= threshold)
     return n_inv > len(valid) / 2
+
+
+# ---------------------------------------------------------------------------
+# Method-level helpers — PhyloWAS, ESSM
+# ---------------------------------------------------------------------------
+
+def phylowas_pvals(result):
+    """Extract p-values from PhyloWAS result dict."""
+    sites = result.get("sites", [])
+    return np.array([s.get("p_value", 1.0) for s in sites], dtype=np.float64)
+
+
+def essm_edge_pvals(result):
+    """Extract edge p-values from ESSM result dict."""
+    edges = result.get("edges", [])
+    return np.array([e.get("p_val", 1.0) for e in edges], dtype=np.float64)
+
+
+def get_taxa(fa_path, nwk_path):
+    """Load taxa names from an alignment+tree. Returns list of taxon names."""
+    _, _, _, _, _, taxa, _ = ds.load_alignment_and_tree(fa_path, nwk_path)
+    return taxa
+
+
+def fg_string(taxa, n_fg):
+    """Return a comma-separated foreground string with the first n_fg taxa."""
+    return ",".join(taxa[:n_fg])

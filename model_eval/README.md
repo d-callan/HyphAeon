@@ -89,9 +89,12 @@ message. Use `pytest model_eval/ -rs` to see skip reasons.
 ```
 model_eval/
 ├── README.md              ← this file
+├── __main__.py            ← entry point for `python -m model_eval`
+├── __init__.py
 ├── conftest.py            ← weight loading, shared fixtures, skip logic
 ├── _harness.py            ← predict helper, variant generators
 ├── _sim.py                ← neutral alignment simulator (seq-gen wrapper)
+├── _mode_i_baseline.py    ← Mode I (phylogeny-blind) baseline for phenotype/epistasis
 │
 ├── invariance/            ← pass/fail gates: model MUST be sensitive / invariant
 │   ├── test_phylogeny_sensitivity.py    ← permutation, star tree, zero distance
@@ -102,16 +105,25 @@ model_eval/
 │   ├── test_hyphaeon_null.py             ← neutral sims → p-value uniformity
 │   ├── test_hyphaeon_power.py            ← injected selection → TPR
 │   ├── test_composition_bias.py         ← AT/GC-rich composition → FPR
-│   └── test_alignment_length.py         ← short/medium/long → FPR + LRT scale
+│   ├── test_alignment_length.py         ← short/medium/long → FPR + LRT scale
+│   ├── test_epistasis_calibration.py    ← epistasis FPR on neutral sims
+│   └── test_phenotype_calibration.py   ← phenotype FPR on neutral sims
 │
 ├── concordance/           ← does HyphAeon match its prediction target?
-│   ├── _common.py                       ← HyPhy MEME runner + cache + metrics
+│   ├── _common.py                       ← HyPhy MEME runner + cache
 │   └── test_hyphaeon_vs_meme.py          ← rank corr, κ, F1 vs real HyPhy MEME
 │                                          (real datasets + typical-case sims)
 │
 ├── stability/             ← determinism, scale, numerical edge cases
 │   ├── test_determinism.py              ← batch size, run repeatability
-│   └── test_numerical_edge_cases.py     ← all-gap, single-taxon, large N
+│   ├── test_numerical_edge_cases.py     ← all-gap, single-taxon, large N
+│   └── test_epistasis_independence.py   ← filter independence, edge cases
+│
+├── test_epistasis_outputs.py           ← Mode II ESSM output structure validation
+├── test_phenotype_inputs.py            ← Mode II PhyloWAS input handling
+├── test_phenotype_outputs.py           ← Mode II PhyloWAS output structure validation
+├── test_mode_comparison_epistasis.py   ← Mode I vs Mode II epistasis comparison
+├── test_mode_comparison_phenotype.py   ← Mode I vs Mode II phenotype comparison
 │
 └── reports/               ← evidence generation (not pass/fail; JSON/CSV artifacts)
     └── test_composition_baseline.py    ← AUC vs distinct-AA baseline
@@ -228,15 +240,13 @@ every test invocation.
 #### Dataset-level concordance reports
 
 The concordance tests above validate expected model behavior on the repository's
-fixtures. For an ad hoc dataset or a single matched gene, use
-`hyphaeon evaluate` instead. That command consumes existing `hyphaeon meme`
-CSV and HyPhy MEME JSON files without rerunning either inference tool, pools
-sites across matched genes, and reports ROC-AUC, Pearson and Spearman
-correlations, PPV, FPR, confusion matrices, and per-gene site counts.
-
-See [Evaluate predictions against HyPhy MEME](../README.md#example-5-evaluate-predictions-against-hyphy-meme)
-for input naming, direct-file mode, exact metric definitions, and output
-options. This reporting command is separate from the `model_eval/` pytest
+fixtures. For an ad hoc dataset or a single matched gene, use the
+`python -m model_eval` CLI instead (see [CLI usage](#cli-usage) below). It
+consumes existing `hyphaeon meme` CSV and HyPhy MEME JSON files without
+rerunning either inference tool, pools sites across matched genes, and reports
+ROC-AUC, Pearson and Spearman correlations, PPV, FPR, confusion matrices, and
+per-gene site counts. It can also run the model and HyPhy MEME automatically
+from an alignment+tree. This CLI is separate from the `model_eval/` pytest
 acceptance thresholds and does not produce a pass/fail verdict.
 
 ### stability/ — determinism and edge cases
