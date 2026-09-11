@@ -29,7 +29,7 @@ authors:
   - family-names: "Nekrutenko"
     given-names: "Anton"
 doi: "10.64898/2026.09.06.749597"
-url: "https://doi.org/10.64898/2026.09.06.749597"
+url: "https://www.biorxiv.org/content/10.64898/2026.09.06.749597v1"
 date-released: "2026-09-06"
 preferred-citation:
   type: article
@@ -64,4 +64,4 @@ preferred-citation:
   journal: "bioRxiv"
   year: 2026
   doi: "10.64898/2026.09.06.749597"
-  url: "https://doi.org/10.64898/2026.09.06.749597"
+  url: "https://www.biorxiv.org/content/10.64898/2026.09.06.749597v1"

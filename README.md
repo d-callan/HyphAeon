@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch 2.0+](https://img.shields.io/badge/PyTorch-2.0+-orange.svg)](https://pytorch.org/)
-[![bioRxiv](https://img.shields.io/badge/bioRxiv-2026.09.06.749597-b31b1b.svg)](https://doi.org/10.64898/2026.09.06.749597)
+[![bioRxiv](https://img.shields.io/badge/bioRxiv-2026.09.06.749597-b31b1b.svg)](https://www.biorxiv.org/content/10.64898/2026.09.06.749597v1)
 [![GitHub Pages](https://img.shields.io/badge/GitHub%20Pages-Interactive%20Presentation-00e5ff.svg)](https://veg.github.io/HyphAeon/)
 
 </div>
@@ -290,7 +290,7 @@ If you use **HyphAeon** in your research, please cite:
 
 > Sergei L. Kosakovsky Pond, Steven Weaver, Danielle Callan, Jordan D. Zehr, Alexander G. Lucaci, Hannah Verdonk, Avery Selberg, Gallean Brown, Maria Chikina, Nathan L. Clark, Kateryna D. Makova, Darren P. Martin, and Anton Nekrutenko.  
 > **HyphAeon: Attention on Evolution Across Deep Time Transforms Comparative Genomics**.  
-> *bioRxiv* 2026.09.06.749597; doi: [https://doi.org/10.64898/2026.09.06.749597](https://doi.org/10.64898/2026.09.06.749597)
+> *bioRxiv* 2026.09.06.749597; doi: [https://doi.org/10.64898/2026.09.06.749597](https://www.biorxiv.org/content/10.64898/2026.09.06.749597v1)
 
 ```bibtex
 @article{kosakovskypond2026hyphaeon,
@@ -300,6 +300,6 @@ If you use **HyphAeon** in your research, please cite:
   pages={2026.09.06.749597},
   year={2026},
   doi={10.64898/2026.09.06.749597},
-  url={https://doi.org/10.64898/2026.09.06.749597}
+  url={https://www.biorxiv.org/content/10.64898/2026.09.06.749597v1}
 }
 ```
