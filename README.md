@@ -3,11 +3,13 @@
 <img src="assets/hyphaeon_logo.png" alt="HyphAeon Logo" width="280"/>
 
 # HyphAeon
-### A Deep-Time Phylogenetic Foundation Model for Multi-Scale Evolutionary, Structural, and Clinical Genomics
+### Attention on Evolution Across Deep Time Transforms Comparative Genomics
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch 2.0+](https://img.shields.io/badge/PyTorch-2.0+-orange.svg)](https://pytorch.org/)
+[![bioRxiv](https://img.shields.io/badge/bioRxiv-2026.09.06.749597-b31b1b.svg)](https://doi.org/10.64898/2026.09.06.749597)
+[![GitHub Pages](https://img.shields.io/badge/GitHub%20Pages-Interactive%20Presentation-00e5ff.svg)](https://veg.github.io/HyphAeon/)
 
 </div>
 
@@ -286,11 +288,18 @@ python training/train.py \
 
 If you use **HyphAeon** in your research, please cite:
 
+> Sergei L. Kosakovsky Pond, Steven Weaver, Danielle Callan, Jordan D. Zehr, Alexander G. Lucaci, Hannah Verdonk, Avery Selberg, Gallean Brown, Maria Chikina, Nathan L. Clark, Kateryna D. Makova, Darren P. Martin, and Anton Nekrutenko.  
+> **HyphAeon: Attention on Evolution Across Deep Time Transforms Comparative Genomics**.  
+> *bioRxiv* 2026.09.06.749597; doi: [https://doi.org/10.64898/2026.09.06.749597](https://doi.org/10.64898/2026.09.06.749597)
+
 ```bibtex
-@article{hyphaeon2026,
+@article{kosakovskypond2026hyphaeon,
   title={HyphAeon: Attention on Evolution Across Deep Time Transforms Comparative Genomics},
-  author={Kosakovsky Pond, Sergei L. and Weaver, Steven and Callan, Danielle and Zehr, Jordan D. and Lucaci, Alexander G. and Verdonk, Hannah and Selberg, Avery and Brown, Gallean and Chikina, Maria and Clark, Nathan and Makova, Kateryna D. and Martin, Darren P. and Nekrutenko, Anton},
-  journal={Nature Methods / Nature Biotechnology (in submission)},
-  year={2026}
+  author={Kosakovsky Pond, Sergei L. and Weaver, Steven and Callan, Danielle and Zehr, Jordan D. and Lucaci, Alexander G. and Verdonk, Hannah and Selberg, Avery and Brown, Gallean and Chikina, Maria and Clark, Nathan L. and Makova, Kateryna D. and Martin, Darren P. and Nekrutenko, Anton},
+  journal={bioRxiv},
+  pages={2026.09.06.749597},
+  year={2026},
+  doi={10.64898/2026.09.06.749597},
+  url={https://doi.org/10.64898/2026.09.06.749597}
 }
 ```
