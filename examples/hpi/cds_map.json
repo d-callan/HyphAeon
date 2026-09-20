@@ -1,0 +1,66 @@
+{
+  "PfRH5": {
+    "ref_length": 1788,
+    "strand": "coding",
+    "cds_exons": [
+      {
+        "start": 0,
+        "end": 64,
+        "phase": 0
+      },
+      {
+        "start": 271,
+        "end": 1788,
+        "phase": 2
+      }
+    ],
+    "cds_length": 1581
+  },
+  "BSG": {
+    "ref_length": 12211,
+    "strand": "forward",
+    "cds_exons": [
+      {
+        "start": 1352,
+        "end": 1419,
+        "phase": 0
+      },
+      {
+        "start": 6491,
+        "end": 6839,
+        "phase": 2
+      },
+      {
+        "start": 8217,
+        "end": 8374,
+        "phase": 2
+      },
+      {
+        "start": 9096,
+        "end": 9179,
+        "phase": 1
+      },
+      {
+        "start": 9363,
+        "end": 9500,
+        "phase": 2
+      },
+      {
+        "start": 10032,
+        "end": 10309,
+        "phase": 0
+      },
+      {
+        "start": 11023,
+        "end": 11048,
+        "phase": 2
+      },
+      {
+        "start": 11231,
+        "end": 11295,
+        "phase": 1
+      }
+    ],
+    "cds_length": 1158
+  }
+}

@@ -1,0 +1,13 @@
+# Clinical whole DNA samples from MalariaGEN ERP000190
+# These contain both human and Pf reads (verified: ERR10548033 has BSG + PfRH5 reads)
+# Mid-size (400-530 MB) for reasonable download times
+ERR10548033
+ERR1106574
+ERR1172544
+ERR10547933
+ERR1035521
+ERR1172541
+ERR1172510
+ERR1172500
+ERR10548011
+ERR10547814

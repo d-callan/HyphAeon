@@ -88,3 +88,13 @@ weights/
 *.pt
 *.safetensors
 REVIEW.md
+
+# hpi example data (large genotyping files + outputs)
+examples/hpi/debug/
+examples/hpi/results/
+examples/hpi/mini_reference*.amb
+examples/hpi/mini_reference*.ann
+examples/hpi/mini_reference*.bwt
+examples/hpi/mini_reference*.pac
+examples/hpi/mini_reference*.sa
+examples/hpi/mini_reference*.fai

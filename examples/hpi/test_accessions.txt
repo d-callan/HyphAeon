@@ -1,0 +1,6 @@
+# Small ENA run accessions for quick pipeline test
+# These are ~100-200 MB files (1-2M reads) - likely SWGA-enriched samples
+# Used to test the extraction pipeline end-to-end before running full set
+ERR1035501
+ERR1172576
+ERR1035509

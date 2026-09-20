@@ -1,0 +1,3 @@
+# Single 3D7 reference sample for end-to-end pipeline validation
+# Large file (~2.9 GB pair) but has both Pf and human reads (whole DNA)
+ERR10153169
