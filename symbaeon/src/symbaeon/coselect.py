@@ -110,26 +110,121 @@ def _variable_sites(
 # Association
 # ---------------------------------------------------------------------------
 
-def _assoc(x: np.ndarray, y: np.ndarray, encoding: str) -> Tuple[float, float]:
+def _assoc(
+    x: np.ndarray,
+    y: np.ndarray,
+    encoding: str,
+    strata: Optional[np.ndarray] = None,
+) -> Tuple[float, float]:
     """Association between two encoded site vectors.
 
     Returns (statistic, p_value). statistic is odds ratio (presence) or
     Spearman rho (dosage). NaN pairs are dropped pairwise.
+
+    If `strata` is given (per-individual stratum labels, e.g. country),
+    controls for population structure:
+      presence -> Cochran-Mantel-Haenszel common-odds-ratio test
+      dosage   -> Spearman on stratum-mean-residualized values
     """
     ok = ~(np.isnan(x) | np.isnan(y))
+    if strata is not None:
+        ok &= np.array([s is not None for s in strata])
     x, y = x[ok], y[ok]
+    s = strata[ok] if strata is not None else None
     if len(x) < 4 or x.std() == 0 or y.std() == 0:
         return np.nan, np.nan
 
     if encoding == "presence":
-        a = int(((x > 0) & (y > 0)).sum())
-        b = int(((x > 0) & (y == 0)).sum())
-        c = int(((x == 0) & (y > 0)).sum())
-        d = int(((x == 0) & (y == 0)).sum())
-        odds, p = _stats.fisher_exact([[a, b], [c, d]])
-        return float(odds), float(p)
+        xb, yb = (x > 0), (y > 0)
+        if s is None:
+            a = int((xb & yb).sum()); b = int((xb & ~yb).sum())
+            c = int((~xb & yb).sum()); d = int((~xb & ~yb).sum())
+            odds, p = _stats.fisher_exact([[a, b], [c, d]])
+            return float(odds), float(p)
+        return _cmh_test(xb, yb, s)
+
+    if s is not None:
+        x = _stratum_residualize(x, s)
+        y = _stratum_residualize(y, s)
+        if x.std() == 0 or y.std() == 0:
+            return np.nan, np.nan
     rho, p = _stats.spearmanr(x, y)
     return float(rho), float(p)
+
+
+def _cmh_test(xb: np.ndarray, yb: np.ndarray, strata: np.ndarray) -> Tuple[float, float]:
+    """Cochran-Mantel-Haenszel test for a common odds ratio across strata.
+
+    xb, yb: boolean carrier vectors; strata: stratum label per observation.
+    Returns (common_odds_ratio, p_value). Strata with n<=1 or zero variance
+    contribute nothing and are skipped.
+    """
+    num = den = 0.0          # common OR numerator / denominator
+    diff_sum = var_sum = 0.0  # CMH statistic terms
+    for stratum in pd_unique(strata):
+        m = strata == stratum
+        a = float((xb[m] & yb[m]).sum()); b = float((xb[m] & ~yb[m]).sum())
+        c = float((~xb[m] & yb[m]).sum()); d = float((~xb[m] & ~yb[m]).sum())
+        n = a + b + c + d
+        if n <= 1:
+            continue
+        num += a * d / n
+        den += b * c / n
+        e_a = (a + b) * (a + c) / n
+        v_a = (a + b) * (c + d) * (a + c) * (b + d) / (n * n * (n - 1))
+        diff_sum += a - e_a
+        var_sum += v_a
+    if var_sum <= 0 or den == 0:
+        return np.nan, np.nan
+    chi2 = diff_sum * diff_sum / var_sum
+    p = float(_stats.chi2.sf(chi2, df=1))
+    return float(num / den), p
+
+
+def pd_unique(arr: np.ndarray) -> List:
+    """Unique stratum labels preserving order (avoids a pandas dependency)."""
+    seen = []
+    for v in arr:
+        if v not in seen:
+            seen.append(v)
+    return seen
+
+
+def _stratum_residualize(x: np.ndarray, strata: np.ndarray) -> np.ndarray:
+    """Subtract the per-stratum mean, removing between-stratum structure."""
+    out = x.copy()
+    for stratum in pd_unique(strata):
+        m = strata == stratum
+        out[m] = x[m] - x[m].mean()
+    return out
+
+
+def load_strata(path: str, id_col: Optional[str] = None,
+                strata_col: Optional[str] = None) -> Dict[str, str]:
+    """Load a stratum mapping TSV -> {sample_id: stratum}.
+
+    id_col defaults to 'sample_id' then 'ID'; strata_col defaults to
+    'country' then the second column. Samples with empty/NA strata are
+    omitted (treated as unstratified-missing downstream).
+    """
+    with open(path, newline="") as fh:
+        reader = csv.DictReader(fh, delimiter="\t")
+        fields = reader.fieldnames or []
+        if id_col is None:
+            id_col = "sample_id" if "sample_id" in fields else "ID"
+        if strata_col is None:
+            strata_col = "country" if "country" in fields else (
+                [f for f in fields if f != id_col] or [None])[0]
+        if id_col not in fields or strata_col not in fields:
+            raise ValueError(
+                f"Strata file {path}: need columns '{id_col}' and '{strata_col}'; "
+                f"found {fields}")
+        out = {}
+        for row in reader:
+            v = row[strata_col].strip()
+            if v and v.upper() != "NA":
+                out[row[id_col]] = v
+    return out
 
 
 def _bh_fdr(pvals: np.ndarray) -> np.ndarray:
@@ -217,6 +312,9 @@ def run_coselect(
     par_fasta: str,
     manifest_path: Optional[str] = None,
     host_cov_path: Optional[str] = None,
+    strata_path: Optional[str] = None,
+    strata_id_col: Optional[str] = None,
+    strata_col: Optional[str] = None,
     encoding: str = "presence",
     min_carriers: int = 10,
     alpha: float = 0.05,
@@ -231,7 +329,11 @@ def run_coselect(
     manifest_path         : pairing manifest TSV (seq_id -> sample_id)
     host_cov_path         : optional host covariate TSV (e.g. SV genotypes);
                             each covariate is tested like an extra host site
-    encoding              : 'presence' (Fisher) or 'dosage' (Spearman)
+    strata_path           : optional TSV mapping sample_id -> stratum
+                            (e.g. country) for population-structure control
+    strata_id_col         : sample-id column in strata file (default: auto)
+    strata_col            : stratum column in strata file (default: auto)
+    encoding              : 'presence' (Fisher/CMH) or 'dosage' (Spearman)
     min_carriers          : min individuals carrying the alt allele to test a site
     alpha                 : FDR threshold for reporting
     out_path              : optional TSV of all tested pairs
@@ -245,6 +347,15 @@ def run_coselect(
     if progress:
         print(f"[*] Paired individuals: {len(individuals)} "
               f"(host seqs {len(host.seqs)}, parasite seqs {len(par.seqs)})")
+
+    strata = None
+    if strata_path:
+        smap = load_strata(strata_path, strata_id_col, strata_col)
+        strata = np.array([smap.get(ind) for ind in individuals], dtype=object)
+        n_strat = sum(1 for s in strata if s is not None)
+        if progress:
+            print(f"[*] Strata: {n_strat}/{len(individuals)} individuals "
+                  f"assigned ({len(set(s for s in strata if s))} levels)")
 
     host_sites = _variable_sites(host, individuals, encoding, min_carriers)
     par_sites = _variable_sites(par, individuals, encoding, min_carriers)
@@ -264,7 +375,7 @@ def run_coselect(
     records = []
     for h_label, hv, h_ref, h_n in host_feats:
         for p_site, pv, p_ref, p_n in par_sites:
-            stat, p = _assoc(hv, pv, encoding)
+            stat, p = _assoc(hv, pv, encoding, strata)
             records.append({
                 "host_feature": h_label,
                 "host_ref": h_ref,

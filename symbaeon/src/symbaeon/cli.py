@@ -17,6 +17,9 @@ def cmd_coselect(args):
         par_fasta=args.par_aln,
         manifest_path=args.pairs,
         host_cov_path=args.host_cov,
+        strata_path=args.strata,
+        strata_id_col=args.strata_id_col,
+        strata_col=args.strata_col,
         encoding=args.encoding,
         min_carriers=args.min_carriers,
         alpha=args.alpha,
@@ -47,6 +50,10 @@ def main():
     cs.add_argument("--pairs", default=None, help="Pairing manifest TSV (seq_id -> sample_id)")
     cs.add_argument("--host-cov", default=None,
                     help="Optional host covariate TSV (sample_id + one col per covariate, e.g. SV genotypes)")
+    cs.add_argument("--strata", default=None,
+                    help="Optional TSV mapping sample_id -> stratum (e.g. country) for structure control")
+    cs.add_argument("--strata-id-col", default=None, help="Sample-id column in strata file (default: auto)")
+    cs.add_argument("--strata-col", default=None, help="Stratum column in strata file (default: auto)")
     cs.add_argument("--encoding", choices=["presence", "dosage"], default="presence",
                     help="Allele encoding per individual (default: presence)")
     cs.add_argument("--min-carriers", type=int, default=10,
