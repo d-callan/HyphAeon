@@ -22,6 +22,7 @@ def cmd_coselect(args):
         strata_col=args.strata_col,
         samples_path=args.samples,
         encoding=args.encoding,
+        hom_only=args.hom_only,
         min_carriers=args.min_carriers,
         alpha=args.alpha,
         out_path=args.out,
@@ -59,6 +60,10 @@ def main():
                     help="Optional file of sample_ids to restrict analysis (TSV with sample_id/ID col or plain list)")
     cs.add_argument("--encoding", choices=["presence", "dosage"], default="presence",
                     help="Allele encoding per individual (default: presence)")
+    cs.add_argument("--hom-only", action="store_true",
+                    help="Presence encoding: count a parasite sample as an alt carrier "
+                         "only when alt is its sole allele (excludes mixed-infection "
+                         "minority clones). Host diploid encoding unaffected.")
     cs.add_argument("--min-carriers", type=int, default=10,
                     help="Min individuals carrying alt allele to test a site (default: 10)")
     cs.add_argument("--alpha", type=float, default=0.05, help="FDR threshold (default: 0.05)")

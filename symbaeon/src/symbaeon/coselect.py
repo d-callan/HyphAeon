@@ -45,12 +45,20 @@ def _encode_site(
     site: int,
     individuals: List[str],
     encoding: str,
+    hom_only: bool = False,
 ) -> Tuple[np.ndarray, str]:
     """Encode one site across individuals.
 
     Returns (values, ref_allele). values is float array with NaN for missing.
     ref_allele is the reference base (from ref_id sequence) or the majority
     allele if no reference is present.
+
+    hom_only (presence encoding only): an individual counts as an alt carrier
+    only when alt is its *sole* observed allele. Individuals with a mixed
+    allele set {ref, alt} — e.g. a minority clone in a mixed parasite
+    infection — are set to NaN (excluded). This removes the detection
+    artifact where individuals with more clones are more likely to have at
+    least one alt-carrying clone.
     """
     allele_sets = site_allele_sets(side, site, individuals)
 
@@ -74,6 +82,8 @@ def _encode_site(
             continue  # fully missing
         n_alt = sum(1 for a in s if a != ref)
         if encoding == "presence":
+            if hom_only and len(s) > 1:
+                continue  # ambiguous mixed/het call -> exclude
             vals[i] = 1.0 if n_alt > 0 else 0.0
         else:  # dosage
             vals[i] = n_alt / len(s)
@@ -85,16 +95,17 @@ def _variable_sites(
     individuals: List[str],
     encoding: str,
     min_carriers: int,
+    hom_only: bool = False,
 ) -> List[Tuple[int, np.ndarray, str, int]]:
     """Return [(site, values, ref, n_carriers)] for sites with enough variation.
 
     A site is kept if at least `min_carriers` individuals carry a
     non-reference allele AND at least `min_carriers` do not (so the
-    association test is defined).
+    association test is defined). `hom_only` is passed to _encode_site.
     """
     kept = []
     for site in range(side.length):
-        vals, ref = _encode_site(side, site, individuals, encoding)
+        vals, ref = _encode_site(side, site, individuals, encoding, hom_only)
         ok = ~np.isnan(vals)
         n_obs = int(ok.sum())
         if n_obs < 2 * min_carriers:
@@ -340,6 +351,7 @@ def run_coselect(
     strata_col: Optional[str] = None,
     samples_path: Optional[str] = None,
     encoding: str = "presence",
+    hom_only: bool = False,
     min_carriers: int = 10,
     alpha: float = 0.05,
     out_path: Optional[str] = None,
@@ -360,6 +372,11 @@ def run_coselect(
     samples_path          : optional file of sample_ids to restrict the
                             individual axis (e.g. one country, cases only)
     encoding              : 'presence' (Fisher/CMH) or 'dosage' (Spearman)
+    hom_only              : presence encoding only — count a parasite sample as
+                            an alt carrier only when alt is its sole allele;
+                            mixed-infection samples are excluded. Removes the
+                            minority-clone detection artifact. Host diploid
+                            encoding is unaffected (hets are real carriers).
     min_carriers          : min individuals carrying the alt allele to test a site
     alpha                 : FDR threshold for reporting
     out_path              : optional TSV of all tested pairs
@@ -387,7 +404,11 @@ def run_coselect(
                   f"assigned ({len(set(s for s in strata if s))} levels)")
 
     host_sites = _variable_sites(host, individuals, encoding, min_carriers)
-    par_sites = _variable_sites(par, individuals, encoding, min_carriers)
+    # hom_only applies to the parasite side only: host diploid hets are real
+    # carriers, whereas parasite 'hets' are mixed infections where a minority
+    # clone would otherwise inflate apparent carriage.
+    par_sites = _variable_sites(par, individuals, encoding, min_carriers,
+                                hom_only=hom_only)
     covs = []
     if host_cov_path:
         covs = load_host_covariates(host_cov_path, individuals, min_carriers)
