@@ -20,6 +20,7 @@ def cmd_coselect(args):
         strata_path=args.strata,
         strata_id_col=args.strata_id_col,
         strata_col=args.strata_col,
+        samples_path=args.samples,
         encoding=args.encoding,
         min_carriers=args.min_carriers,
         alpha=args.alpha,
@@ -54,6 +55,8 @@ def main():
                     help="Optional TSV mapping sample_id -> stratum (e.g. country) for structure control")
     cs.add_argument("--strata-id-col", default=None, help="Sample-id column in strata file (default: auto)")
     cs.add_argument("--strata-col", default=None, help="Stratum column in strata file (default: auto)")
+    cs.add_argument("--samples", default=None,
+                    help="Optional file of sample_ids to restrict analysis (TSV with sample_id/ID col or plain list)")
     cs.add_argument("--encoding", choices=["presence", "dosage"], default="presence",
                     help="Allele encoding per individual (default: presence)")
     cs.add_argument("--min-carriers", type=int, default=10,

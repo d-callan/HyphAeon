@@ -199,6 +199,29 @@ def _stratum_residualize(x: np.ndarray, strata: np.ndarray) -> np.ndarray:
     return out
 
 
+def load_sample_filter(path: str) -> set:
+    """Load a set of sample_ids to include.
+
+    Accepts either a TSV with a 'sample_id' or 'ID' column, or a plain
+    one-id-per-line list.
+    """
+    ids = set()
+    with open(path, newline="") as fh:
+        first = fh.readline()
+        fh.seek(0)
+        head = first.rstrip("\n").split("\t")
+        if len(head) > 1 and ("sample_id" in head or "ID" in head):
+            col = "sample_id" if "sample_id" in head else "ID"
+            for row in csv.DictReader(fh, delimiter="\t"):
+                ids.add(row[col])
+        else:
+            for line in fh:
+                v = line.strip()
+                if v:
+                    ids.add(v.split("\t")[0])
+    return ids
+
+
 def load_strata(path: str, id_col: Optional[str] = None,
                 strata_col: Optional[str] = None) -> Dict[str, str]:
     """Load a stratum mapping TSV -> {sample_id: stratum}.
@@ -315,6 +338,7 @@ def run_coselect(
     strata_path: Optional[str] = None,
     strata_id_col: Optional[str] = None,
     strata_col: Optional[str] = None,
+    samples_path: Optional[str] = None,
     encoding: str = "presence",
     min_carriers: int = 10,
     alpha: float = 0.05,
@@ -333,6 +357,8 @@ def run_coselect(
                             (e.g. country) for population-structure control
     strata_id_col         : sample-id column in strata file (default: auto)
     strata_col            : stratum column in strata file (default: auto)
+    samples_path          : optional file of sample_ids to restrict the
+                            individual axis (e.g. one country, cases only)
     encoding              : 'presence' (Fisher/CMH) or 'dosage' (Spearman)
     min_carriers          : min individuals carrying the alt allele to test a site
     alpha                 : FDR threshold for reporting
@@ -342,6 +368,9 @@ def run_coselect(
     host = load_paired_alignment(host_fasta, "host", manifest)
     par = load_paired_alignment(par_fasta, "parasite", manifest)
     individuals = build_individual_axis(host, par)
+    if samples_path:
+        keep = load_sample_filter(samples_path)
+        individuals = [i for i in individuals if i in keep]
     if not individuals:
         raise ValueError("No shared sample_ids between host and parasite MSAs")
     if progress:
