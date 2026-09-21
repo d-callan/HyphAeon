@@ -155,10 +155,17 @@ def _assoc(
         return _cmh_test(xb, yb, s)
 
     if s is not None:
-        x = _stratum_residualize(x, s)
-        y = _stratum_residualize(y, s)
+        # Stratified rank test: rank within each stratum, then correlate the
+        # pooled within-stratum quantile ranks. Residualizing raw values and
+        # then ranking globally is WRONG for discrete/binary traits — the
+        # residualized levels still order by stratum, so global ranks
+        # reintroduce the between-stratum structure we meant to remove.
+        x = _stratum_ranks(x, s)
+        y = _stratum_ranks(y, s)
         if x.std() == 0 or y.std() == 0:
             return np.nan, np.nan
+        rho, p = _stats.pearsonr(x, y)
+        return float(rho), float(p)
     rho, p = _stats.spearmanr(x, y)
     return float(rho), float(p)
 
@@ -192,6 +199,35 @@ def _cmh_test(xb: np.ndarray, yb: np.ndarray, strata: np.ndarray) -> Tuple[float
     return float(num / den), p
 
 
+def gene_burden(
+    side: PairedSide,
+    individuals: List[str],
+    encoding: str = "dosage",
+    hom_only: bool = False,
+    min_carriers: int = 2,
+) -> Tuple[np.ndarray, int]:
+    """Per-individual gene-level burden score.
+
+    Mean of the per-site encoded values across all variable sites in the
+    gene (NaN-aware). Aggregating variants into one score per gene trades
+    site resolution for power and a much smaller multiple-testing burden.
+
+      dosage   -> mean alt-allele fraction across variable sites
+      presence -> fraction of variable sites where the individual is a carrier
+      hom_only -> (presence) mixed/het sites excluded before averaging, so the
+                  score is the fraction of *clean* sites that are alt
+
+    Returns (scores, n_sites_used). scores is float array (NaN if no data).
+    """
+    sites = _variable_sites(side, individuals, encoding, min_carriers, hom_only)
+    if not sites:
+        return np.full(len(individuals), np.nan), 0
+    M = np.column_stack([v for _, v, _, _ in sites])  # individuals x sites
+    with np.errstate(invalid="ignore"):
+        scores = np.nanmean(M, axis=1)
+    return scores, len(sites)
+
+
 def pd_unique(arr: np.ndarray) -> List:
     """Unique stratum labels preserving order (avoids a pandas dependency)."""
     seen = []
@@ -201,12 +237,16 @@ def pd_unique(arr: np.ndarray) -> List:
     return seen
 
 
-def _stratum_residualize(x: np.ndarray, strata: np.ndarray) -> np.ndarray:
-    """Subtract the per-stratum mean, removing between-stratum structure."""
-    out = x.copy()
+def _stratum_ranks(x: np.ndarray, strata: np.ndarray) -> np.ndarray:
+    """Rank x within each stratum, scaled to (0,1) quantiles.
+
+    Ranking within strata before pooling removes between-stratum structure
+    in the rank space and keeps strata on a common scale regardless of size.
+    """
+    out = np.full(len(x), np.nan, dtype=np.float64)
     for stratum in pd_unique(strata):
         m = strata == stratum
-        out[m] = x[m] - x[m].mean()
+        out[m] = _stats.rankdata(x[m]) / (m.sum() + 1)
     return out
 
 
