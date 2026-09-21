@@ -64,7 +64,7 @@ def _encode_site(
 
     if side.ref_id is not None:
         ref = side.seqs[side.ref_id][site]
-        if ref not in VALID_BASES:
+        if ref not in side.alphabet:
             ref = None
     else:
         ref = None

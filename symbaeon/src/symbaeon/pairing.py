@@ -22,6 +22,30 @@ from typing import Dict, List, Optional
 import numpy as np
 from Bio import SeqIO
 
+# Valid allele symbols per alphabet. Anything outside the detected alphabet's
+# set is treated as missing (gap '-', '.', ambiguous 'N'/'X', stop '*', etc.).
+NT_ALLELES = frozenset("ACGT")
+AA_ALLELES = frozenset("ACDEFGHIKLMNPQRSTVWY")
+# Symbols consistent with a nucleotide alignment. If every observed residue is
+# in this set we treat the side as nucleotide (valid alleles = ACGT); any other
+# residue (e.g. protein-only letters) marks it as amino-acid.
+_NT_CHARS = frozenset("ACGTUN-.")
+
+
+def detect_alphabet(seqs: Dict[str, str]) -> frozenset:
+    """Return the valid-allele set for an alignment (NT_ALLELES or AA_ALLELES).
+
+    Nucleotide iff every observed symbol is a nucleotide character; otherwise
+    amino-acid. A purely ACGT peptide is genuinely ambiguous and is treated as
+    nucleotide — acceptable since real proteins almost always use other letters.
+    """
+    seen = set()
+    for s in seqs.values():
+        seen.update(s)
+        if not seen <= _NT_CHARS:
+            return AA_ALLELES
+    return NT_ALLELES
+
 
 @dataclass
 class PairedSide:
@@ -41,6 +65,9 @@ class PairedSide:
         Alignment length (sites). All sequences must share it.
     ref_id : str or None
         seq_id of the reference sequence (tag == 'ref'), if present.
+    alphabet : frozenset
+        Valid allele symbols for this side (NT_ALLELES or AA_ALLELES),
+        auto-detected from the sequences. Symbols outside it are missing.
     """
     name: str
     seqs: Dict[str, str] = field(default_factory=dict)
@@ -48,6 +75,7 @@ class PairedSide:
     sample_to_seqs: Dict[str, List[str]] = field(default_factory=dict)
     length: int = 0
     ref_id: Optional[str] = None
+    alphabet: frozenset = NT_ALLELES
 
     def samples(self) -> List[str]:
         return list(self.sample_to_seqs.keys())
@@ -111,6 +139,7 @@ def load_paired_alignment(
             sample_id = _sample_from_header(seq_id)
         side.seq_to_sample[seq_id] = sample_id
         side.sample_to_seqs.setdefault(sample_id, []).append(seq_id)
+    side.alphabet = detect_alphabet(side.seqs)
     return side
 
 
@@ -125,16 +154,18 @@ def site_allele_sets(
 ) -> List[set]:
     """For a 0-based site, return the set of observed alleles per individual.
 
-    Alleles are single characters from the aligned sequences. 'N', '-', and
-    other non-ACGT characters are treated as missing and excluded from the
-    set; an individual whose set is empty is fully missing at this site.
+    Alleles are single characters from the aligned sequences. Symbols outside
+    the side's detected alphabet (gap '-', '.', ambiguous 'N'/'X', etc.)
+    are treated as missing and excluded from the set; an individual whose set
+    is empty is fully missing at this site.
     """
     out = []
+    valid = side.alphabet
     for ind in individuals:
         alleles = set()
         for seq_id in side.sample_to_seqs.get(ind, []):
             ch = side.seqs[seq_id][site]
-            if ch in "ACGT":
+            if ch in valid:
                 alleles.add(ch)
         out.append(alleles)
     return out
