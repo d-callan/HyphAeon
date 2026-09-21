@@ -1,0 +1,10 @@
+# regenerable intermediates (rebuilt by fetch_gag.py / mafft / prep_symbaeon.py)
+gag_proteins.fasta
+gag_all.fasta
+gag_msa.fasta
+gag_msa_hxb2.fasta
+*.gb
+mafft.log
+# superseded result runs
+coselect_results.tsv
+coselect_mc5.tsv
