@@ -545,3 +545,26 @@ Driver-fraction check confirms the mechanism: the top edges (`host:33×par:38` c
 **CR1 × PfRH4**: 0 edges even at min-sim 0.15, and the permutation null is also 0 — no host×par site pair reaches threshold. Diagnostic shows **median drivers/site = 0** for both genes: most selected sites have *no* single-haplotype driver whose reversion lowers the LRT.
 
 **Lineage counterfactual resolves the ambiguity** (`--method delta_lrt_aa`): to test whether the negative was a power artifact of single-taxon reversion, a grouped counterfactual reverts **all carriers of each derived amino acid jointly** and assigns the group's ΔLRT to every carrier. On the positive control this still detects the shared-clade signal (773 edges, p=0.048 — stronger than single-taxon, since allele-group reversion captures the full clade effect). On CR1×PfRH4 it yields drivers at only **10/137 host** and **4/180 par** selected sites, max |cos| = 0.05 → still 0 edges. **Interpretation**: the selection at these genes is *not attributable to any allele or lineage* — reverting even a whole allele-class doesn't move the LRT, so the signal is aggregate/diffuse diversifying selection (immune evasion on CR1, host-receptor variation on PfRH4) spread across the alignment, not concentrated on lineages that could co-vary. The malaria negative is therefore a **true negative for selection-correlation**, not a detection failure — the method correctly reports "no shared driving lineages" because there are none.
+
+### 10.8 Per-gene selection pattern + a diffuse-coselection detector
+
+**Independent `hyphaeon meme` / `epistasis` on each gene** (TN93, no tree):
+
+| gene | MEME p≤0.05 | MEME FDR≤0.05 | epistasis edges/sectors | top sites |
+|---|---|---|---|---|
+| CR1 | 4 | 0 | 0 edges / 1 weak sector (1326·1550·1658, coherence 0.68, p_perm=0.13 ns) | 2337 (LRT 16), 2040 (12), 1626 (9), 1326 (6) |
+| PfRH4 | **0** | 0 | **0 edges / 0 sectors** | 438 (LRT 3.7, p=0.07), 1482 (3.4, p=0.09) |
+
+So the 137/180 "selected" sites from the lenient transformer LRT≥1.0 gate are mostly weak/diffuse variation; by MEME's stricter episodic test **PfRH4 has essentially no concentrated selection at all** — consistent with the diffuse picture and explaining why there is no lineage-driven coselection to find.
+
+**Diffuse detector** (`scripts/model_coselect_diffuse.py`): a complementary paradigm for when selection has no per-lineage drivers. Per gene it computes a **per-individual selection burden** = LRT-weighted attribution mass summed over selected sites, then correlates host vs par burden across individuals (permutation null on the par axis). Two variants: **raw** (any individual-level coupling) and **ancestry-corrected** (burden regressed on the 4D MDS relatedness coords → residual correlation = coupling *beyond* shared ancestry).
+
+| dataset | delta_lrt (concentrated) | burden raw | burden ancestry-corr |
+|---|---|---|---|
+| positive control (shared clade) | 207 edges, p=0.048 | **r=0.89, p=0.001** | r=−0.11, p=0.75 |
+| Gag × Protease | 910 edges, p=0.048 | **r=0.17, p=0.038** | r=0.07, p=0.16 |
+| CR1 × PfRH4 | 0 edges | r=0.01, p=0.23 | r=0.01, p=0.21 |
+
+**Identifiability boundary (important)**: on the positive control the raw burden is strongly positive (r=0.89) but the ancestry-corrected correlation *vanishes* (r=−0.11). This is not a bug — the shared-clade signal **is** a shared-ancestry signal: the selected t0–t9 clade is a phylogenetic unit, and the MDS coords encode exactly that membership, so regressing out ancestry removes the signal itself. Consequence: **clade-driven selection-correlation is inherently confounded with shared ancestry at the individual level** — the two are the same observation. The ancestry-corrected burden can only detect *non-ancestry* coupling (independent convergence across individuals), while the raw burden detects coupling but cannot attribute it to coselection vs ancestry. `delta_lrt` sidesteps this by testing site×site driver overlap against a leaf-shuffle null rather than partialling out ancestry.
+
+**Bottom line for CR1 × PfRH4**: no detectable coselection of *any* kind — not concentrated (delta_lrt: 0 edges), not diffuse/individual-level (burden r≈0.01, ns), and PfRH4 has no concentrated selection to begin with (0 MEME sites). A robust negative for this pair.
