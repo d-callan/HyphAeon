@@ -531,4 +531,15 @@ Driver-fraction check confirms the mechanism: the top edges (`host:33×par:38` c
 
 **Negative control** (`sim_mg94.py` with `--fg` on different clades): host selects on t0–t9, par selects on t20–t29 — both genes have real episodic selection but on *disjoint* lineages. Result: **190 edges vs null mean 201.6, p=0.81** (no excess). The method is specific for *shared* drivers, not merely "selection present in both genes" — the permutation null already absorbs the structured-variation baseline, so only a true shared-lineage signal pushes obs above null.
 
-**Status**: the model path now has a validated positive **and** negative control for selection-correlation, complementing the stats method's allele-correlation control (§10.2). Next: run `--method delta_lrt` on the real Gag×Protease and malaria (CR1×PfRH4) pairs.
+**Status**: the model path now has a validated positive **and** negative control for selection-correlation, complementing the stats method's allele-correlation control (§10.2).
+
+### 10.7 delta_lrt on real paired data
+
+| pair | N inds | host sel / par sel | edges | perm p | verdict |
+|---|---|---|---|---|---|
+| **Gag × Protease** (HIV, 173 patients) | 173 | 440 / 91 | **910** | **0.048** | significant excess; coherent cluster |
+| **CR1 × PfRH4** (malaria) | 3347 | 137 / 180 | **0** | 1.0 | no detectable signal |
+
+**Gag × Protease**: 910 edges vs null mean 392 / max 703 → p=0.048. Top edges form a coherent cluster — Gag sites **451/452** (adjacent, same signal) and **334/433** × Protease sites **138/17/14/102/108/143** at cos≈0.85. The 451/452 edges are positive-cosine (same driving individuals); the 334 edges are negative-cosine (anti-correlated drivers) — two distinct lineage-sharing patterns. Caveat: 38.5% of protease codons carry gaps/ambiguities, so protease-side signal should be re-checked after alignment QC.
+
+**CR1 × PfRH4**: 0 edges even at min-sim 0.15, and the permutation null is also 0 — no host×par site pair reaches threshold. Diagnostic shows **median drivers/site = 0** for both genes: most selected sites have *no* single-haplotype driver whose reversion lowers the LRT. This exposes a **power boundary of delta_lrt**: it detects *concentrated* selection (one clade/haplotype drives the site — the control regime), but in a 3347-individual alignment selection is frequently *diffuse* across many haplotypes, so no single counterfactual reversion moves the LRT and the driver profile is empty. Combined with host-vs-parasite genealogies being independent trees over the same individuals (so "same lineages" = same *individuals*, not same clades), the per-individual driver overlap is weak. Interpretation: likely a true/below-detection negative for this pair, but the diffuse-selection power limit is a real methodological caveat — a clade- or haplotype-*set* counterfactual (revert a whole lineage, not one haplotype) may be needed for large-N data.
