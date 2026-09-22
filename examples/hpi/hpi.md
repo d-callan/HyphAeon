@@ -535,10 +535,13 @@ Driver-fraction check confirms the mechanism: the top edges (`host:33×par:38` c
 
 ### 10.7 delta_lrt on real paired data
 
-| pair | N inds | host sel / par sel | edges | perm p | verdict |
-|---|---|---|---|---|---|
-| **Gag × Protease** (HIV, 173 patients) | 173 | 440 / 91 | **910** | **0.048** | significant excess; coherent cluster |
-| **CR1 × PfRH4** (malaria) | 3347 | 137 / 180 | **0** | 1.0 | no detectable signal |
+| pair | method | N inds | host sel / par sel | edges | perm p | verdict |
+|---|---|---|---|---|---|---|
+| **Gag × Protease** (HIV, 173 patients) | delta_lrt | 173 | 440 / 91 | **910** | **0.048** | significant excess; coherent cluster |
+| **Gag × Protease** (HIV) | delta_lrt_aa | 173 | 440 / 91 | **3251** | **0.047** | significant; broader allele-group drivers |
+| **CR1 × PfRH4** (malaria) | delta_lrt / _aa | 3347 | 137 / 180 | **0** | 1.0 | no detectable signal |
+
+**Gag × Protease, `delta_lrt_aa`**: 3251 edges (vs 910 single-taxon), p=0.047 — more power, as allele-group reversion captures full clade effects. The dominant cluster shifts: top edges are **Gag 41/72/73/479 × Protease 66/99/125** (cos≈0.68–0.83), and hub host sites are **113/72/41/112/67/43/50/259** — a different ranking than the single-taxon top hits (451/452/334), because the grouped counterfactual surfaces broader lineage-sharing rather than single-haplotype drivers. Both methods agree the coselection is real; they rank different site-pairs by which driver granularity dominates.
 
 **Gag × Protease**: 910 edges vs null mean 392 / max 703 → p=0.048. Top edges form a coherent cluster — Gag sites **451/452** (adjacent, same signal) and **334/433** × Protease sites **138/17/14/102/108/143** at cos≈0.85. The 451/452 edges are positive-cosine (same driving individuals); the 334 edges are negative-cosine (anti-correlated drivers) — two distinct lineage-sharing patterns. Caveat: 38.5% of protease codons carry gaps/ambiguities, so protease-side signal should be re-checked after alignment QC.
 
