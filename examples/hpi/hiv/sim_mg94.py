@@ -45,39 +45,52 @@ def q_matrix(omega, alpha=1.0, freqs=None):
     return Q / scale
 
 
-def simulate(n_sites, seed, fg_omega=5.0, bg_omega=0.15,
-             fg_internal_len=0.5, tip_len=0.08, bg_internal_len=0.0):
-    """Tree: root -> FGnode (len fg_internal_len, omega fg_omega) -> t0..t9
-             root -> BGnode (len bg_internal_len, omega bg_omega) -> t10..t39
-    FG tip branches also get fg_omega (sustained diversifying on the clade)."""
+def simulate(n_sites, seed, fg_taxa=None, n_taxa=40, fg_omega=5.0,
+             bg_omega=0.15, fg_internal_len=0.5, tip_len=0.08):
+    """Tree: root -> FGnode (len fg_internal_len, omega fg_omega) -> fg_taxa tips
+             root -> each background taxon (len tip_len, omega bg_omega)  [star]
+
+    fg_taxa = the selected clade (shared internal branch at fg_omega -> those
+    taxa share the nonsyn substitutions from that branch). Background taxa are
+    near-independent (star), so only the FG clade carries a shared selected
+    signal. For a NEGATIVE control, give host and par different fg_taxa.
+    """
+    if fg_taxa is None:
+        fg_taxa = [f"t{i}" for i in range(10)]
+    fg_set = set(fg_taxa)
+    all_taxa = [f"t{i}" for i in range(n_taxa)]
+    bg_taxa = [t for t in all_taxa if t not in fg_set]
+
     rng = np.random.default_rng(seed)
     freqs = np.full(N, 1.0 / N)
     P_fg_int = expm(q_matrix(fg_omega, freqs=freqs) * fg_internal_len)
     P_fg_tip = expm(q_matrix(fg_omega, freqs=freqs) * tip_len)
-    P_bg_int = expm(q_matrix(bg_omega, freqs=freqs) * bg_internal_len)
     P_bg_tip = expm(q_matrix(bg_omega, freqs=freqs) * tip_len)
 
     def step(P, parent):
         return rng.choice(N, p=P[parent])
 
-    seqs = {f"t{i}": [] for i in range(40)}
+    seqs = {t: [] for t in all_taxa}
     for _ in range(n_sites):
         root = rng.choice(N, p=freqs)
         fg_node = step(P_fg_int, root)
-        bg_node = step(P_bg_int, root)
-        for i in range(10):
-            seqs[f"t{i}"].append(SENSE[step(P_fg_tip, fg_node)])
-        for i in range(10, 40):
-            seqs[f"t{i}"].append(SENSE[step(P_bg_tip, bg_node)])
+        for t in fg_taxa:
+            seqs[t].append(SENSE[step(P_fg_tip, fg_node)])
+        for t in bg_taxa:
+            seqs[t].append(SENSE[step(P_bg_tip, root)])
     return {k: "".join(v) for k, v in seqs.items()}
 
 
 if __name__ == "__main__":
+    # usage: sim_mg94.py out.fasta n_sites seed [fg_start fg_end]
     out = sys.argv[1] if len(sys.argv) > 1 else "sim_out.fasta"
     n_sites = int(sys.argv[2]) if len(sys.argv) > 2 else 200
     seed = int(sys.argv[3]) if len(sys.argv) > 3 else 0
-    seqs = simulate(n_sites, seed)
+    fg = None
+    if len(sys.argv) > 5:
+        fg = [f"t{i}" for i in range(int(sys.argv[4]), int(sys.argv[5]))]
+    seqs = simulate(n_sites, seed, fg_taxa=fg)
     with open(out, "w") as f:
         for name, s in seqs.items():
             f.write(f">{name}\n{s}\n")
-    print(f"wrote {out} ({len(seqs)} taxa x {n_sites} codons)")
+    print(f"wrote {out} ({len(seqs)} taxa x {n_sites} codons, fg={fg})")

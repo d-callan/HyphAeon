@@ -529,4 +529,6 @@ The corrected approach from §10.4 is now wired in and validated on a purpose-bu
 
 Driver-fraction check confirms the mechanism: the top edges (`host:33×par:38` cos=0.97, `host:176×par:16` cos=0.92, `host:170`, `par:41`, `par:12`) are driven by the **t0–t9 foreground clade** (FG-driver-fraction 0.8–1.0) in *both* genes — i.e. the same selected lineages, which is precisely the selection-correlation signal. A minority of edges are background-driven (residual shared-ancestry correlation), a caveat to carry into real-data interpretation.
 
-**Status**: the model path now has a validated positive control for selection-correlation, complementing the stats method's allele-correlation control (§10.2). Next: run `--method delta_lrt` on the real Gag×Protease and malaria (CR1×PfRH4) pairs.
+**Negative control** (`sim_mg94.py` with `--fg` on different clades): host selects on t0–t9, par selects on t20–t29 — both genes have real episodic selection but on *disjoint* lineages. Result: **190 edges vs null mean 201.6, p=0.81** (no excess). The method is specific for *shared* drivers, not merely "selection present in both genes" — the permutation null already absorbs the structured-variation baseline, so only a true shared-lineage signal pushes obs above null.
+
+**Status**: the model path now has a validated positive **and** negative control for selection-correlation, complementing the stats method's allele-correlation control (§10.2). Next: run `--method delta_lrt` on the real Gag×Protease and malaria (CR1×PfRH4) pairs.
