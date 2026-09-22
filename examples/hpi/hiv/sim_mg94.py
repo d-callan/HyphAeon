@@ -81,15 +81,61 @@ def simulate(n_sites, seed, fg_taxa=None, n_taxa=40, fg_omega=5.0,
     return {k: "".join(v) for k, v in seqs.items()}
 
 
+def simulate_scatter(n_sites, seed, fg_taxa=None, n_taxa=40, n_sel=120,
+                     bg_omega=0.15, tip_len=0.08):
+    """Diffuse/convergent positive control for the BURDEN detector.
+
+    fg_taxa are SCATTERED tips (NOT a clade — no shared internal branch). At
+    n_sel 'selected' sites each fg taxon independently draws a derived
+    (non-consensus) codon while background stays near the root -> high-LRT
+    sites whose drivers are scattered individuals. At all other sites every
+    taxon evolves under bg_omega from a shared root, so fg taxa are NOT
+    phylogenetically divergent and do NOT cluster in the MDS ancestry coords.
+    The coupled-burden signal is therefore per-individual, not clade/ancestry,
+    and should survive ancestry correction — unlike the clade control, whose
+    signal IS ancestry. Run host & par with the SAME scattered fg_taxa
+    (different seeds) -> the same individuals are divergent in both genes.
+    """
+    if fg_taxa is None:
+        # 12 scattered (non-contiguous) tips — deliberately not a clade
+        fg_taxa = [f"t{i}" for i in (0, 4, 7, 11, 14, 18, 21, 25, 28, 31, 35, 38)]
+    fg_set = set(fg_taxa)
+    all_taxa = [f"t{i}" for i in range(n_taxa)]
+
+    rng = np.random.default_rng(seed)
+    freqs = np.full(N, 1.0 / N)
+    P_bg = expm(q_matrix(bg_omega, freqs=freqs) * tip_len)
+
+    def step(P, parent):
+        return rng.choice(N, p=P[parent])
+
+    sel_sites = set(rng.choice(n_sites, size=min(n_sel, n_sites), replace=False))
+    seqs = {t: [] for t in all_taxa}
+    for s in range(n_sites):
+        root = rng.choice(N, p=freqs)
+        for t in all_taxa:
+            if t in fg_set and s in sel_sites:
+                # derived: draw a codon whose AA differs from the root's AA
+                root_aa = AA_OF[SENSE[root]]
+                choices = [j for j in range(N) if AA_OF[SENSE[j]] != root_aa]
+                seqs[t].append(SENSE[rng.choice(choices)])
+            else:
+                seqs[t].append(SENSE[step(P_bg, root)])
+    return {k: "".join(v) for k, v in seqs.items()}
+
+
 if __name__ == "__main__":
-    # usage: sim_mg94.py out.fasta n_sites seed [fg_start fg_end]
-    out = sys.argv[1] if len(sys.argv) > 1 else "sim_out.fasta"
-    n_sites = int(sys.argv[2]) if len(sys.argv) > 2 else 200
-    seed = int(sys.argv[3]) if len(sys.argv) > 3 else 0
+    # usage: sim_mg94.py out.fasta n_sites seed [fg_start fg_end] [--scatter]
+    argv = [a for a in sys.argv[1:] if a != "--scatter"]
+    scatter = "--scatter" in sys.argv
+    out = argv[0] if len(argv) > 0 else "sim_out.fasta"
+    n_sites = int(argv[1]) if len(argv) > 1 else 200
+    seed = int(argv[2]) if len(argv) > 2 else 0
     fg = None
-    if len(sys.argv) > 5:
-        fg = [f"t{i}" for i in range(int(sys.argv[4]), int(sys.argv[5]))]
-    seqs = simulate(n_sites, seed, fg_taxa=fg)
+    if len(argv) > 4:
+        fg = [f"t{i}" for i in range(int(argv[3]), int(argv[4]))]
+    seqs = (simulate_scatter(n_sites, seed, fg_taxa=fg) if scatter
+            else simulate(n_sites, seed, fg_taxa=fg))
     with open(out, "w") as f:
         for name, s in seqs.items():
             f.write(f">{name}\n{s}\n")

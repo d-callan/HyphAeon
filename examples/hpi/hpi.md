@@ -567,4 +567,15 @@ So the 137/180 "selected" sites from the lenient transformer LRT≥1.0 gate are 
 
 **Identifiability boundary (important)**: on the positive control the raw burden is strongly positive (r=0.89) but the ancestry-corrected correlation *vanishes* (r=−0.11). This is not a bug — the shared-clade signal **is** a shared-ancestry signal: the selected t0–t9 clade is a phylogenetic unit, and the MDS coords encode exactly that membership, so regressing out ancestry removes the signal itself. Consequence: **clade-driven selection-correlation is inherently confounded with shared ancestry at the individual level** — the two are the same observation. The ancestry-corrected burden can only detect *non-ancestry* coupling (independent convergence across individuals), while the raw burden detects coupling but cannot attribute it to coselection vs ancestry. `delta_lrt` sidesteps this by testing site×site driver overlap against a leaf-shuffle null rather than partialling out ancestry.
 
+**A separate positive control is required for the ancestry-corrected burden** (`sim_mg94.py --scatter`, `simulate_scatter`): the clade control cannot validate it because its signal *is* ancestry. `simulate_scatter` instead makes a set of **scattered, non-contiguous tips** (t0,t4,t7,…) each independently carry *different* derived alleles at `n_sel` selected sites while evolving like background elsewhere — so they are divergent per-individual but **not a clade and not mutually similar** (no MDS cluster). Run host & par with the *same* scattered set → the same individuals are divergent in both genes without shared descent.
+
+**Critical fix — ancestry must come from non-selected sites.** The first scattered run still gave ancestry-corrected r=−0.36 (signal removed): the MDS coords were built from the *full* alignment, so selected-site divergence was baked into "ancestry" and a divergent taxon is mechanically both high-burden and far in MDS space. `model_coselect_diffuse.py` now does a **two-pass** estimate: identify selected sites, rebuild the TN93+MDS relatedness from the *non-selected* codons only, and regress burden on that neutral ancestry. This isolates shared descent from the selected-site divergence under test.
+
+| scattered control | raw r | ancestry-corrected r | verdict |
+|---|---|---|---|
+| **positive** (same scattered set both genes) | 0.998, p=0.001 | **0.40, p=0.005** | detected, survives correction |
+| **negative** (disjoint scattered sets) | −0.42, p=0.99 | −0.12, p=0.76 | correctly null |
+
+So the diffuse detector is now validated end-to-end: raw burden catches any individual-level coupling, and the neutral-site ancestry-corrected burden specifically catches *non-clade* (convergent/scattered) coupling — the regime the clade control and `delta_lrt` cannot reach.
+
 **Bottom line for CR1 × PfRH4**: no detectable coselection of *any* kind — not concentrated (delta_lrt: 0 edges), not diffuse/individual-level (burden r≈0.01, ns), and PfRH4 has no concentrated selection to begin with (0 MEME sites). A robust negative for this pair.

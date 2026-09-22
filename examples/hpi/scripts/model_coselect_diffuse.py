@@ -92,8 +92,23 @@ def side_burden(seqs, inds, model, device, tmpdir, tag, min_lrt):
     burden_uniq = (attrs_uniq[sel] * w).sum(axis=0)     # [n_uniq]
     burden = burden_uniq[ind2uniq]                       # [n_inds]
 
-    # ancestry coords per individual: z is [1, n_uniq, k]
-    z_uniq = z[0].cpu().numpy()[taxa_idx]               # [n_uniq, k]
+    # Ancestry must be estimated from NON-selected sites only. The MDS coords
+    # from the full alignment bake the selected-site divergence into "ancestry",
+    # so regressing on them removes the very signal under test (a divergent
+    # taxon is both high-burden AND far in MDS space). Rebuilding relatedness
+    # from the neutral background isolates shared descent, letting genuine
+    # non-ancestry (e.g. convergent / scattered) coupling survive.
+    keep = np.where(~sel)[0]
+    fa_neu = Path(tmpdir) / f"{tag}_neutral.fasta"
+    with open(fa_neu, "w") as f:
+        for i, s in enumerate(uniq_seqs):
+            codons = [s[3*j:3*j+3] for j in keep]
+            f.write(f">u{i}\n{''.join(codons)}\n")
+    _, _, _, z_neu, _, taxa_neu, _ = load_alignment_and_tree(
+        str(fa_neu), use_tn93=True)
+    neu_idx = np.asarray([int(t.lstrip("u")) for t in taxa_neu])
+    z_uniq = np.zeros((len(uniq_seqs), z_neu.shape[-1]))
+    z_uniq[neu_idx] = z_neu[0].cpu().numpy()
     Z = z_uniq[ind2uniq]                                 # [n_inds, k]
     # regress burden on ancestry (with intercept) -> residuals
     X = np.column_stack([np.ones(len(Z)), Z])
