@@ -126,6 +126,7 @@ def _assoc(
     y: np.ndarray,
     encoding: str,
     strata: Optional[np.ndarray] = None,
+    corrected: bool = False,
 ) -> Tuple[float, float]:
     """Association between two encoded site vectors.
 
@@ -136,6 +137,10 @@ def _assoc(
     controls for population structure:
       presence -> Cochran-Mantel-Haenszel common-odds-ratio test
       dosage   -> Spearman on stratum-mean-residualized values
+
+    If `corrected` is True, the vectors are relatedness-residualized
+    (continuous), so the discrete tests no longer apply — use a correlation
+    test (Pearson; within-stratum ranked Pearson when strata are present).
     """
     ok = ~(np.isnan(x) | np.isnan(y))
     if strata is not None:
@@ -144,6 +149,15 @@ def _assoc(
     s = strata[ok] if strata is not None else None
     if len(x) < 4 or x.std() == 0 or y.std() == 0:
         return np.nan, np.nan
+
+    if corrected:
+        if s is not None:
+            x = _stratum_ranks(x, s)
+            y = _stratum_ranks(y, s)
+            if x.std() == 0 or y.std() == 0:
+                return np.nan, np.nan
+        rho, p = _stats.pearsonr(x, y)
+        return float(rho), float(p)
 
     if encoding == "presence":
         xb, yb = (x > 0), (y > 0)
@@ -247,6 +261,63 @@ def _stratum_ranks(x: np.ndarray, strata: np.ndarray) -> np.ndarray:
     for stratum in pd_unique(strata):
         m = strata == stratum
         out[m] = _stats.rankdata(x[m]) / (m.sum() + 1)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Relatedness (phylogeny / kinship) correction
+# ---------------------------------------------------------------------------
+def _distance_matrix(side: PairedSide, individuals: List[str]) -> np.ndarray:
+    """Pairwise p-distance between individuals on this side's MSA.
+
+    Uses each individual's first sequence as its representative; distance is
+    the fraction of sites where both carry a valid allele and differ. This is
+    a relatedness proxy — a phylogeny substitute for the (clonal-ish) parasite
+    and a kinship substitute for the host.
+    """
+    seqs = [side.seqs[side.sample_to_seqs[ind][0]] for ind in individuals]
+    charmap = {c: i for i, c in enumerate(sorted(side.alphabet))}
+    M = np.array([[charmap.get(c, -1) for c in s] for s in seqs])
+    valid = M >= 0
+    n = M.shape[0]
+    D = np.zeros((n, n))
+    for i in range(n):
+        both = valid[i] & valid[i + 1:]
+        comp = both.sum(axis=1)
+        diff = ((M[i] != M[i + 1:]) & both).sum(axis=1)
+        d = np.where(comp > 0, diff / np.maximum(comp, 1), 0.0)
+        D[i, i + 1:] = d
+        D[i + 1:, i] = d
+    return D
+
+
+def _mds(D: np.ndarray, k: int) -> np.ndarray:
+    """Classical (metric) MDS -> top-k principal coordinates (n x k).
+
+    Eigenvectors of the double-centred squared-distance matrix, scaled by
+    sqrt(eigenvalue). Used as relatedness covariates (EIGENSTRAT-style PCs).
+    """
+    n = D.shape[0]
+    J = np.eye(n) - np.ones((n, n)) / n
+    B = -0.5 * J @ (D ** 2) @ J
+    evals, evecs = np.linalg.eigh(B)
+    idx = np.argsort(evals)[::-1][:k]
+    return evecs[:, idx] * np.sqrt(np.clip(evals[idx], 0, None))
+
+
+def _residualize(vals: np.ndarray, Z: np.ndarray) -> np.ndarray:
+    """Regress vals on [1, Z] over observed entries; return residuals.
+
+    NaN entries stay NaN. Removing the relatedness-PC component from a site
+    vector leaves the variation not explained by shared descent/ancestry.
+    """
+    out = np.full(len(vals), np.nan, dtype=np.float64)
+    ok = ~np.isnan(vals)
+    if ok.sum() <= Z.shape[1] + 1:
+        return out
+    X = np.column_stack([np.ones(int(ok.sum())), Z[ok]])
+    beta, *_ = np.linalg.lstsq(X, vals[ok], rcond=None)
+    out[ok] = vals[ok] - X @ beta
     return out
 
 
@@ -393,6 +464,8 @@ def run_coselect(
     encoding: str = "presence",
     hom_only: bool = False,
     min_carriers: int = 10,
+    par_pc: int = 0,
+    host_pc: int = 0,
     alpha: float = 0.05,
     out_path: Optional[str] = None,
     progress: bool = True,
@@ -418,6 +491,13 @@ def run_coselect(
                             minority-clone detection artifact. Host diploid
                             encoding is unaffected (hets are real carriers).
     min_carriers          : min individuals carrying the alt allele to test a site
+    par_pc, host_pc       : relatedness correction — number of principal
+                            coordinates (from each side's MSA distance matrix)
+                            to regress out of that side's site vectors before
+                            testing. par_pc controls parasite phylogeny (viral
+                            descent); host_pc controls host kinship. 0 = off.
+                            When >0 the test is a correlation on residuals
+                            (discrete Fisher/CMH no longer applies).
     alpha                 : FDR threshold for reporting
     out_path              : optional TSV of all tested pairs
     """
@@ -456,16 +536,29 @@ def run_coselect(
         print(f"[*] Variable host sites: {len(host_sites)} "
               f"(+{len(covs)} covariates); variable parasite sites: {len(par_sites)}")
 
+    # Relatedness correction: regress each side's site vectors on that side's
+    # top relatedness PCs (distance-matrix MDS). Residualized values are
+    # continuous, so the corrected test is a correlation, not Fisher/CMH.
+    corrected = par_pc > 0 or host_pc > 0
+    Z_par = _mds(_distance_matrix(par, individuals), par_pc) if par_pc > 0 else None
+    Z_host = _mds(_distance_matrix(host, individuals), host_pc) if host_pc > 0 else None
+    if progress and corrected:
+        print(f"[*] Relatedness correction: par_pc={par_pc} host_pc={host_pc}")
+    if Z_par is not None:
+        par_sites = [(s, _residualize(v, Z_par), r, n) for s, v, r, n in par_sites]
+
     # host side = MSA sites + covariates (covariates get site label = name)
     host_feats = [(f"site{s+1}", v, r, n) for s, v, r, n in host_sites]
     host_feats += [(f"cov:{name}", v, "-", n) for name, v, n in covs]
+    if Z_host is not None:
+        host_feats = [(l, _residualize(v, Z_host), r, n) for l, v, r, n in host_feats]
 
     pairs = []
     stats_arr, p_arr = [], []
     records = []
     for h_label, hv, h_ref, h_n in host_feats:
         for p_site, pv, p_ref, p_n in par_sites:
-            stat, p = _assoc(hv, pv, encoding, strata)
+            stat, p = _assoc(hv, pv, encoding, strata, corrected=corrected)
             records.append({
                 "host_feature": h_label,
                 "host_ref": h_ref,

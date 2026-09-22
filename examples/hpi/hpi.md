@@ -467,3 +467,66 @@ Coevolving host-pathogen gene pairs should show correlated evolutionary rates �
 
 ### Validation
 - `validation_report.md`: Positive/negative control results, interface enrichment, literature cross-reference
+
+---
+
+## 10. Empirical Findings: Two Distinct Notions of "Coselection"
+
+Prototyping (`examples/hpi/scripts/model_coselect*.py`, `symbaeon coselect`) surfaced a methodological distinction that must be made explicit, because the two approaches answer **different questions** and require **different positive controls**.
+
+### 10.1 The two notions
+
+| | **Allele-correlation** (linkage) | **Selection-correlation** (coevolution) |
+|---|---|---|
+| Question | Do specific *alleles* travel together across individuals? | Do the same *lineages* drive the selection signal at both sites? |
+| Method | `symbaeon coselect` (relatedness-corrected association) | `hyphaeon epistasis` / `model_coselect` (attribution-cosine) |
+| Signal | per-site allele × allele association, relatedness-regressed | `compute_branch_coselection_network`: both sites need `min_lrt` + correlated attribution profiles (`cesi = sim·√(lrt_u·lrt_v)`) |
+| Positive control | plant correlated alleles | plant correlated *selection* (same lineages under selection at both sites) |
+
+These are **complementary, not competing**. Linkage detects association; selection-correlation detects coevolution of selected lineages. A site pair can show one without the other.
+
+### 10.2 Positive-control result (Gag × Protease, 173 HIV patients)
+
+Planted a **non-synonymous allele correlation** (host codon 251 tracks par codon 116, 173/173 individuals) via `inject_coselect.py`:
+
+| method | planted pair recovered? |
+|---|---|
+| `coselect` uncorrected | **rank 1 / 167,168** (q=2e-46) |
+| `coselect` `--par-pc 5 --host-pc 5` | **rank 1 / 167,168** (q=5e-38) — correction costs no power |
+| `model_coselect` (concat) | not recovered |
+| `model_coselect_paired` (per-side dist) | not recovered |
+
+**Interpretation**: the stats method is validated for allele-correlation. The model "miss" is **not** a falsification — an allele correlation is not a selection signal, so the model correctly doesn't flag it. The model targets selection-correlation, which this control doesn't test.
+
+### 10.3 Implementation caveat discovered
+
+`model_coselect` used `compute_transformer_attributions` — the cheap `a_{s,n} = alpha_{root→n,s}·delta_{s,n}` proxy (attention × non-consensus-mutation), which is dominated by the attention/relatedness term. The **proper** selection-driver signal is `attribute_selection` (`attribution.py`): single-taxon counterfactual **Delta-LRT** — *"how much does taxon n's mutation drive site s's selection LRT."* Cross-gene coselection should correlate **Delta-LRT selection-driver profiles**, gated by `min_lrt`, not the alpha×delta proxy.
+
+### 10.4 Corrected validation approach
+
+- **Architecture**: `model_coselect_paired.py` (two MSAs, per-side distance matrix — avoids the concat rate-domination problem) is the right skeleton.
+- **Signal**: use `attribute_selection` (Delta-LRT) or gate the attribution-cosine on `min_lrt`/`cesi` so only *selected* sites are tested.
+- **Control**: plant a **selection correlation** — the same lineages under selection at a host and a par site (phylogenetically-clustered nonsynonymous changes), not an allele correlation.
+- **Caveat**: the within-gene epistasis attribution-cosine is itself only unit-tested on synthetic arrays, not validated against known coevolving pairs — so the selection-correlation signal's real-world validity is still open and needs this control.
+
+### 10.5 Relatedness vs coselection (the confound)
+
+The model's leaf-attribution is dominated by tree position (`alpha`), so naive attribution-cosine detects **relatedness** — *"both sites vary along the same family branches"* — not allele linkage. The stats method regresses out relatedness explicitly (`--par-pc`/`--host-pc`); the model must either (a) use the Delta-LRT selection-driver signal, or (b) residualize attributions on relatedness before correlating. This is the central design risk for the model path.
+
+### 10.6 Selection-correlation positive control — implemented & passing
+
+The corrected approach from §10.4 is now wired in and validated on a purpose-built control.
+
+**Simulator** (`examples/hpi/hiv/sim_mg94.py`): a small Python MG94 codon simulator. HyPhy batch-mode simulation was abandoned — the `libv3` `ApplyModelToTree` path resets branch lengths to a separate parameter that resisted correct setting after extensive debugging, so a direct `scipy.linalg.expm` simulator was written instead (full control over per-branch ω). Design: a fixed 40-taxon tree where the **internal branch to a foreground clade (t0–t9) gets ω=5** and all other branches are purifying (ω=0.15); the background internal branch is collapsed to ~0 so only the FG clade carries *shared* selected substitutions. Run twice (different seeds) → `sim_host.fasta` / `sim_par.fasta`, each with ~35–42 sites where all 10 FG taxa share a derived amino acid distinct from all background taxa.
+
+**Delta-LRT wiring** (`model_coselect_paired.py --method delta_lrt`): replaces the `alpha·delta` proxy with `attribute_selection` (`attribution.py`) — for each selected site, each non-consensus taxon is mutated to consensus and `delta_lrt = site_lrt − mod_lrt` is recorded, yielding a per-(site, taxon) **selection-driver matrix**. Cross-gene cosine on these profiles tests whether the *same lineages* drive selection at both sites. `--attr-min-lrt` gates which sites get attributed.
+
+**Result** (200 codons × 40 taxa, `--attr-min-lrt 1.0 --min-sim 0.3 --min-lrt 1.0`, 20 permutations):
+
+| metric | observed | null (mean / max) | p |
+|---|---|---|---|
+| edges | **207** | 157 / 202 | **0.048** |
+
+Driver-fraction check confirms the mechanism: the top edges (`host:33×par:38` cos=0.97, `host:176×par:16` cos=0.92, `host:170`, `par:41`, `par:12`) are driven by the **t0–t9 foreground clade** (FG-driver-fraction 0.8–1.0) in *both* genes — i.e. the same selected lineages, which is precisely the selection-correlation signal. A minority of edges are background-driven (residual shared-ancestry correlation), a caveat to carry into real-data interpretation.
+
+**Status**: the model path now has a validated positive control for selection-correlation, complementing the stats method's allele-correlation control (§10.2). Next: run `--method delta_lrt` on the real Gag×Protease and malaria (CR1×PfRH4) pairs.

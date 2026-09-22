@@ -24,6 +24,8 @@ def cmd_coselect(args):
         encoding=args.encoding,
         hom_only=args.hom_only,
         min_carriers=args.min_carriers,
+        par_pc=args.par_pc,
+        host_pc=args.host_pc,
         alpha=args.alpha,
         out_path=args.out,
     )
@@ -66,6 +68,12 @@ def main():
                          "minority clones). Host diploid encoding unaffected.")
     cs.add_argument("--min-carriers", type=int, default=10,
                     help="Min individuals carrying alt allele to test a site (default: 10)")
+    cs.add_argument("--par-pc", type=int, default=0,
+                    help="Parasite relatedness correction: # of MSA-distance PCs to "
+                         "regress out of parasite sites (controls viral phylogeny). 0=off")
+    cs.add_argument("--host-pc", type=int, default=0,
+                    help="Host relatedness correction: # of MSA-distance PCs to "
+                         "regress out of host sites/covariates (controls kinship). 0=off")
     cs.add_argument("--alpha", type=float, default=0.05, help="FDR threshold (default: 0.05)")
     cs.add_argument("--out", default=None, help="Output TSV of all tested pairs")
     cs.set_defaults(func=cmd_coselect)
