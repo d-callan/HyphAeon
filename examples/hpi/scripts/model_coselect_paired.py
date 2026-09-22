@@ -91,6 +91,39 @@ def side_attributions(seqs, inds, model, device, tmpdir, tag,
         for site, meta in res.items():
             for d_sp in meta["driving_species"]:
                 attrs_uniq[site, taxa_idx[d_sp["taxon_index"]]] = d_sp["delta_lrt"]
+    elif method == "delta_lrt_aa":
+        # GROUP counterfactual: revert ALL carriers of each derived amino acid
+        # jointly -> delta_lrt per allele-group, assigned to each carrier.
+        # Single-taxon delta_lrt is underpowered when selection is diffuse across
+        # many haplotypes (no single reversion moves the LRT). Reverting a whole
+        # allele-class captures allele-driven selection; if even this yields no
+        # drivers, the site LRT is driven by aggregate diversity, not a lineage.
+        import torch as _t
+        from aeon_core.dataset import CODON_TO_AA, AA_MAP, GENETIC_CODE
+        INV = {v: k for k, v in GENETIC_CODE.items()}
+        cn = c.cpu().numpy(); an = a.cpu().numpy()
+        lrt_arr = np.asarray(lrts)
+        attrs_uniq = np.zeros((L, len(uniq_seqs)), dtype=np.float32)
+        for site in np.where(lrt_arr >= attr_min_lrt)[0]:
+            site_lrt = float(lrt_arr[site])
+            codons = cn[site, :, 0]; aas = an[site, :, 0]
+            vals, counts = np.unique(codons, return_counts=True)
+            cons_codon = int(vals[np.argmax(counts)])
+            cons_aa = AA_MAP.get(CODON_TO_AA.get(INV.get(cons_codon, 'NNN'), '-'), 20)
+            groups = {}
+            for t in np.where(codons != cons_codon)[0]:
+                groups.setdefault(int(aas[t]), []).append(int(t))
+            for aa_tok, members in groups.items():
+                c_mod = cn[site:site+1].copy(); a_mod = an[site:site+1].copy()
+                c_mod[0, members, 0] = cons_codon
+                a_mod[0, members, 0] = cons_aa
+                with _t.no_grad():
+                    y_mod, _ = model.forward_cached(
+                        _t.from_numpy(c_mod).long().to(device),
+                        _t.from_numpy(a_mod).long().to(device), tree_cache)
+                mod_lrt = float(_t.clamp(y_mod.squeeze(-1), min=0.0).detach().cpu().numpy().ravel()[0])
+                for t in members:
+                    attrs_uniq[site, t] = site_lrt - mod_lrt
     else:
         attrs_uniq = np.zeros((attrs.shape[0], len(uniq_seqs)), dtype=attrs.dtype)
         for col, uidx in enumerate(taxa_idx):
@@ -136,9 +169,12 @@ def main():
     ap.add_argument("--par-aln", required=True, help="Parasite codon MSA (FASTA)")
     ap.add_argument("--weights", default=None)
     ap.add_argument("--variant", default=None)
-    ap.add_argument("--method", choices=["attn", "delta_lrt"], default="attn",
+    ap.add_argument("--method", choices=["attn", "delta_lrt", "delta_lrt_aa"],
+                    default="attn",
                     help="attribution profile: attn=alpha*delta (prediction "
-                         "structure) | delta_lrt=counterfactual selection-driver")
+                         "structure) | delta_lrt=single-taxon counterfactual "
+                         "driver | delta_lrt_aa=allele-group counterfactual "
+                         "(revert all carriers of a derived AA jointly)")
     ap.add_argument("--attr-min-lrt", type=float, default=3.84,
                     help="Delta-LRT: min site LRT to attribute (focal-site gate)")
     ap.add_argument("--min-sim", type=float, default=0.5)
