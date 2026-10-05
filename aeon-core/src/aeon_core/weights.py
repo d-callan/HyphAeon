@@ -34,6 +34,11 @@ HF_REPO_ID = "datamonkey/hyphaeon"
 DEFAULT_VARIANT = "general"
 DEFAULT_CONFIG_FILENAME = "config.json"
 
+# __metadata__ key under which self-describing .safetensors files carry their
+# architecture config (JSON string). Written by save_safetensors(), read by
+# load_arch_config().
+ARCH_METADATA_KEY = "arch"
+
 # Local cache directory for downloaded weights
 CACHE_DIR = Path(os.environ.get("HYPHAEON_CACHE", str(Path.home() / ".cache" / "hyphaeon")))
 
@@ -124,11 +129,16 @@ def resolve_weights_path(
     """
     # 1. Explicit path takes precedence
     if weights:
+        weights = os.fspath(weights)
         if os.path.exists(weights):
             return weights
         pkg_root_weights = Path(__file__).resolve().parent.parent.parent.parent / weights
         if pkg_root_weights.exists():
             return str(pkg_root_weights)
+        raise FileNotFoundError(
+            f"Explicit weights path does not exist: {weights}. "
+            f"Omit --weights to use a Hugging Face variant instead."
+        )
 
     # 2. Determine which variant to use
     v = variant or DEFAULT_VARIANT
@@ -193,6 +203,42 @@ def load_model_config(variant: Optional[str] = None) -> Dict:
     return {}
 
 
+def save_safetensors(
+    state_dict,
+    path,
+    arch: Optional[Dict] = None,
+    metadata: Optional[Dict[str, str]] = None,
+) -> str:
+    """
+    Save a state_dict as .safetensors with self-describing metadata.
+
+    The safetensors header carries an arbitrary string->string __metadata__
+    block; we write the architecture config there (JSON under 'arch') plus
+    'format=pt' following HF convention, so the file can describe its own
+    arch params without a companion config.json.
+
+    Args:
+        state_dict: Model state dict (tensors on any device; saved to CPU).
+        path: Destination .safetensors path.
+        arch: Architecture dict (embed_dim, num_layers, num_heads, window_size)
+              embedded as JSON metadata. Strongly recommended.
+        metadata: Additional string key/value metadata.
+
+    Returns the written path.
+    """
+    from safetensors.torch import save_file
+
+    md = {"format": "pt"}
+    if metadata:
+        md.update({k: str(v) for k, v in metadata.items()})
+    if arch:
+        md[ARCH_METADATA_KEY] = json.dumps(arch)
+
+    path = os.fspath(path)
+    save_file(state_dict, path, metadata=md)
+    return path
+
+
 def load_weights(
     weights: Optional[str] = None,
     variant: Optional[str] = None,
@@ -207,7 +253,7 @@ def load_weights(
     """
     import torch
 
-    path = resolve_weights_path(weights=weights, variant=variant)
+    path = os.fspath(resolve_weights_path(weights=weights, variant=variant))
 
     # .safetensors format
     if path.endswith(".safetensors"):
@@ -243,6 +289,44 @@ def load_weights(
 _DEFAULT_ARCH = {"embed_dim": 384, "num_layers": 6, "num_heads": 12, "window_size": 1}
 
 
+def _normalize_arch(a: Dict) -> dict:
+    """Map various arch-param key spellings onto the canonical names."""
+    return {
+        "embed_dim": a.get("embed_dim", _DEFAULT_ARCH["embed_dim"]),
+        "num_layers": a.get("num_layers", a.get("layers", _DEFAULT_ARCH["num_layers"])),
+        "num_heads": a.get("num_heads", a.get("heads", _DEFAULT_ARCH["num_heads"])),
+        "window_size": a.get("window_size", _DEFAULT_ARCH["window_size"]),
+    }
+
+
+def _arch_from_safetensors_metadata(path: str) -> Optional[Dict]:
+    """Read embedded arch config from a .safetensors __metadata__ block, if present."""
+    try:
+        from safetensors import safe_open
+        with safe_open(path, framework="pt") as f:
+            md = f.metadata() or {}
+        raw = md.get(ARCH_METADATA_KEY)
+        if raw:
+            return json.loads(raw)
+    except Exception:
+        pass
+    return None
+
+
+def _arch_from_sibling_config(path: str) -> Optional[Dict]:
+    """Read arch config from <stem>.config.json or config.json beside the weights file."""
+    p = Path(path)
+    candidates = [p.with_suffix(".config.json"), p.parent / DEFAULT_CONFIG_FILENAME]
+    for c in candidates:
+        if c.exists():
+            try:
+                with open(c) as f:
+                    return json.load(f)
+            except Exception:
+                pass
+    return None
+
+
 def load_arch_config(
     weights: Optional[str] = None,
     variant: Optional[str] = None,
@@ -250,11 +334,15 @@ def load_arch_config(
     """
     Determine architecture hyperparameters (embed_dim, num_layers, num_heads, window_size).
 
-    For .pt files: reads from 'args' dict in checkpoint.
-    For .safetensors (HF): reads config.json or variant-specific config from HF.
-    Falls back to default parameters if not found.
+    Resolution order:
+      .pt            : 'args' dict embedded in the checkpoint.
+      .safetensors   : __metadata__['arch'] (written by save_safetensors)
+                       -> sibling <stem>.config.json / config.json
+                       -> HF config.json (only if resolving by variant)
+      fallback       : _DEFAULT_ARCH (warns — arch params are assumed).
     """
     path = resolve_weights_path(weights=weights, variant=variant)
+    is_explicit_local = bool(weights) and Path(path) == Path(os.fspath(weights))
 
     if path.endswith(".pt"):
         import torch
@@ -265,21 +353,32 @@ def load_arch_config(
         a = ckpt.get("args", {}) if isinstance(ckpt, dict) else {}
         if not a and isinstance(ckpt, dict):
             a = ckpt
-        return {
-            "embed_dim": a.get("embed_dim", _DEFAULT_ARCH["embed_dim"]),
-            "num_layers": a.get("num_layers", a.get("layers", _DEFAULT_ARCH["num_layers"])),
-            "num_heads": a.get("num_heads", a.get("heads", _DEFAULT_ARCH["num_heads"])),
-            "window_size": a.get("window_size", _DEFAULT_ARCH["window_size"]),
-        }
-
-    # .safetensors: fetch config from HF
-    try:
-        cfg = load_model_config(variant=variant)
-        return {
-            "embed_dim": cfg.get("embed_dim", _DEFAULT_ARCH["embed_dim"]),
-            "num_layers": cfg.get("num_layers", cfg.get("layers", _DEFAULT_ARCH["num_layers"])),
-            "num_heads": cfg.get("num_heads", cfg.get("heads", _DEFAULT_ARCH["num_heads"])),
-            "window_size": cfg.get("window_size", _DEFAULT_ARCH["window_size"]),
-        }
-    except Exception:
+        if a:
+            return _normalize_arch(a)
+        print(f"[!] No 'args' dict in checkpoint {path}; assuming default arch params {_DEFAULT_ARCH}.")
         return dict(_DEFAULT_ARCH)
+
+    # .safetensors
+    meta = _arch_from_safetensors_metadata(path)
+    if meta:
+        return _normalize_arch(meta)
+
+    sibling = _arch_from_sibling_config(path)
+    if sibling:
+        return _normalize_arch(sibling)
+
+    # HF config only makes sense when the file came from the HF variant flow;
+    # skip the network call for an explicit local file that isn't self-describing.
+    if not is_explicit_local:
+        try:
+            cfg = load_model_config(variant=variant)
+            if cfg:
+                return _normalize_arch(cfg)
+        except Exception:
+            pass
+
+    print(f"[!] Could not determine architecture for {path} "
+          f"(no embedded metadata, sibling config, or HF config); "
+          f"assuming default arch params {_DEFAULT_ARCH}. "
+          f"To embed arch params in the file, re-save via aeon_core.weights.save_safetensors().")
+    return dict(_DEFAULT_ARCH)

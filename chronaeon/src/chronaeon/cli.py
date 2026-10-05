@@ -598,7 +598,8 @@ def cmd_autoclock(args):
             min_delta_aicc=getattr(args, "min_delta_aicc", 15.0),
             max_k_per_node=getattr(args, "max_k", 6),
             manifold=getattr(args, "manifold", "transformer"),
-            weights=getattr(args, "weights", None),
+            weights=getattr(args, "weights", DEFAULT_WEIGHTS_ENV),
+            variant=getattr(args, "variant", DEFAULT_VARIANT_ENV),
             device=getattr(args, "device", None),
             kernel_bandwidth=getattr(args, "kernel_bandwidth", None),
             output_dir=getattr(args, "output_dir", None) or (Path(args.output).parent if getattr(args, "output", None) else None),
@@ -620,7 +621,8 @@ def cmd_autoclock(args):
             date_regex=getattr(args, "date_regex", None),
             max_k=getattr(args, "max_k", 6),
             manifold=getattr(args, "manifold", "transformer"),
-            weights=getattr(args, "weights", None),
+            weights=getattr(args, "weights", DEFAULT_WEIGHTS_ENV),
+            variant=getattr(args, "variant", DEFAULT_VARIANT_ENV),
             device=getattr(args, "device", None),
             kernel_bandwidth=getattr(args, "kernel_bandwidth", None),
             min_cluster_size=getattr(args, "min_cluster_size", 5),
@@ -908,7 +910,8 @@ def main():
     autoclock_parser.add_argument("--date-regex", default=None, help="Optional regex with capture group to extract dates from headers")
     autoclock_parser.add_argument("-k", "--max-k", type=int, default=6, help="Maximum candidate number of clock communities to evaluate (default: 6)")
     autoclock_parser.add_argument("--manifold", choices=["transformer", "distance", "tn93", "auto"], default="transformer", help="Embedding manifold for spectral partitioning: 'transformer' (neural latent representations) or 'distance'/'tn93' (analytic pairwise continuous distance) (default: transformer)")
-    autoclock_parser.add_argument("--weights", default=None, help="Path to custom model weights file or checkpoint")
+    autoclock_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download). Can also be set via CHRONAEON_WEIGHTS or HYPHAEON_WEIGHTS env var.")
+    autoclock_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from HF (default: {DEFAULT_VARIANT})")
     autoclock_parser.add_argument("--device", default=None, help="Execution hardware device ('cuda', 'mps', 'cpu')")
     autoclock_parser.add_argument("--kernel-bandwidth", type=float, default=None, help="Spectral affinity kernel bandwidth sigma for distance manifold (default: adaptive 10th percentile)")
     autoclock_parser.add_argument("--min-cluster-size", type=int, default=5, help="Minimum community size to consider a valid clock branch (default: 5)")

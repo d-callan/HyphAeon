@@ -4,9 +4,9 @@ Aeon-Core: Shared model and bioinformatics infrastructure for Aeon-family packag
 
 from .model import PhyloAxialTransformer, BustedMultiTaskHead, decode_soft_ordinal_lrt
 from .weights import (
-    resolve_weights_path, load_arch_config, load_weights,
+    resolve_weights_path, load_arch_config, load_weights, save_safetensors,
     load_model_config, list_available_variants, print_available_variants, get_variant_filename,
-    HF_REPO_ID, DEFAULT_VARIANT, CACHE_DIR,
+    HF_REPO_ID, DEFAULT_VARIANT, CACHE_DIR, ARCH_METADATA_KEY,
 )
 from .inference import (
     get_device, get_device_memory_budget,

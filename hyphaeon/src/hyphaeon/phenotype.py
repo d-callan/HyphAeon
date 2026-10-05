@@ -40,7 +40,6 @@ from aeon_core.weights import (
     DEFAULT_VARIANT
 )
 
-DEFAULT_WEIGHTS = "weights/hyphaeon_v1.pt"
 from .epistasis import compute_transformer_attributions
 
 REV_AA_MAP = {v: k for k, v in AA_MAP.items()}
@@ -375,7 +374,7 @@ def generate_permulations(
 def run_phenotype_association(
     alignment_path: str,
     tree_path: Optional[str] = None,
-    weights_path: Optional[str] = DEFAULT_WEIGHTS,
+    weights_path: Optional[str] = None,
     variant: Optional[str] = None,
     preset: Optional[str] = None,
     foreground: Optional[Union[str, List[str]]] = None,

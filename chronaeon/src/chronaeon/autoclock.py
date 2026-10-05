@@ -538,6 +538,7 @@ class AutoClockDeconvolution:
         max_k: int = 6,
         manifold: str = "auto",
         weights: Optional[Union[str, Path]] = None,
+        variant: Optional[str] = None,
         device: Optional[str] = None,
         kernel_bandwidth: Optional[float] = None,
         min_cluster_size: int = 5,
@@ -586,6 +587,7 @@ class AutoClockDeconvolution:
         self.max_k = max_k
         self.manifold = str(manifold).lower()
         self.weights = Path(weights) if weights else None
+        self.variant = variant
         self.device = device
         self.kernel_bandwidth = kernel_bandwidth
         self.min_cluster_size = min_cluster_size
@@ -840,7 +842,7 @@ class AutoClockDeconvolution:
 
                 dev = get_device() if self.device is None else torch.device(self.device)
                 self._log(f"[*] Extracting continuous transformer representations on {dev.type.upper()}...")
-                model = load_model(weights=self.weights, device=dev)
+                model = load_model(weights=self.weights, variant=self.variant, device=dev)
 
                 tmp_fa = self.output_dir / "tmp_validated_input.fa"
                 with open(tmp_fa, "w") as f:
@@ -1578,6 +1580,7 @@ def run_autoclock_deconvolution(
     max_k: int = 6,
     manifold: str = "auto",
     weights: Optional[Union[str, Path]] = None,
+    variant: Optional[str] = None,
     device: Optional[str] = None,
     kernel_bandwidth: Optional[float] = None,
     output_dir: Optional[Union[str, Path]] = None,
@@ -1606,6 +1609,7 @@ def run_autoclock_deconvolution(
         max_k=max_k,
         manifold=manifold,
         weights=weights,
+        variant=variant,
         device=device,
         kernel_bandwidth=kernel_bandwidth,
         output_dir=output_dir,
@@ -1712,6 +1716,7 @@ class HierarchicalAutoClock:
         max_k_per_node: int = 6,
         manifold: str = "auto",
         weights: Optional[Union[str, Path]] = None,
+        variant: Optional[str] = None,
         device: Optional[str] = None,
         kernel_bandwidth: Optional[float] = None,
         random_state: int = 42,
@@ -1761,6 +1766,7 @@ class HierarchicalAutoClock:
         self.max_k_per_node = max_k_per_node
         self.manifold = manifold
         self.weights = weights
+        self.variant = variant
         self.device = device
         self.kernel_bandwidth = kernel_bandwidth
         self.random_state = random_state
@@ -2028,6 +2034,9 @@ class HierarchicalAutoClock:
             max_k=max_k,
             min_cluster_size=self.min_leaf_size,
             manifold=self.manifold,
+            weights=self.weights,
+            variant=self.variant,
+            device=self.device,
             output_dir=node_sub_dir,
             quiet=True,
             n_landmarks=self.n_landmarks,
@@ -2551,6 +2560,7 @@ def run_hierarchical_autoclock(
     max_k_per_node: int = 6,
     manifold: str = "auto",
     weights: Optional[Union[str, Path]] = None,
+    variant: Optional[str] = None,
     device: Optional[str] = None,
     kernel_bandwidth: Optional[float] = None,
     output_dir: Optional[Union[str, Path]] = None,
@@ -2584,6 +2594,7 @@ def run_hierarchical_autoclock(
         max_k_per_node=max_k_per_node,
         manifold=manifold,
         weights=weights,
+        variant=variant,
         device=device,
         kernel_bandwidth=kernel_bandwidth,
         output_dir=output_dir,

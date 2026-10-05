@@ -17,11 +17,13 @@ import torch
 from aeon_core.weights import (
     HF_REPO_ID,
     DEFAULT_VARIANT,
+    ARCH_METADATA_KEY,
     get_variant_filename,
     resolve_weights_path,
     load_model_config,
     load_arch_config,
     load_weights,
+    save_safetensors,
     list_available_variants,
     CACHE_DIR,
 )
@@ -46,14 +48,20 @@ class TestResolveWeightsPath:
         result = resolve_weights_path(weights=str(weights_file), variant="general")
         assert result == str(weights_file)
 
-    def test_nonexistent_explicit_path_falls_through(self, tmp_path):
-        """If --weights points to a nonexistent file, fall through to variant resolution."""
+    def test_nonexistent_explicit_path_raises(self, tmp_path):
+        """If --weights points to a nonexistent file, raise instead of silently downloading."""
+        nonexistent = str(tmp_path / "does_not_exist.pt")
+        with pytest.raises(FileNotFoundError):
+            resolve_weights_path(weights=nonexistent, variant="general")
+
+    def test_nonexistent_explicit_path_does_not_download(self, tmp_path):
+        """A bad --weights path must not silently fall through to HF download."""
         nonexistent = str(tmp_path / "does_not_exist.pt")
         with patch("aeon_core.weights.hf_hub_download") as mock_dl, \
-             patch("aeon_core.weights.CACHE_DIR", tmp_path):
-            mock_dl.return_value = "/fake/cache/model.safetensors"
-            result = resolve_weights_path(weights=nonexistent, variant="general")
-            mock_dl.assert_called_once()
+             patch("aeon_core.weights.CACHE_DIR", tmp_path), \
+             pytest.raises(FileNotFoundError):
+            resolve_weights_path(weights=nonexistent, variant="general")
+        mock_dl.assert_not_called()
 
     def test_cached_variant_skips_download(self, tmp_path):
         """If the variant is already in the HF cache, don't download."""
@@ -231,6 +239,82 @@ class TestLoadArchConfig:
         config = load_arch_config(weights=str(pt_path))
         assert config["embed_dim"] == 384
         assert config["num_layers"] == 6
+
+
+class TestSaveSafetensors:
+    def test_roundtrip_with_arch_metadata(self, tmp_path):
+        """save_safetensors embeds arch params readable via load_arch_config."""
+        pytest.importorskip("safetensors")
+        st_path = tmp_path / "model.safetensors"
+        save_safetensors(
+            {"weight": torch.ones(2, 2)},
+            str(st_path),
+            arch={"embed_dim": 512, "num_layers": 8, "num_heads": 16, "window_size": 3},
+        )
+        config = load_arch_config(weights=str(st_path))
+        assert config["embed_dim"] == 512
+        assert config["num_layers"] == 8
+        assert config["num_heads"] == 16
+        assert config["window_size"] == 3
+        # state_dict still loads back identically
+        sd = load_weights(weights=str(st_path))
+        assert torch.equal(sd["weight"], torch.ones(2, 2))
+
+    def test_writes_metadata_header(self, tmp_path):
+        """The __metadata__ block carries 'arch' JSON and format=pt."""
+        pytest.importorskip("safetensors")
+        from safetensors import safe_open
+        st_path = tmp_path / "model.safetensors"
+        save_safetensors({"w": torch.zeros(1)}, str(st_path),
+                         arch={"embed_dim": 128}, metadata={"variant": "test"})
+        with safe_open(str(st_path), framework="pt") as f:
+            md = f.metadata()
+        assert md["format"] == "pt"
+        assert md["variant"] == "test"
+        assert json.loads(md[ARCH_METADATA_KEY])["embed_dim"] == 128
+
+
+class TestSafetensorsArchResolution:
+    def test_sibling_stem_config_json(self, tmp_path):
+        """model.safetensors reads model.config.json beside it when no metadata."""
+        pytest.importorskip("safetensors")
+        from safetensors.torch import save_file
+        st_path = tmp_path / "model.safetensors"
+        save_file({"w": torch.zeros(1)}, str(st_path))
+        (tmp_path / "model.config.json").write_text(json.dumps({"embed_dim": 256}))
+        config = load_arch_config(weights=str(st_path))
+        assert config["embed_dim"] == 256
+
+    def test_sibling_plain_config_json(self, tmp_path):
+        """Falls back to plain config.json in the same directory."""
+        pytest.importorskip("safetensors")
+        from safetensors.torch import save_file
+        st_path = tmp_path / "model.safetensors"
+        save_file({"w": torch.zeros(1)}, str(st_path))
+        (tmp_path / "config.json").write_text(json.dumps({"embed_dim": 192}))
+        config = load_arch_config(weights=str(st_path))
+        assert config["embed_dim"] == 192
+
+    def test_metadata_beats_sibling(self, tmp_path):
+        """Embedded __metadata__ takes precedence over sibling config files."""
+        pytest.importorskip("safetensors")
+        st_path = tmp_path / "model.safetensors"
+        save_safetensors({"w": torch.zeros(1)}, str(st_path), arch={"embed_dim": 999})
+        (tmp_path / "config.json").write_text(json.dumps({"embed_dim": 256}))
+        config = load_arch_config(weights=str(st_path))
+        assert config["embed_dim"] == 999
+
+    def test_no_info_warns_and_uses_defaults(self, tmp_path, capsys):
+        """Local safetensors with no arch info warns and returns defaults — no HF call."""
+        pytest.importorskip("safetensors")
+        from safetensors.torch import save_file
+        st_path = tmp_path / "model.safetensors"
+        save_file({"w": torch.zeros(1)}, str(st_path))
+        with patch("aeon_core.weights.load_model_config") as mock_cfg:
+            config = load_arch_config(weights=str(st_path))
+        mock_cfg.assert_not_called()
+        assert config["embed_dim"] == 384
+        assert "assuming default arch params" in capsys.readouterr().out
 
 
 @pytest.mark.skipif(not os.environ.get("HF_TOKEN"), reason="HF_TOKEN not set")

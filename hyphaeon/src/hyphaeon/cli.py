@@ -59,10 +59,10 @@ def cmd_meme(args):
 
     try:
         model = load_model(weights=args.weights, variant=args.variant, device=device)
-    except RuntimeError as e:
+        weights_path = resolve_weights_path(weights=args.weights, variant=args.variant)
+    except (RuntimeError, FileNotFoundError) as e:
         print(f"[!] {e}")
         sys.exit(1)
-    weights_path = resolve_weights_path(weights=args.weights, variant=args.variant)
     print(f"[*] Loading HyphAeon model from: {weights_path}")
 
     print(f"[*] Parsing Alignment: {args.alignment}")
