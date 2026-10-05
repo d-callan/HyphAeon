@@ -245,23 +245,29 @@ def save_safetensors(
 
 
 def _torch_load(path: str, map_location="cpu"):
-    """torch.load a .pt checkpoint, tolerating weights_only incompatibilities.
+    """torch.load a .pt checkpoint with the restricted (weights_only=True) unpickler.
 
-    SECURITY: .pt files are pickles and can execute arbitrary code. The
-    restricted (weights_only=True) unpickler is always tried first; only if
-    it fails do we fall back to a full pickle deserialization — with a
-    loud warning, since some legacy checkpoints (e.g. numpy 1.x dtypes)
-    can't load under the restricted unpickler but the fallback itself
-    re-enables arbitrary code execution.
+    SECURITY: .pt files are pickles; the restricted unpickler refuses to
+    execute arbitrary code. Checkpoints that fail under it (e.g. pickled
+    custom objects or other non-tensor globals) are rejected outright —
+    we deliberately do NOT fall back to weights_only=False, since that
+    would let a crafted checkpoint execute arbitrary code. The standard
+    .safetensors path (save_safetensors) carries no code and is always safe.
     """
     import torch
     try:
         return torch.load(path, map_location=map_location, weights_only=True)
     except Exception as e:
-        print(f"[!] {path}: restricted (weights_only) load failed ({e}); "
-              f"retrying with full pickle deserialization. .pt files can "
-              f"execute arbitrary code — only load checkpoints you trust.")
-        return torch.load(path, map_location=map_location, weights_only=False)
+        raise RuntimeError(
+            f"Cannot safely load {path}: {e}. "
+            f"This .pt checkpoint contains objects the restricted "
+            f"(weights_only) loader refuses to deserialize — either a "
+            f"legacy checkpoint or a crafted file. Unrestricted pickle "
+            f"loading is not supported for security. To convert a trusted "
+            f"legacy checkpoint, re-save it from its original environment "
+            f"as self-describing weights: "
+            f"aeon_core.weights.save_safetensors(state_dict, 'model.safetensors', arch=...)"
+        ) from e
 
 
 def _extract_state_dict(ckpt):

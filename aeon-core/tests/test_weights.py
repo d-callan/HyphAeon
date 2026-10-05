@@ -284,21 +284,20 @@ class TestLoadArchConfig:
 
 
 class _UnpicklableByRestriction:
-    """Module-level custom class: allowed by weights_only=False, rejected by
-    weights_only=True, to exercise the unsafe-fallback path."""
+    """Module-level custom class: picklable, but rejected by the restricted
+    (weights_only=True) unpickler — exercises the hard-rejection path."""
 
 
 class TestTorchLoadSecurity:
-    def test_unsafe_fallback_warns(self, tmp_path, capsys):
-        """weights_only failure falls back to full pickle — but loudly."""
+    def test_unsafe_objects_rejected(self, tmp_path, capsys):
+        """weights_only failure raises an actionable error — no unsafe fallback."""
         p = tmp_path / "legacy.pt"
         torch.save({"args": _UnpicklableByRestriction()}, str(p))
 
-        ckpt = _torch_load(str(p))
-        assert isinstance(ckpt["args"], _UnpicklableByRestriction)
+        with pytest.raises(RuntimeError, match="Cannot safely load"):
+            _torch_load(str(p))
         out = capsys.readouterr().out
-        assert "full pickle deserialization" in out
-        assert "arbitrary code" in out
+        assert out == ""  # no fallback warning: the load is refused outright
 
     def test_safe_load_no_warning(self, tmp_path, capsys):
         """Restriction-compatible checkpoints load with weights_only silently."""

@@ -22,7 +22,7 @@ from hyphaeon.training_data import GeneTensorsDataset
 
 def load_initial_checkpoint(model, checkpoint_path):
     """Strictly initialize model weights without resuming optimizer state."""
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     if not isinstance(checkpoint, dict):
         raise ValueError(f"Checkpoint must contain a state dictionary: {checkpoint_path}")
     state_dict = checkpoint.get("model_state_dict", checkpoint)
