@@ -582,3 +582,18 @@ So the 137/180 "selected" sites from the lenient transformer LRT≥1.0 gate are 
 So the diffuse detector is now validated end-to-end: raw burden catches any individual-level coupling, and the neutral-site ancestry-corrected burden specifically catches *non-clade* (convergent/scattered) coupling — the regime the clade control and `delta_lrt` cannot reach.
 
 **Bottom line for CR1 × PfRH4**: no detectable coselection of *any* kind — not concentrated (delta_lrt: 0 edges), not diffuse/individual-level (burden r≈0.01, ns), and PfRH4 has no concentrated selection to begin with (0 MEME sites). A robust negative for this pair.
+
+### 10.9 SymbAeon integration — model-based paradigms are now first-class
+
+The prototype scripts (`scripts/model_coselect_paired.py`, `model_coselect_diffuse.py`) are ported into the `symbaeon` package (`symbaeon/src/symbaeon/model.py`), routing the individual axis through the existing pairing layer (manifest + `--samples` filter support). The concentrated and diffuse readouts share a single per-side transformer pass, so they live under **one** `coselect` command selected by `--mode`:
+
+| command | paradigm | method |
+|---|---|---|
+| `symbaeon coselect --mode edges` | concentrated selection-correlation (site×site edges) | `--method {delta_lrt, delta_lrt_aa, attn}` driver granularity + `--permute` leaf-shuffle null |
+| `symbaeon coselect --mode burden` | diffuse selection-correlation (per-individual burden) | raw + neutral-site ancestry-corrected correlation, permutation null |
+| `symbaeon coselect` (`--mode both`, default) | both readouts on one shared model pass | edges + burden for the price of one inference |
+| `symbaeon correlate` | allele-correlation (the original stats method) | unchanged — kept as the distinct allele-correlation question |
+
+The shared pass is the reason for merging: `_side_base` (dedup → `load_alignment_and_tree` → `compute_transformer_attributions`) is the expensive step and is identical for both readouts — edges then add the counterfactual driver matrix, burden adds the neutral-site ancestry regression. `--mode burden` skips the counterfactual entirely (cheap); `--mode edges`/`both` pay it once.
+
+**Verified identical to the prototype**: `symbaeon coselect --mode edges --method delta_lrt_aa --min-sim 0.3 --min-lrt 0` on Gag×Protease reproduces the prototype's edge set exactly (183 edges, 0 edge-set diff vs a fresh `model_coselect_paired.py` run; the older `gagprot_delta_lrt_aa.tsv` with 3251 edges was a stale file from an earlier code version). `--mode both` reproduces the documented burden result in the same run (raw r=0.173 → ancestry-corrected r=0.106). At the selection-gated default (`--min-sim 0.5 --min-lrt 1.0`) `delta_lrt_aa` yields 11 high-confidence edges (p=0.005, hub p=0.02) and `delta_lrt` yields 4 — the two driver granularities ranking different site-pairs as before.

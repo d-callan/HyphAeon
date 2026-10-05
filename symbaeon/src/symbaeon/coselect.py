@@ -444,7 +444,7 @@ def load_host_covariates(
 # ---------------------------------------------------------------------------
 
 @dataclass
-class CoselectResult:
+class CorrelateResult:
     pairs: List[dict]
     n_individuals: int
     n_host_sites: int
@@ -452,7 +452,7 @@ class CoselectResult:
     n_covariates: int
 
 
-def run_coselect(
+def run_correlate(
     host_fasta: str,
     par_fasta: str,
     manifest_path: Optional[str] = None,
@@ -469,7 +469,7 @@ def run_coselect(
     alpha: float = 0.05,
     out_path: Optional[str] = None,
     progress: bool = True,
-) -> CoselectResult:
+) -> CorrelateResult:
     """Run cross-alignment coselection between a host and parasite MSA.
 
     Parameters
@@ -591,7 +591,7 @@ def run_coselect(
             n_sig = sum(r["significant"] for r in records)
             print(f"[✓] {len(records)} pairs tested, {n_sig} significant (q<={alpha}) -> {out_path}")
 
-    return CoselectResult(
+    return CorrelateResult(
         pairs=pairs,
         n_individuals=len(individuals),
         n_host_sites=len(host_sites),
