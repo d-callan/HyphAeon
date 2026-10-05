@@ -17,7 +17,7 @@ import os
 import sys
 import json
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple
 
 # NumPy 1.x / 2.x unpickling compatibility bridge
 try:
@@ -218,13 +218,17 @@ def save_safetensors(
     arch params without a companion config.json.
 
     Args:
-        state_dict: Model state dict (tensors on any device; saved to CPU).
+        state_dict: Model state dict. Tensors are detached, moved to CPU, and
+              made contiguous here, so callers can pass a live state_dict.
         path: Destination .safetensors path.
         arch: Architecture dict (embed_dim, num_layers, num_heads, window_size)
               embedded as JSON metadata. Strongly recommended.
         metadata: Additional string key/value metadata.
 
     Returns the written path.
+
+    Note: safetensors rejects tensors sharing storage (tied/aliased weights);
+    detach such tensors before calling.
     """
     from safetensors.torch import save_file
 
@@ -234,9 +238,62 @@ def save_safetensors(
     if arch:
         md[ARCH_METADATA_KEY] = json.dumps(arch)
 
+    tensors = {k: v.detach().cpu().contiguous() for k, v in state_dict.items()}
     path = os.fspath(path)
-    save_file(state_dict, path, metadata=md)
+    save_file(tensors, path, metadata=md)
     return path
+
+
+def _torch_load(path: str, map_location="cpu"):
+    """torch.load a .pt checkpoint, tolerating weights_only incompatibilities."""
+    import torch
+    try:
+        return torch.load(path, map_location=map_location, weights_only=True)
+    except Exception:
+        return torch.load(path, map_location=map_location, weights_only=False)
+
+
+def _extract_state_dict(ckpt):
+    """Pull a state_dict out of a .pt checkpoint dict (model_state_dict > state_dict > ckpt itself)."""
+    if isinstance(ckpt, dict):
+        return ckpt.get("model_state_dict") or ckpt.get("state_dict") or ckpt
+    return ckpt
+
+
+def _remap_unified_keys(state_dict: Dict) -> Dict:
+    """Map unified-suite prefixes onto standalone model names, if present.
+
+    Checkpoints saved as a unified suite prefix backbone params with
+    'backbone.' and the MEME head with 'head_meme.'; a standalone
+    PhyloAxialTransformer expects unprefixed keys and 'lrt_ordinal_head.'.
+    Applied for both .safetensors and .pt so prefixed heads round-trip
+    regardless of container format. Only triggered when a 'backbone.' key
+    exists, preserving verbatim passthrough otherwise.
+    """
+    if not any(k.startswith("backbone.") for k in state_dict.keys()):
+        return state_dict
+    mapped = {}
+    for k, v in state_dict.items():
+        if k.startswith("backbone."):
+            mapped[k.replace("backbone.", "")] = v
+        elif k.startswith("head_meme."):
+            mapped[k.replace("head_meme.", "lrt_ordinal_head.")] = v
+        else:
+            mapped[k] = v
+    return mapped
+
+
+def _load_from_resolved_path(path: str, map_location="cpu") -> Tuple:
+    """Open a resolved weights file once -> (raw_checkpoint_or_None, state_dict).
+
+    For .safetensors, raw is None (there is no checkpoint wrapper). For .pt,
+    raw is the loaded checkpoint dict, which also carries arch params.
+    """
+    if path.endswith(".safetensors"):
+        from safetensors.torch import load_file
+        return None, _remap_unified_keys(load_file(path, device=str(map_location)))
+    ckpt = _torch_load(path, map_location)
+    return ckpt, _remap_unified_keys(_extract_state_dict(ckpt))
 
 
 def load_weights(
@@ -247,56 +304,43 @@ def load_weights(
     """
     Load model weights as a state_dict.
 
-    Supports both .pt and .safetensors formats.
-    For .pt files, extracts the model_state_dict.
-    For .safetensors, loads directly.
+    Supports both .pt and .safetensors formats. For .pt files, extracts
+    model_state_dict/state_dict. Unified-suite prefixed keys are remapped
+    for both formats.
     """
-    import torch
-
     path = os.fspath(resolve_weights_path(weights=weights, variant=variant))
-
-    # .safetensors format
-    if path.endswith(".safetensors"):
-        from safetensors.torch import load_file
-        raw_dict = load_file(path, device=str(map_location))
-        # If saved as a unified suite with backbone. prefix, map keys for standalone PhyloAxialTransformer
-        mapped_dict = {}
-        has_prefixed = any(k.startswith("backbone.") for k in raw_dict.keys())
-        if has_prefixed:
-            for k, v in raw_dict.items():
-                if k.startswith("backbone."):
-                    mapped_dict[k.replace("backbone.", "")] = v
-                elif k.startswith("head_meme."):
-                    mapped_dict[k.replace("head_meme.", "lrt_ordinal_head.")] = v
-                else:
-                    mapped_dict[k] = v
-            return mapped_dict
-        return raw_dict
-
-    # .pt format (legacy or explicit path)
-    try:
-        ckpt = torch.load(path, map_location=map_location, weights_only=True)
-    except Exception:
-        ckpt = torch.load(path, map_location=map_location, weights_only=False)
-    if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
-        return ckpt["model_state_dict"]
-    if isinstance(ckpt, dict) and "state_dict" in ckpt:
-        return ckpt["state_dict"]
-    return ckpt
+    return _load_from_resolved_path(path, map_location)[1]
 
 
 # Default architecture parameters, used when no config is available.
 _DEFAULT_ARCH = {"embed_dim": 384, "num_layers": 6, "num_heads": 12, "window_size": 1}
 
 
-def _normalize_arch(a: Dict) -> dict:
-    """Map various arch-param key spellings onto the canonical names."""
-    return {
+# Canonical arch keys, plus the legacy spellings seen in train.py args dicts
+# (canonical -> alias).
+_ARCH_KEYS = ("embed_dim", "num_layers", "num_heads", "window_size")
+_ARCH_ALIASES = {"num_layers": "layers", "num_heads": "heads"}
+
+
+def _normalize_arch(a: Dict, source: Optional[str] = None) -> dict:
+    """Map various arch-param key spellings onto the canonical names.
+
+    Missing fields fall back to _DEFAULT_ARCH. When `source` is given, a
+    warning lists which fields were defaulted, so a partial config can't
+    silently masquerade as complete.
+    """
+    arch = {
         "embed_dim": a.get("embed_dim", _DEFAULT_ARCH["embed_dim"]),
         "num_layers": a.get("num_layers", a.get("layers", _DEFAULT_ARCH["num_layers"])),
         "num_heads": a.get("num_heads", a.get("heads", _DEFAULT_ARCH["num_heads"])),
         "window_size": a.get("window_size", _DEFAULT_ARCH["window_size"]),
     }
+    missing = [k for k in _ARCH_KEYS
+               if k not in a and _ARCH_ALIASES.get(k) not in a]
+    if missing and source:
+        defaulted = {k: arch[k] for k in missing}
+        print(f"[!] {source}: arch param(s) {missing} not found; assuming defaults {defaulted}.")
+    return arch
 
 
 def _arch_from_safetensors_metadata(path: str) -> Optional[Dict]:
@@ -313,18 +357,68 @@ def _arch_from_safetensors_metadata(path: str) -> Optional[Dict]:
     return None
 
 
-def _arch_from_sibling_config(path: str) -> Optional[Dict]:
-    """Read arch config from <stem>.config.json or config.json beside the weights file."""
+def _arch_from_sibling_config(path: str) -> Tuple[Optional[Path], Optional[Dict]]:
+    """Read arch config from <stem>.config.json or config.json beside the weights file.
+
+    Returns (config_path, config_dict) or (None, None).
+    """
     p = Path(path)
     candidates = [p.with_suffix(".config.json"), p.parent / DEFAULT_CONFIG_FILENAME]
     for c in candidates:
         if c.exists():
             try:
                 with open(c) as f:
-                    return json.load(f)
+                    return c, json.load(f)
             except Exception:
                 pass
-    return None
+    return None, None
+
+
+def _arch_from_pt(ckpt, path: str) -> dict:
+    """Arch config from a loaded .pt checkpoint: 'args' dict, else top-level arch keys.
+
+    A bare state_dict (tensor-valued keys, no arch keys) is NOT mistaken for
+    an args dict — it yields defaults *with* a warning.
+    """
+    a = ckpt.get("args") if isinstance(ckpt, dict) else None
+    if not a and isinstance(ckpt, dict):
+        a = {k: ckpt[k] for k in _ARCH_KEYS + tuple(_ARCH_ALIASES.values())
+             if k in ckpt}
+    if a:
+        return _normalize_arch(a, f"{path} (checkpoint args)")
+    print(f"[!] {path}: no arch params in checkpoint; "
+          f"assuming default arch params {_DEFAULT_ARCH}.")
+    return dict(_DEFAULT_ARCH)
+
+
+def _resolve_arch(path: str, variant: Optional[str], is_explicit_local: bool) -> dict:
+    """Arch config for non-.pt weights: embedded metadata -> sibling config ->
+    HF config (variant flows only) -> defaults with a warning."""
+    meta = _arch_from_safetensors_metadata(path)
+    if meta:
+        return _normalize_arch(meta, f"{path} (embedded metadata)")
+
+    sibling_path, sibling = _arch_from_sibling_config(path)
+    if sibling:
+        return _normalize_arch(sibling, str(sibling_path))
+
+    # HF config only makes sense when the file came from the HF variant flow;
+    # skip the network call for an explicit local file that isn't self-describing.
+    if not is_explicit_local:
+        try:
+            cfg = load_model_config(variant=variant)
+            if cfg:
+                return _normalize_arch(cfg, f"{HF_REPO_ID} config.json")
+        except Exception:
+            pass
+
+    sources = ("embedded metadata or sibling config" if is_explicit_local
+               else "embedded metadata, sibling config, or HF config")
+    print(f"[!] Could not determine architecture for {path} "
+          f"(no {sources}); "
+          f"assuming default arch params {_DEFAULT_ARCH}. "
+          f"To embed arch params in the file, re-save via aeon_core.weights.save_safetensors().")
+    return dict(_DEFAULT_ARCH)
 
 
 def load_arch_config(
@@ -335,50 +429,35 @@ def load_arch_config(
     Determine architecture hyperparameters (embed_dim, num_layers, num_heads, window_size).
 
     Resolution order:
-      .pt            : 'args' dict embedded in the checkpoint.
+      .pt            : 'args' dict embedded in the checkpoint, else top-level
+                       arch keys. Bare state_dicts warn and use defaults.
       .safetensors   : __metadata__['arch'] (written by save_safetensors)
                        -> sibling <stem>.config.json / config.json
                        -> HF config.json (only if resolving by variant)
       fallback       : _DEFAULT_ARCH (warns — arch params are assumed).
+
+    Prefer load_checkpoint() when you also need the state_dict, to avoid
+    opening the file twice.
     """
-    path = resolve_weights_path(weights=weights, variant=variant)
-    is_explicit_local = bool(weights) and Path(path) == Path(os.fspath(weights))
-
+    path = os.fspath(resolve_weights_path(weights=weights, variant=variant))
     if path.endswith(".pt"):
-        import torch
-        try:
-            ckpt = torch.load(path, map_location="cpu", weights_only=True)
-        except Exception:
-            ckpt = torch.load(path, map_location="cpu", weights_only=False)
-        a = ckpt.get("args", {}) if isinstance(ckpt, dict) else {}
-        if not a and isinstance(ckpt, dict):
-            a = ckpt
-        if a:
-            return _normalize_arch(a)
-        print(f"[!] No 'args' dict in checkpoint {path}; assuming default arch params {_DEFAULT_ARCH}.")
-        return dict(_DEFAULT_ARCH)
+        return _arch_from_pt(_torch_load(path), path)
+    return _resolve_arch(path, variant, bool(weights))
 
-    # .safetensors
-    meta = _arch_from_safetensors_metadata(path)
-    if meta:
-        return _normalize_arch(meta)
 
-    sibling = _arch_from_sibling_config(path)
-    if sibling:
-        return _normalize_arch(sibling)
+def load_checkpoint(
+    weights: Optional[str] = None,
+    variant: Optional[str] = None,
+    map_location="cpu",
+) -> Tuple[str, dict, Dict]:
+    """Resolve a weights source and open it once.
 
-    # HF config only makes sense when the file came from the HF variant flow;
-    # skip the network call for an explicit local file that isn't self-describing.
-    if not is_explicit_local:
-        try:
-            cfg = load_model_config(variant=variant)
-            if cfg:
-                return _normalize_arch(cfg)
-        except Exception:
-            pass
-
-    print(f"[!] Could not determine architecture for {path} "
-          f"(no embedded metadata, sibling config, or HF config); "
-          f"assuming default arch params {_DEFAULT_ARCH}. "
-          f"To embed arch params in the file, re-save via aeon_core.weights.save_safetensors().")
-    return dict(_DEFAULT_ARCH)
+    Returns (resolved_path, arch_config, state_dict). Use this instead of
+    calling resolve_weights_path/load_arch_config/load_weights separately —
+    for .pt files those each deserialize the whole checkpoint.
+    """
+    path = os.fspath(resolve_weights_path(weights=weights, variant=variant))
+    raw, state_dict = _load_from_resolved_path(path, map_location)
+    arch = (_arch_from_pt(raw, path) if path.endswith(".pt")
+            else _resolve_arch(path, variant, bool(weights)))
+    return path, arch, state_dict

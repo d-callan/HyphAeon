@@ -23,6 +23,7 @@ from aeon_core.weights import (
     load_model_config,
     load_arch_config,
     load_weights,
+    load_checkpoint,
     save_safetensors,
     list_available_variants,
     CACHE_DIR,
@@ -193,6 +194,33 @@ class TestLoadWeights:
         result = load_weights(weights=str(pt_path), variant="general")
         assert "weight" in result
 
+    def test_load_pt_unified_suite_remaps_keys(self, tmp_path):
+        """Unified-suite .pt (backbone./head_meme. prefixes) remaps like .safetensors."""
+        sd = {"backbone.layer.weight": torch.ones(2, 2),
+              "head_meme.fc.weight": torch.zeros(3),
+              "other.weight": torch.ones(1)}
+        pt_path = tmp_path / "model.pt"
+        torch.save({"model_state_dict": sd}, str(pt_path))
+
+        result = load_weights(weights=str(pt_path))
+        assert "layer.weight" in result
+        assert "lrt_ordinal_head.fc.weight" in result
+        assert "other.weight" in result
+        assert not any(k.startswith("backbone.") for k in result)
+
+    def test_load_checkpoint_single_open(self, tmp_path):
+        """load_checkpoint returns (path, arch, state_dict) from one file open."""
+        ckpt = {"model_state_dict": {"w": torch.ones(2, 2)},
+                "args": {"embed_dim": 256, "num_layers": 4, "num_heads": 8,
+                          "window_size": 2}}
+        pt_path = tmp_path / "model.pt"
+        torch.save(ckpt, str(pt_path))
+
+        path, arch, sd = load_checkpoint(weights=str(pt_path))
+        assert path == str(pt_path)
+        assert arch["embed_dim"] == 256 and arch["window_size"] == 2
+        assert torch.equal(sd["w"], torch.ones(2, 2))
+
     def test_load_pt_raw_state_dict(self, tmp_path):
         """Should handle a .pt file that is just a raw state_dict (no wrapper)."""
         state_dict = {"weight": torch.ones(2, 2)}
@@ -230,8 +258,8 @@ class TestLoadArchConfig:
         assert config["num_layers"] == 4
         assert config["num_heads"] == 8
 
-    def test_pt_without_args_uses_defaults(self, tmp_path):
-        """Should fall back to architecture defaults if .pt has no args dict."""
+    def test_pt_bare_state_dict_warns_and_uses_defaults(self, tmp_path, capsys):
+        """A bare .pt state_dict has no arch info — must warn, not silently default."""
         state_dict = {"weight": torch.ones(2, 2)}
         pt_path = tmp_path / "model.pt"
         torch.save(state_dict, str(pt_path))
@@ -239,6 +267,19 @@ class TestLoadArchConfig:
         config = load_arch_config(weights=str(pt_path))
         assert config["embed_dim"] == 384
         assert config["num_layers"] == 6
+        assert "assuming default arch params" in capsys.readouterr().out
+
+    def test_pt_args_missing_fields_warns(self, tmp_path, capsys):
+        """A partial args dict warns about fields that fall back to defaults."""
+        ckpt = {"model_state_dict": {"w": torch.zeros(1)},
+                "args": {"embed_dim": 512}}
+        pt_path = tmp_path / "model.pt"
+        torch.save(ckpt, str(pt_path))
+
+        config = load_arch_config(weights=str(pt_path))
+        assert config["embed_dim"] == 512
+        out = capsys.readouterr().out
+        assert "window_size" in out and "assuming defaults" in out
 
 
 class TestSaveSafetensors:
@@ -259,6 +300,15 @@ class TestSaveSafetensors:
         # state_dict still loads back identically
         sd = load_weights(weights=str(st_path))
         assert torch.equal(sd["weight"], torch.ones(2, 2))
+
+    def test_noncontiguous_tensors_handled(self, tmp_path):
+        """save_safetensors normalizes non-contiguous tensors internally."""
+        pytest.importorskip("safetensors")
+        st_path = tmp_path / "model.safetensors"
+        save_safetensors({"w": torch.ones(2, 3).t()},  # non-contiguous
+                         str(st_path), arch={"embed_dim": 64})
+        sd = load_weights(weights=str(st_path))
+        assert sd["w"].shape == (3, 2)
 
     def test_writes_metadata_header(self, tmp_path):
         """The __metadata__ block carries 'arch' JSON and format=pt."""

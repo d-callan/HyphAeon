@@ -13,7 +13,7 @@ import numpy as np
 import torch
 
 from .model import PhyloAxialTransformer
-from .weights import resolve_weights_path, load_arch_config, load_weights
+from .weights import load_checkpoint
 from .dataset import load_alignment_and_tree
 
 
@@ -166,15 +166,14 @@ def load_model(weights=None, variant=None, device=None, strict=False):
     if device is None:
         device = get_device()
 
-    weights_path = resolve_weights_path(weights=weights, variant=variant)
-    config = load_arch_config(weights=weights, variant=variant)
+    weights_path, config, state_dict = load_checkpoint(
+        weights=weights, variant=variant, map_location=device)
     model = PhyloAxialTransformer(
         embed_dim=config['embed_dim'],
         num_layers=config['num_layers'],
         num_heads=config['num_heads'],
         window_size=config['window_size'],
     ).to(device)
-    state_dict = load_weights(weights=weights_path, variant=variant, map_location=device)
     model.load_state_dict(state_dict, strict=strict)
     model.eval()
     return model

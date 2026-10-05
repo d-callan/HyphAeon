@@ -178,7 +178,7 @@ def main():
             # Self-describing safetensors artifact (weights + arch metadata in header).
             st_path = os.path.join(args.output_dir, "hyphaeon_best.safetensors")
             save_safetensors(
-                {k: v.detach().cpu() for k, v in model.state_dict().items()},
+                model.state_dict(),
                 st_path,
                 arch={
                     "embed_dim": args.embed_dim,
