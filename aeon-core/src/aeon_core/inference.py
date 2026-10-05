@@ -158,10 +158,21 @@ def get_device(cpu: bool = False) -> torch.device:
     return torch.device('cpu')
 
 
+# Head params that legitimate backbone-only checkpoints omit; everything
+# else missing is an arch mismatch.
+_OPTIONAL_KEY_PREFIXES = ("lrt_ordinal_head.",)
+
+
 def load_model(weights=None, variant=None, device=None, strict=False):
     """Load a PhyloAxialTransformer from weights path or HuggingFace variant.
 
     Returns an eval-mode model on the specified device.
+
+    strict=False is deliberate (backbone-only unified checkpoints are
+    allowed to lack head params), but the key diff from load_state_dict is
+    inspected: missing non-head keys or any unexpected keys warn loudly,
+    since they mean the checkpoint doesn't match the model — e.g. a
+    wrong arch guess — and inference output would be garbage.
     """
     if device is None:
         device = get_device()
@@ -174,7 +185,18 @@ def load_model(weights=None, variant=None, device=None, strict=False):
         num_heads=config['num_heads'],
         window_size=config['window_size'],
     ).to(device)
-    model.load_state_dict(state_dict, strict=strict)
+    result = model.load_state_dict(state_dict, strict=strict)
+    if not strict:
+        missing = [k for k in result.missing_keys
+                   if not k.startswith(_OPTIONAL_KEY_PREFIXES)]
+        if missing or result.unexpected_keys:
+            print(f"[!] Weight key mismatch for {weights_path}: "
+                  f"{len(missing)} missing backbone key(s) "
+                  f"(e.g. {missing[:3]}), "
+                  f"{len(result.unexpected_keys)} unexpected key(s) "
+                  f"(e.g. {result.unexpected_keys[:3]}). "
+                  f"The checkpoint does not match the model — "
+                  f"results will be unreliable.")
     model.eval()
     return model
 

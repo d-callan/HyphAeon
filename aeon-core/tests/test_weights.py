@@ -24,6 +24,7 @@ from aeon_core.weights import (
     load_arch_config,
     load_weights,
     load_checkpoint,
+    _torch_load,
     save_safetensors,
     list_available_variants,
     CACHE_DIR,
@@ -280,6 +281,62 @@ class TestLoadArchConfig:
         assert config["embed_dim"] == 512
         out = capsys.readouterr().out
         assert "window_size" in out and "assuming defaults" in out
+
+
+class _UnpicklableByRestriction:
+    """Module-level custom class: allowed by weights_only=False, rejected by
+    weights_only=True, to exercise the unsafe-fallback path."""
+
+
+class TestTorchLoadSecurity:
+    def test_unsafe_fallback_warns(self, tmp_path, capsys):
+        """weights_only failure falls back to full pickle — but loudly."""
+        p = tmp_path / "legacy.pt"
+        torch.save({"args": _UnpicklableByRestriction()}, str(p))
+
+        ckpt = _torch_load(str(p))
+        assert isinstance(ckpt["args"], _UnpicklableByRestriction)
+        out = capsys.readouterr().out
+        assert "full pickle deserialization" in out
+        assert "arbitrary code" in out
+
+    def test_safe_load_no_warning(self, tmp_path, capsys):
+        """Restriction-compatible checkpoints load with weights_only silently."""
+        p = tmp_path / "ok.pt"
+        torch.save({"model_state_dict": {"w": torch.zeros(1)}}, str(p))
+
+        ckpt = _torch_load(str(p))
+        assert "w" in ckpt["model_state_dict"]
+        assert capsys.readouterr().out == ""
+
+
+class TestLoadModelKeyMismatch:
+    def _arch(self):
+        return {"embed_dim": 16, "num_layers": 1, "num_heads": 2, "window_size": 1}
+
+    def test_mismatched_keys_warn(self, tmp_path, capsys):
+        """Unexpected keys / missing backbone keys must warn, not stay silent."""
+        pytest.importorskip("safetensors")
+        from aeon_core.inference import load_model
+        st = tmp_path / "mismatch.safetensors"
+        save_safetensors({"bogus.weight": torch.zeros(2)}, str(st), arch=self._arch())
+
+        load_model(weights=str(st), device="cpu")
+        out = capsys.readouterr().out
+        assert "Weight key mismatch" in out
+        assert "bogus.weight" in out
+
+    def test_matching_keys_silent(self, tmp_path, capsys):
+        """A fully-matching checkpoint produces no mismatch warning."""
+        pytest.importorskip("safetensors")
+        from aeon_core.inference import load_model
+        from aeon_core.model import PhyloAxialTransformer
+        model = PhyloAxialTransformer(**self._arch())
+        st = tmp_path / "match.safetensors"
+        save_safetensors(model.state_dict(), str(st), arch=self._arch())
+
+        load_model(weights=str(st), device="cpu")
+        assert "Weight key mismatch" not in capsys.readouterr().out
 
 
 class TestSaveSafetensors:

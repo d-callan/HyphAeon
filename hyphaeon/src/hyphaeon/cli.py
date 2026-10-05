@@ -41,6 +41,7 @@ from aeon_core.inference import get_device, load_model, prepare_alignment, compu
 from .inference import predict_site_lrts
 from aeon_core.io import ensure_parent_directory, write_json, write_csv, format_pq
 from aeon_core._progress import ChunkProgress
+from aeon_core.cli import handle_cli_errors
 
 DEFAULT_VARIANT_ENV = os.environ.get("HYPHAEON_VARIANT", DEFAULT_VARIANT)
 
@@ -57,13 +58,9 @@ def cmd_meme(args):
     device = get_device(cpu=getattr(args, "cpu", False))
     print(f"[*] Hardware device selected: {device.type.upper()}")
 
-    try:
-        model = load_model(weights=args.weights, variant=args.variant, device=device)
-        weights_path = resolve_weights_path(weights=args.weights, variant=args.variant)
-    except (RuntimeError, FileNotFoundError) as e:
-        print(f"[!] {e}")
-        sys.exit(1)
+    weights_path = resolve_weights_path(weights=args.weights, variant=args.variant)
     print(f"[*] Loading HyphAeon model from: {weights_path}")
+    model = load_model(weights=args.weights, variant=args.variant, device=device)
 
     print(f"[*] Parsing Alignment: {args.alignment}")
     use_tn93 = getattr(args, "no_tree", False) or getattr(args, "use_tn93", False) or (getattr(args, "tree", None) == "tn93")
@@ -1073,6 +1070,7 @@ def cmd_splits(args):
         print(f"[✓] Split assignments saved to: {args.csv}")
 
 
+@handle_cli_errors
 def main():
 
     from . import __version__

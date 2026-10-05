@@ -245,11 +245,22 @@ def save_safetensors(
 
 
 def _torch_load(path: str, map_location="cpu"):
-    """torch.load a .pt checkpoint, tolerating weights_only incompatibilities."""
+    """torch.load a .pt checkpoint, tolerating weights_only incompatibilities.
+
+    SECURITY: .pt files are pickles and can execute arbitrary code. The
+    restricted (weights_only=True) unpickler is always tried first; only if
+    it fails do we fall back to a full pickle deserialization — with a
+    loud warning, since some legacy checkpoints (e.g. numpy 1.x dtypes)
+    can't load under the restricted unpickler but the fallback itself
+    re-enables arbitrary code execution.
+    """
     import torch
     try:
         return torch.load(path, map_location=map_location, weights_only=True)
-    except Exception:
+    except Exception as e:
+        print(f"[!] {path}: restricted (weights_only) load failed ({e}); "
+              f"retrying with full pickle deserialization. .pt files can "
+              f"execute arbitrary code — only load checkpoints you trust.")
         return torch.load(path, map_location=map_location, weights_only=False)
 
 

@@ -16,6 +16,7 @@ import torch
 
 from aeon_core.inference import get_device
 from aeon_core.weights import DEFAULT_VARIANT, print_available_variants
+from aeon_core.cli import handle_cli_errors
 
 DEFAULT_VARIANT_ENV = os.environ.get("CHRONAEON_VARIANT", os.environ.get("HYPHAEON_VARIANT", DEFAULT_VARIANT))  # HYPHAEON_* fallback for pre-refactor users
 
@@ -763,6 +764,7 @@ def list_models():
     print_available_variants(cli_name="chronaeon")
 
 
+@handle_cli_errors
 def main():
     import argparse
 
