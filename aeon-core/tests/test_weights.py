@@ -27,8 +27,15 @@ from aeon_core.weights import (
     _torch_load,
     save_safetensors,
     list_available_variants,
-    CACHE_DIR,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_config_cache():
+    """load_model_config is lru_cached; clear it so per-test mocks apply."""
+    load_model_config.cache_clear()
+    yield
+    load_model_config.cache_clear()
 
 
 class TestGetVariantFilename:
@@ -60,7 +67,6 @@ class TestResolveWeightsPath:
         """A bad --weights path must not silently fall through to HF download."""
         nonexistent = str(tmp_path / "does_not_exist.pt")
         with patch("aeon_core.weights.hf_hub_download") as mock_dl, \
-             patch("aeon_core.weights.CACHE_DIR", tmp_path), \
              pytest.raises(FileNotFoundError):
             resolve_weights_path(weights=nonexistent, variant="general")
         mock_dl.assert_not_called()
@@ -69,8 +75,7 @@ class TestResolveWeightsPath:
         """If the variant is already in the HF cache, don't download."""
         cache_file = str(tmp_path / "model.safetensors")
         Path(cache_file).write_text("cached")
-        with patch("aeon_core.weights.CACHE_DIR", tmp_path), \
-             patch("huggingface_hub.try_to_load_from_cache", return_value=cache_file), \
+        with patch("huggingface_hub.try_to_load_from_cache", return_value=cache_file), \
              patch("aeon_core.weights.hf_hub_download") as mock_dl:
             result = resolve_weights_path(weights=None, variant="general")
             assert result == cache_file
@@ -78,7 +83,7 @@ class TestResolveWeightsPath:
 
     def test_download_failure_raises_error(self, tmp_path):
         """If HF download fails and no local weights exist, raise RuntimeError."""
-        with patch("aeon_core.weights.CACHE_DIR", tmp_path), \
+        with patch("huggingface_hub.try_to_load_from_cache", return_value=None), \
              patch("aeon_core.weights.hf_hub_download", side_effect=Exception("401 Unauthorized")):
             with pytest.raises(RuntimeError, match="Could not download weights"):
                 resolve_weights_path(weights=None, variant="general")
@@ -337,6 +342,21 @@ class TestLoadModelKeyMismatch:
         load_model(weights=str(st), device="cpu")
         assert "Weight key mismatch" not in capsys.readouterr().out
 
+    def test_extra_head_keys_silent(self, tmp_path, capsys):
+        """Unified checkpoints carry heads the backbone ignores (head_busted.,
+        etc.) — unexpected keys under head_* must not warn."""
+        pytest.importorskip("safetensors")
+        from aeon_core.inference import load_model
+        from aeon_core.model import PhyloAxialTransformer
+        model = PhyloAxialTransformer(**self._arch())
+        sd = model.state_dict()
+        sd["head_busted.fc.weight"] = torch.zeros(4, 4)
+        st = tmp_path / "unified.safetensors"
+        save_safetensors(sd, str(st), arch=self._arch())
+
+        load_model(weights=str(st), device="cpu")
+        assert "Weight key mismatch" not in capsys.readouterr().out
+
 
 class TestSaveSafetensors:
     def test_roundtrip_with_arch_metadata(self, tmp_path):
@@ -421,6 +441,26 @@ class TestSafetensorsArchResolution:
         mock_cfg.assert_not_called()
         assert config["embed_dim"] == 384
         assert "assuming default arch params" in capsys.readouterr().out
+
+    def test_hf_cache_path_keeps_hf_config_fallback(self, tmp_path):
+        """A resolved path under the HF hub cache is NOT 'explicit local' —
+        callers that pre-resolve via resolve_weights_path must still reach
+        load_model_config for HF files without embedded metadata."""
+        pytest.importorskip("safetensors")
+        from safetensors.torch import save_file
+        # File lives under the (patched) HF cache root, like a real
+        # hf_hub_download result handed back in as `weights`.
+        hf_cache = tmp_path / "huggingface"
+        st_path = hf_cache / "hub" / "models--x--y" / "snapshots" / "abc" / "model.safetensors"
+        st_path.parent.mkdir(parents=True)
+        save_file({"w": torch.zeros(1)}, str(st_path))
+
+        with patch("aeon_core.weights.HF_HUB_CACHE", str(hf_cache)), \
+             patch("aeon_core.weights.load_model_config",
+                   return_value={"embed_dim": 512}) as mock_cfg:
+            config = load_arch_config(weights=str(st_path), variant="general")
+        mock_cfg.assert_called_once()
+        assert config["embed_dim"] == 512
 
 
 @pytest.mark.skipif(not os.environ.get("HF_TOKEN"), reason="HF_TOKEN not set")

@@ -327,6 +327,7 @@ def predict_disease_pathogenicity(
     human_taxon: Optional[str] = None,
     model: Optional[PhyloAxialTransformer] = None,
     weights_path: Optional[str] = None,
+    variant: Optional[str] = None,
     device: Optional[Union[str, torch.device]] = None,
     batch_size: Optional[int] = None,
     coevolution_weight: float = 1.0,
@@ -343,6 +344,7 @@ def predict_disease_pathogenicity(
         human_taxon: Name of human reference taxon in MSA (e.g. 'hg', 'Homo_sapiens').
         model: Pre-loaded PhyloAxialTransformer instance (optional).
         weights_path: Path to local weights file; if None, resolves the HF variant.
+        variant: HF model variant name (e.g. 'general'); used when weights_path is None.
         device: PyTorch compute device ('mps', 'cuda', or 'cpu').
         batch_size: Batch size for memory-efficient forward passes.
         coevolution_weight: Weight lambda for inter-residue epistatic coupling modulation (default: 1.0).
@@ -426,7 +428,7 @@ def predict_disease_pathogenicity(
         
     # 6. Load model if not provided
     if model is None:
-        model = load_model(weights=weights_path, device=device)
+        model = load_model(weights=weights_path, variant=variant, device=device)
             
     # 7. Precompute fast tree cache
     sub_a = a_tensor[:min(500, L_codon), :, 0].float().T

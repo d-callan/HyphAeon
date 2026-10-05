@@ -189,12 +189,16 @@ def load_model(weights=None, variant=None, device=None, strict=False):
     if not strict:
         missing = [k for k in result.missing_keys
                    if not k.startswith(_OPTIONAL_KEY_PREFIXES)]
-        if missing or result.unexpected_keys:
+        # Extra 'head_*' keys are other task heads in a unified checkpoint —
+        # the standalone backbone legitimately ignores them.
+        unexpected = [k for k in result.unexpected_keys
+                      if not k.startswith("head_")]
+        if missing or unexpected:
             print(f"[!] Weight key mismatch for {weights_path}: "
                   f"{len(missing)} missing backbone key(s) "
                   f"(e.g. {missing[:3]}), "
-                  f"{len(result.unexpected_keys)} unexpected key(s) "
-                  f"(e.g. {result.unexpected_keys[:3]}). "
+                  f"{len(unexpected)} unexpected key(s) "
+                  f"(e.g. {unexpected[:3]}). "
                   f"The checkpoint does not match the model — "
                   f"results will be unreliable.")
     model.eval()

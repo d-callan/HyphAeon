@@ -130,6 +130,7 @@ def run_spectral_splits(
     tree_path: Optional[str] = None,
     use_tn93: bool = False,
     weights_path: Optional[str] = None,
+    variant: Optional[str] = None,
     min_clade_size: int = 2,
     max_depth: int = 10,
     device: Optional[Union[str, torch.device]] = None
@@ -142,6 +143,7 @@ def run_spectral_splits(
         tree_path: Optional path to Newick tree.
         use_tn93: If True, computes pairwise TN93 distance matrix directly (skips tree).
         weights_path: Path to local weights file; if None, resolves the HF variant.
+        variant: HF model variant name (e.g. 'general'); used when weights_path is None.
         min_clade_size: Clade size floor.
         max_depth: Max tree depth.
         device: PyTorch device.
@@ -152,7 +154,7 @@ def run_spectral_splits(
     if device is None:
         device = get_device(cpu=True)
 
-    model = load_model(weights=weights_path, device=device)
+    model = load_model(weights=weights_path, variant=variant, device=device)
 
     c_tensor, a_tensor, d_tensor, z_tensor, _, taxa, L = load_alignment_and_tree(
         alignment_path, nwk_path=tree_path, use_tn93=use_tn93, prune_duplicates=False

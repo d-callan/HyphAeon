@@ -16,6 +16,7 @@ without a package update.
 import os
 import sys
 import json
+import functools
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 
@@ -29,6 +30,7 @@ except Exception:
     pass
 
 from huggingface_hub import list_repo_files, hf_hub_download
+from huggingface_hub.constants import HF_HUB_CACHE
 
 HF_REPO_ID = "datamonkey/hyphaeon"
 DEFAULT_VARIANT = "general"
@@ -39,8 +41,33 @@ DEFAULT_CONFIG_FILENAME = "config.json"
 # load_arch_config().
 ARCH_METADATA_KEY = "arch"
 
-# Local cache directory for downloaded weights
-CACHE_DIR = Path(os.environ.get("HYPHAEON_CACHE", str(Path.home() / ".cache" / "hyphaeon")))
+# Downloads go to the standard HF hub cache (HF_HUB_CACHE, env-controlled
+# via HF_HUB_CACHE / HF_HOME) so we interoperate with other HF tooling
+# instead of maintaining a private parallel layout.
+
+
+def default_weights(env_var: str, fallback_env_vars: Tuple[str, ...] = ()) -> Optional[str]:
+    """Default weights spec for a package CLI.
+
+    Checks `env_var`, then each fallback (e.g. pre-refactor HYPHAEON_WEIGHTS),
+    then a monorepo-checkout `model.safetensors` at the repo root. Returns the
+    first set env var, or the repo-root file as a string if it exists, else None.
+    """
+    for var in (env_var,) + tuple(fallback_env_vars):
+        value = os.environ.get(var)
+        if value:
+            return value
+    repo_root_weights = Path(__file__).resolve().parents[3] / "model.safetensors"
+    return str(repo_root_weights) if repo_root_weights.exists() else None
+
+
+def default_variant(env_var: str, fallback_env_vars: Tuple[str, ...] = ()) -> str:
+    """Default model variant for a package CLI (env var -> fallbacks -> default)."""
+    for var in (env_var,) + tuple(fallback_env_vars):
+        value = os.environ.get(var)
+        if value:
+            return value
+    return DEFAULT_VARIANT
 
 
 def list_available_variants() -> List[Dict[str, str]]:
@@ -149,7 +176,6 @@ def resolve_weights_path(
         from huggingface_hub import try_to_load_from_cache
         hf_cache_path = try_to_load_from_cache(
             repo_id=HF_REPO_ID, filename=filename,
-            cache_dir=str(CACHE_DIR.parent / "huggingface"),
         )
         if hf_cache_path is not None and os.path.exists(hf_cache_path):
             return hf_cache_path
@@ -162,7 +188,6 @@ def resolve_weights_path(
         downloaded = hf_hub_download(
             repo_id=HF_REPO_ID,
             filename=filename,
-            cache_dir=str(CACHE_DIR.parent / "huggingface"),
         )
         print(f"[✓] Weights cached at: {downloaded}")
         return downloaded
@@ -173,6 +198,7 @@ def resolve_weights_path(
         ) from e
 
 
+@functools.lru_cache(maxsize=None)
 def load_model_config(variant: Optional[str] = None) -> Dict:
     """
     Load model architecture config from the HF repo's config.json.
@@ -187,15 +213,13 @@ def load_model_config(variant: Optional[str] = None) -> Dict:
     variant_config = f"model.{v}.config.json"
     files = list_repo_files(HF_REPO_ID)
     if variant_config in files:
-        path = hf_hub_download(repo_id=HF_REPO_ID, filename=variant_config,
-                               cache_dir=str(CACHE_DIR.parent / "huggingface"))
+        path = hf_hub_download(repo_id=HF_REPO_ID, filename=variant_config)
         with open(path) as f:
             return json.load(f)
 
     # Fall back to shared config.json
     if DEFAULT_CONFIG_FILENAME in files:
-        path = hf_hub_download(repo_id=HF_REPO_ID, filename=DEFAULT_CONFIG_FILENAME,
-                               cache_dir=str(CACHE_DIR.parent / "huggingface"))
+        path = hf_hub_download(repo_id=HF_REPO_ID, filename=DEFAULT_CONFIG_FILENAME)
         with open(path) as f:
             return json.load(f)
 
@@ -292,9 +316,9 @@ def _remap_unified_keys(state_dict: Dict) -> Dict:
     mapped = {}
     for k, v in state_dict.items():
         if k.startswith("backbone."):
-            mapped[k.replace("backbone.", "")] = v
+            mapped[k[len("backbone."):]] = v
         elif k.startswith("head_meme."):
-            mapped[k.replace("head_meme.", "lrt_ordinal_head.")] = v
+            mapped["lrt_ordinal_head." + k[len("head_meme."):]] = v
         else:
             mapped[k] = v
     return mapped
@@ -408,6 +432,21 @@ def _arch_from_pt(ckpt, path: str) -> dict:
     return dict(_DEFAULT_ARCH)
 
 
+def _is_explicit_local(weights: Optional[str]) -> bool:
+    """Whether a `weights` spec is an explicit local path.
+
+    A path under the HF hub cache (HF_HUB_CACHE) is a variant-resolved HF
+    artifact, not an explicit local file — this lets callers that pre-resolve
+    via resolve_weights_path keep full arch-resolution semantics (the HF
+    config.json fallback stays reachable for HF files lacking embedded
+    metadata or a sibling config).
+    """
+    # HF_HUB_CACHE is a str; parents are Path objects — normalize before
+    # membership test or the comparison is silently always-True.
+    return bool(weights) and Path(HF_HUB_CACHE).resolve() not in \
+        Path(weights).resolve().parents
+
+
 def _resolve_arch(path: str, variant: Optional[str], is_explicit_local: bool) -> dict:
     """Arch config for non-.pt weights: embedded metadata -> sibling config ->
     HF config (variant flows only) -> defaults with a warning."""
@@ -459,7 +498,7 @@ def load_arch_config(
     path = os.fspath(resolve_weights_path(weights=weights, variant=variant))
     if path.endswith(".pt"):
         return _arch_from_pt(_torch_load(path), path)
-    return _resolve_arch(path, variant, bool(weights))
+    return _resolve_arch(path, variant, _is_explicit_local(weights))
 
 
 def load_checkpoint(
@@ -476,5 +515,5 @@ def load_checkpoint(
     path = os.fspath(resolve_weights_path(weights=weights, variant=variant))
     raw, state_dict = _load_from_resolved_path(path, map_location)
     arch = (_arch_from_pt(raw, path) if path.endswith(".pt")
-            else _resolve_arch(path, variant, bool(weights)))
+            else _resolve_arch(path, variant, _is_explicit_local(weights)))
     return path, arch, state_dict

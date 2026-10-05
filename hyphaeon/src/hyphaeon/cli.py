@@ -31,6 +31,8 @@ from aeon_core.weights import (
     load_weights,
     list_available_variants,
     print_available_variants,
+    default_weights,
+    default_variant,
     DEFAULT_VARIANT,
     HF_REPO_ID,
 )
@@ -43,11 +45,10 @@ from aeon_core.io import ensure_parent_directory, write_json, write_csv, format_
 from aeon_core._progress import ChunkProgress
 from aeon_core.cli import handle_cli_errors
 
-DEFAULT_VARIANT_ENV = os.environ.get("HYPHAEON_VARIANT", DEFAULT_VARIANT)
+DEFAULT_VARIANT_ENV = default_variant("HYPHAEON_VARIANT")
 
-# Default to package model.safetensors if it exists, otherwise check HYPHAEON_WEIGHTS
-_local_repo_weights = Path(__file__).resolve().parent.parent.parent.parent / "model.safetensors"
-DEFAULT_WEIGHTS_ENV = os.environ.get("HYPHAEON_WEIGHTS", str(_local_repo_weights) if _local_repo_weights.exists() else None)
+# Default to monorepo model.safetensors if present, else HYPHAEON_WEIGHTS env var
+DEFAULT_WEIGHTS_ENV = default_weights("HYPHAEON_WEIGHTS")
 
 def determine_adaptive_batch_size(num_species: int, total_sites: int, device: torch.device, user_batch_size: int = None) -> int:
     # DEPRECATED: retained for test/back-compat; delegates to compute_adaptive_safe_batch_size
@@ -890,8 +891,6 @@ def cmd_disease(args):
     device = get_device(cpu=getattr(args, "cpu", False))
     print(f"[*] Running HyphAeon Disease Variant Pathogenicity Scoring on {device}...")
     
-    resolved_path = resolve_weights_path(args.weights, variant=getattr(args, 'variant', DEFAULT_VARIANT))
-    
     # Load canonical human sequence if provided
     canon_seq = None
     if getattr(args, "canonical_seq", None):
@@ -901,13 +900,14 @@ def cmd_disease(args):
             canon_seq = str(rec.seq)
         else:
             canon_seq = args.canonical_seq.strip()
-            
+
     df_res = predict_disease_pathogenicity(
         msa_path=args.alignment,
         mutations=args.mutations,
         canonical_human_seq=canon_seq,
         human_taxon=getattr(args, "human_taxon", None),
-        weights_path=resolved_path,
+        weights_path=args.weights,
+        variant=getattr(args, "variant", DEFAULT_VARIANT),
         device=device,
         batch_size=getattr(args, "batch_size", None)
     )
@@ -1038,6 +1038,7 @@ def cmd_splits(args):
         tree_path=getattr(args, "tree", None),
         use_tn93=use_tn93,
         weights_path=getattr(args, "weights", DEFAULT_WEIGHTS_ENV),
+        variant=getattr(args, "variant", DEFAULT_VARIANT_ENV),
         min_clade_size=getattr(args, "min_clade_size", 2),
         max_depth=getattr(args, "max_depth", 10),
         device=None if not getattr(args, "cpu", False) else torch.device("cpu")
