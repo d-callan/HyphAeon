@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from aeon_core.cli import handle_cli_errors, add_weights_args, weights_kwargs
+from aeon_core.weights import WeightsError
 
 
 class TestHandleCliErrors:
@@ -19,15 +20,25 @@ class TestHandleCliErrors:
         assert ei.value.code == 1
         assert "bad weights path" in capsys.readouterr().err
 
-    def test_runtime_error_clean_exit(self, capsys):
+    def test_weights_error_clean_exit(self, capsys):
         @handle_cli_errors
         def main():
-            raise RuntimeError("incompatible weights file")
+            raise WeightsError("incompatible weights file")
 
         with pytest.raises(SystemExit) as ei:
             main()
         assert ei.value.code == 1
         assert "incompatible weights file" in capsys.readouterr().err
+
+    def test_foreign_runtime_error_keeps_traceback(self):
+        """A bare RuntimeError (torch CUDA OOM, forward shape mismatch) is a
+        bug/environment fault — it must NOT collapse to a one-line exit."""
+        @handle_cli_errors
+        def main():
+            raise RuntimeError("CUDA out of memory")
+
+        with pytest.raises(RuntimeError):
+            main()
 
     def test_other_errors_keep_traceback(self):
         @handle_cli_errors

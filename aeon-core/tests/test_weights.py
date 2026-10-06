@@ -17,6 +17,7 @@ import torch
 from aeon_core.weights import (
     HF_REPO_ID,
     DEFAULT_VARIANT,
+    WeightsError,
     ARCH_METADATA_KEY,
     get_variant_filename,
     resolve_weights_path,
@@ -55,7 +56,7 @@ class TestGetVariantFilename:
         """Variant names map into HF repo filenames — path-like input must
         fail here with a clear error, not inside a download call."""
         for bad in ("../evil", "a/b", "", ".hidden", "x y"):
-            with pytest.raises(RuntimeError, match="Invalid model variant name"):
+            with pytest.raises(WeightsError, match="Invalid model variant name"):
                 get_variant_filename(bad)
 
     def test_falsy_arch_values_defaulted(self):
@@ -149,7 +150,7 @@ class TestResolveWeightsPath:
         """If HF download fails and no local weights exist, raise RuntimeError."""
         with patch("huggingface_hub.try_to_load_from_cache", return_value=None), \
              patch("aeon_core.weights.hf_hub_download", side_effect=Exception("401 Unauthorized")):
-            with pytest.raises(RuntimeError, match="Could not download weights"):
+            with pytest.raises(WeightsError, match="Could not download weights"):
                 resolve_weights_path(weights=None, variant="general")
 
 
@@ -159,9 +160,9 @@ class TestWeightsFormat:
         parser traceback."""
         f = tmp_path / "model.ckpt"
         f.write_text("x")
-        with pytest.raises(RuntimeError, match="Unsupported weights file extension"):
+        with pytest.raises(WeightsError, match="Unsupported weights file extension"):
             load_weights(weights=str(f))
-        with pytest.raises(RuntimeError, match="Unsupported weights file extension"):
+        with pytest.raises(WeightsError, match="Unsupported weights file extension"):
             load_arch_config(weights=str(f))
 
 
@@ -375,7 +376,7 @@ class TestTorchLoadSecurity:
         p = tmp_path / "legacy.pt"
         torch.save({"args": _UnpicklableByRestriction()}, str(p))
 
-        with pytest.raises(RuntimeError, match="Cannot safely load"):
+        with pytest.raises(WeightsError, match="Cannot safely load"):
             _torch_load(str(p))
         out = capsys.readouterr().out
         assert out == ""  # no fallback warning: the load is refused outright
@@ -432,6 +433,24 @@ class TestLoadModelKeyMismatch:
 
         load_model(weights=str(st), device="cpu")
         assert "Weight key mismatch" not in capsys.readouterr().out
+
+    def test_missing_lrt_head_warns(self, tmp_path, capsys):
+        """A backbone-only checkpoint is missing lrt_ordinal_head.* — warn:
+        head-dependent commands decode their primary output from it, so
+        silence would mean garbage LRTs from a random-init head."""
+        pytest.importorskip("safetensors")
+        from aeon_core.inference import load_model
+        from aeon_core.model import PhyloAxialTransformer
+        model = PhyloAxialTransformer(**self._arch())
+        sd = {k: v for k, v in model.state_dict().items()
+              if not k.startswith("lrt_ordinal_head.")}
+        st = tmp_path / "backbone_only.safetensors"
+        save_safetensors(sd, str(st), arch=self._arch())
+
+        load_model(weights=str(st), device="cpu")
+        out = capsys.readouterr().out
+        assert "Weight key mismatch" in out
+        assert "lrt_ordinal_head" in out
 
 
 class TestSaveSafetensors:

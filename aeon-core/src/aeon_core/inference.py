@@ -158,21 +158,18 @@ def get_device(cpu: bool = False) -> torch.device:
     return torch.device('cpu')
 
 
-# Head params that legitimate backbone-only checkpoints omit; everything
-# else missing is an arch mismatch.
-_OPTIONAL_KEY_PREFIXES = ("lrt_ordinal_head.",)
-
-
 def load_model(weights=None, variant=None, device=None, strict=False):
     """Load a PhyloAxialTransformer from weights path or HuggingFace variant.
 
     Returns an eval-mode model on the specified device.
 
-    strict=False is deliberate (backbone-only unified checkpoints are
-    allowed to lack head params), but the key diff from load_state_dict is
-    inspected: missing non-head keys or any unexpected keys warn loudly,
-    since they mean the checkpoint doesn't match the model — e.g. a
-    wrong arch guess — and inference output would be garbage.
+    strict=False is deliberate (unified checkpoints may omit heads for
+    other tasks), but the key diff from load_state_dict is inspected: ANY
+    missing keys — including lrt_ordinal_head.*, which head-dependent
+    commands decode their primary output from — or any unexpected keys
+    warn loudly, since they mean the checkpoint doesn't match the model
+    and inference output would be garbage (a missing head decodes from
+    random-init parameters).
     """
     if device is None:
         device = get_device()
@@ -187,15 +184,14 @@ def load_model(weights=None, variant=None, device=None, strict=False):
     ).to(device)
     result = model.load_state_dict(state_dict, strict=strict)
     if not strict:
-        missing = [k for k in result.missing_keys
-                   if not k.startswith(_OPTIONAL_KEY_PREFIXES)]
+        missing = list(result.missing_keys)
         # Extra 'head_*' keys are other task heads in a unified checkpoint —
         # the standalone backbone legitimately ignores them.
         unexpected = [k for k in result.unexpected_keys
                       if not k.startswith("head_")]
         if missing or unexpected:
             print(f"[!] Weight key mismatch for {weights_path}: "
-                  f"{len(missing)} missing backbone key(s) "
+                  f"{len(missing)} missing key(s) "
                   f"(e.g. {missing[:3]}), "
                   f"{len(unexpected)} unexpected key(s) "
                   f"(e.g. {unexpected[:3]}). "

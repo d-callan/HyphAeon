@@ -7,12 +7,17 @@ Shared CLI plumbing for Aeon-family command-line front ends.
 import functools
 import sys
 
-from .weights import DEFAULT_VARIANT, default_variant, default_weights
+from .weights import (
+    DEFAULT_VARIANT, WeightsError, default_variant, default_weights,
+)
 
 # User-facing failures (bad weights path, incompatible weights file/extension,
-# missing runtime) rendered as a clean message + exit code instead of a
-# traceback. Anything outside these is a code bug and keeps its traceback.
-CLI_ERROR_TYPES = (FileNotFoundError, RuntimeError)
+# missing executable) rendered as a clean message + exit code instead of a
+# traceback. Deliberately NOT bare RuntimeError — torch raises that for CUDA
+# OOM, shape mismatches in forward, device errors etc., which are bugs or
+# environment faults whose traceback must be preserved. Weights-domain user
+# errors are WeightsError instead.
+CLI_ERROR_TYPES = (FileNotFoundError, WeightsError)
 
 
 def handle_cli_errors(func):

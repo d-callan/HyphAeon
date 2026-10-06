@@ -140,10 +140,22 @@ def print_available_variants(cli_name: str = "aeon"):
 _VARIANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 
+class WeightsError(RuntimeError):
+    """User-facing weights failure: bad path, bad variant, download or
+    format problem.
+
+    Subclasses RuntimeError so ``except RuntimeError`` callers are
+    unaffected, but aeon_core.cli.handle_cli_errors only clean-exits on
+    this type — a *foreign* RuntimeError (torch CUDA OOM, shape mismatch
+    inside a forward pass) is a code/environment bug that must keep its
+    traceback.
+    """
+
+
 def get_variant_filename(variant: str) -> str:
     """Map a variant name to its HF filename."""
     if not _VARIANT_RE.match(variant):
-        raise RuntimeError(f"Invalid model variant name: {variant!r}")
+        raise WeightsError(f"Invalid model variant name: {variant!r}")
     if variant == DEFAULT_VARIANT:
         return "model.safetensors"
     return f"model.{variant}.safetensors"
@@ -203,7 +215,7 @@ def resolve_weights_path(
         print(f"[✓] Weights cached at: {downloaded}")
         return downloaded
     except Exception as e:
-        raise RuntimeError(
+        raise WeightsError(
             f"Could not download weights from Hugging Face ({e}). "
             f"Specify --weights /path/to/checkpoint or set a weights env var "
             f"(HYPHAEON_WEIGHTS / CHRONAEON_WEIGHTS)."
@@ -228,7 +240,7 @@ def load_model_config(variant: Optional[str] = None) -> Dict:
 @functools.lru_cache(maxsize=None)
 def _load_model_config_cached(v: str) -> Dict:
     if not _VARIANT_RE.match(v):
-        raise RuntimeError(f"Invalid model variant name: {v!r}")
+        raise WeightsError(f"Invalid model variant name: {v!r}")
 
     # Check for variant-specific config first
     variant_config = f"model.{v}.config.json"  # v is already normalized
@@ -302,7 +314,7 @@ def _torch_load(path: str, map_location="cpu"):
     try:
         return torch.load(path, map_location=map_location, weights_only=True)
     except Exception as e:
-        raise RuntimeError(
+        raise WeightsError(
             f"Cannot safely load {path}: {e}. "
             f"This .pt checkpoint contains objects the restricted "
             f"(weights_only) loader refuses to deserialize — either a "
@@ -353,7 +365,7 @@ def _weights_format(path: str) -> str:
         return "safetensors"
     if path.endswith(".pt"):
         return "pt"
-    raise RuntimeError(
+    raise WeightsError(
         f"Unsupported weights file extension: {path} "
         f"(expected .safetensors or .pt)"
     )
@@ -459,10 +471,11 @@ def _arch_from_pt(ckpt, path: str) -> dict:
     an args dict — it yields defaults *with* a warning.
     """
     a = ckpt.get("args") if isinstance(ckpt, dict) else None
-    # argparse.Namespace and similar attribute-holders pass the restricted
-    # unpickler but lack .get() — coerce to a dict before normalizing.
-    if a is not None and not isinstance(a, dict):
-        a = vars(a) if hasattr(a, "__dict__") else None
+    # 'args' is a plain dict or nothing usable: attribute-holders like
+    # argparse.Namespace are rejected by torch.load(weights_only=True)
+    # in _torch_load before this runs, so there is nothing to coerce.
+    if not isinstance(a, dict):
+        a = None
     if not a and isinstance(ckpt, dict):
         a = {k: ckpt[k] for k in _ARCH_KEYS + tuple(_ARCH_ALIASES.values())
              if k in ckpt}

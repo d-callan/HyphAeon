@@ -210,7 +210,7 @@ def build_or_load_tree(
             if tmp_tree.exists():
                 tmp_tree.unlink()
         else:
-            raise RuntimeError(
+            raise FileNotFoundError(
                 "No phylogenetic tree provided (--tree) and FastTree is not installed on PATH. "
                 "Please provide a Newick tree file via -t/--tree."
             )
