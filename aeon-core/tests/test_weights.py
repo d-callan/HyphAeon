@@ -25,6 +25,8 @@ from aeon_core.weights import (
     load_weights,
     load_checkpoint,
     _torch_load,
+    _load_model_config_cached,
+    _is_explicit_local,
     save_safetensors,
     list_available_variants,
 )
@@ -32,10 +34,11 @@ from aeon_core.weights import (
 
 @pytest.fixture(autouse=True)
 def _clear_config_cache():
-    """load_model_config is lru_cached; clear it so per-test mocks apply."""
-    load_model_config.cache_clear()
+    """HF config fetches are lru_cached on _load_model_config_cached; clear
+    it so per-test mocks apply."""
+    _load_model_config_cached.cache_clear()
     yield
-    load_model_config.cache_clear()
+    _load_model_config_cached.cache_clear()
 
 
 class TestGetVariantFilename:
@@ -47,6 +50,24 @@ class TestGetVariantFilename:
 
     def test_arbitrary_variant(self):
         assert get_variant_filename("custom") == "model.custom.safetensors"
+
+    def test_path_like_variant_rejected(self):
+        """Variant names map into HF repo filenames — path-like input must
+        fail here with a clear error, not inside a download call."""
+        for bad in ("../evil", "a/b", "", ".hidden", "x y"):
+            with pytest.raises(RuntimeError, match="Invalid model variant name"):
+                get_variant_filename(bad)
+
+    def test_falsy_arch_values_defaulted(self):
+        """Explicit nulls / zeros in a config must fall back to defaults —
+        they can't be legitimate arch params."""
+        from aeon_core.weights import _normalize_arch, _DEFAULT_ARCH
+        arch = _normalize_arch({"embed_dim": None, "num_layers": 0,
+                                "num_heads": 16, "window_size": 2})
+        assert arch["embed_dim"] == _DEFAULT_ARCH["embed_dim"]
+        assert arch["num_layers"] == _DEFAULT_ARCH["num_layers"]
+        assert arch["num_heads"] == 16
+        assert arch["window_size"] == 2
 
 
 class TestResolveWeightsPath:
@@ -62,6 +83,21 @@ class TestResolveWeightsPath:
         nonexistent = str(tmp_path / "does_not_exist.pt")
         with pytest.raises(FileNotFoundError):
             resolve_weights_path(weights=nonexistent, variant="general")
+
+    def test_directory_path_raises(self, tmp_path):
+        """A directory exists but isn't weights — reject it cleanly."""
+        with pytest.raises(FileNotFoundError):
+            resolve_weights_path(weights=str(tmp_path), variant="general")
+
+    def test_empty_and_dot_paths(self, tmp_path):
+        """Empty-string weights means 'no explicit path' (variant flow);
+        Path('') collapses to '.' — a directory — and must be rejected."""
+        cache_file = str(tmp_path / "model.safetensors")
+        Path(cache_file).write_text("cached")
+        with patch("huggingface_hub.try_to_load_from_cache", return_value=cache_file):
+            assert resolve_weights_path(weights="") == cache_file
+        with pytest.raises(FileNotFoundError):
+            resolve_weights_path(weights=Path(""))
 
     def test_nonexistent_explicit_path_does_not_download(self, tmp_path):
         """A bad --weights path must not silently fall through to HF download."""
@@ -81,12 +117,52 @@ class TestResolveWeightsPath:
             assert result == cache_file
             mock_dl.assert_not_called()
 
+    def test_tilde_path_expanded(self, tmp_path, monkeypatch):
+        """A ~/... explicit path resolves via expanduser, not as a literal
+        '~' directory under cwd."""
+        home = tmp_path / "home"
+        home.mkdir()
+        w = home / "model.pt"
+        w.write_text("dummy")
+        monkeypatch.setenv("HOME", str(home))
+        assert resolve_weights_path(weights="~/model.pt") == str(w)
+
+    def test_relative_explicit_path_returns_abspath(self, tmp_path, monkeypatch):
+        """A cwd-relative explicit path is returned absolute so a later chdir
+        can't silently re-point it."""
+        (tmp_path / "model.pt").write_text("dummy")
+        monkeypatch.chdir(tmp_path)
+        assert resolve_weights_path(weights="model.pt") == str(tmp_path / "model.pt")
+
+    def test_cached_no_exist_sentinel_falls_through_to_download(self, tmp_path):
+        """try_to_load_from_cache can return the _CACHED_NO_EXIST sentinel
+        object (not None) — that must count as a miss. Any non-str value
+        stands in for the sentinel here."""
+        downloaded = str(tmp_path / "model.safetensors")
+        with patch("huggingface_hub.try_to_load_from_cache", return_value=object()), \
+             patch("aeon_core.weights.hf_hub_download", return_value=downloaded) as mock_dl:
+            result = resolve_weights_path(weights=None, variant="general")
+            assert result == downloaded
+            mock_dl.assert_called_once()
+
     def test_download_failure_raises_error(self, tmp_path):
         """If HF download fails and no local weights exist, raise RuntimeError."""
         with patch("huggingface_hub.try_to_load_from_cache", return_value=None), \
              patch("aeon_core.weights.hf_hub_download", side_effect=Exception("401 Unauthorized")):
             with pytest.raises(RuntimeError, match="Could not download weights"):
                 resolve_weights_path(weights=None, variant="general")
+
+
+class TestWeightsFormat:
+    def test_unknown_extension_rejected(self, tmp_path):
+        """Non-.pt/.safetensors files fail with a clear error, not a cryptic
+        parser traceback."""
+        f = tmp_path / "model.ckpt"
+        f.write_text("x")
+        with pytest.raises(RuntimeError, match="Unsupported weights file extension"):
+            load_weights(weights=str(f))
+        with pytest.raises(RuntimeError, match="Unsupported weights file extension"):
+            load_arch_config(weights=str(f))
 
 
 class TestListAvailableVariants:
@@ -399,6 +475,17 @@ class TestSaveSafetensors:
         assert md["variant"] == "test"
         assert json.loads(md[ARCH_METADATA_KEY])["embed_dim"] == 128
 
+    def test_user_metadata_cannot_clobber_format(self, tmp_path):
+        """format=pt is the HF convention field — caller metadata must not
+        override it."""
+        pytest.importorskip("safetensors")
+        from safetensors import safe_open
+        st_path = tmp_path / "model.safetensors"
+        save_safetensors({"w": torch.zeros(1)}, str(st_path),
+                         metadata={"format": "jax"})
+        with safe_open(str(st_path), framework="pt") as f:
+            assert f.metadata()["format"] == "pt"
+
 
 class TestSafetensorsArchResolution:
     def test_sibling_stem_config_json(self, tmp_path):
@@ -461,6 +548,16 @@ class TestSafetensorsArchResolution:
             config = load_arch_config(weights=str(st_path), variant="general")
         mock_cfg.assert_called_once()
         assert config["embed_dim"] == 512
+
+    def test_tilde_path_into_hf_cache_is_not_explicit(self, tmp_path, monkeypatch):
+        """~ must be expanded before the HF-cache membership test — a tilde
+        spec resolving under the cache root is still a variant artifact."""
+        home = tmp_path / "home"
+        (home / "hf-cache").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home))
+        with patch("aeon_core.weights.HF_HUB_CACHE", str(home / "hf-cache")):
+            assert _is_explicit_local("~/hf-cache/model.safetensors") is False
+            assert _is_explicit_local("~/elsewhere/model.safetensors") is True
 
 
 @pytest.mark.skipif(not os.environ.get("HF_TOKEN"), reason="HF_TOKEN not set")

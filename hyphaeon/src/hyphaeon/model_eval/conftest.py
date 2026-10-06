@@ -48,8 +48,13 @@ def _resolve_weights():
     2. Default variant from Hugging Face (downloads + caches on first use)
     """
     explicit = os.environ.get("HYPHAEON_WEIGHTS")
-    if explicit and os.path.exists(explicit):
-        return explicit, f"HYPHAEON_WEIGHTS={explicit}"
+    if explicit:
+        if os.path.isfile(explicit):
+            return explicit, f"HYPHAEON_WEIGHTS={explicit}"
+        return None, (
+            f"HYPHAEON_WEIGHTS points to a missing file: {explicit}. "
+            f"Refusing to silently evaluate against HF weights instead."
+        )
     try:
         path = resolve_weights_path(weights=None)
         return path, f"Hugging Face (cached at {path})"

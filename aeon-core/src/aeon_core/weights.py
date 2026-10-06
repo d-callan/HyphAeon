@@ -14,6 +14,7 @@ without a package update.
 """
 
 import os
+import re
 import sys
 import json
 import functools
@@ -56,7 +57,7 @@ def default_weights(env_var: str, fallback_env_vars: Tuple[str, ...] = ()) -> Op
     for var in (env_var,) + tuple(fallback_env_vars):
         value = os.environ.get(var)
         if value:
-            return value
+            return os.path.expanduser(value)
     repo_root_weights = Path(__file__).resolve().parents[3] / "model.safetensors"
     return str(repo_root_weights) if repo_root_weights.exists() else None
 
@@ -83,7 +84,7 @@ def list_available_variants() -> List[Dict[str, str]]:
     for f in files:
         if f == "model.safetensors":
             variants.append({
-                "variant": "general",
+                "variant": DEFAULT_VARIANT,
                 "filename": f,
                 "description": "General model (trained on diverse alignments)",
             })
@@ -97,7 +98,7 @@ def list_available_variants() -> List[Dict[str, str]]:
             })
 
     # General first, then alphabetical
-    variants.sort(key=lambda v: (v["variant"] != "general", v["variant"]))
+    variants.sort(key=lambda v: (v["variant"] != DEFAULT_VARIANT, v["variant"]))
     return variants
 
 
@@ -133,9 +134,17 @@ def print_available_variants(cli_name: str = "aeon"):
     print(f"Default variant: {DEFAULT_VARIANT}")
 
 
+# Variant names map directly into HF repo filenames — restrict to a sane
+# charset so a path-like variant ("../x", "a/b") can't produce a confusing
+# repo-relative filename.
+_VARIANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+
 def get_variant_filename(variant: str) -> str:
     """Map a variant name to its HF filename."""
-    if variant == "general":
+    if not _VARIANT_RE.match(variant):
+        raise RuntimeError(f"Invalid model variant name: {variant!r}")
+    if variant == DEFAULT_VARIANT:
         return "model.safetensors"
     return f"model.{variant}.safetensors"
 
@@ -156,11 +165,11 @@ def resolve_weights_path(
     """
     # 1. Explicit path takes precedence
     if weights:
-        weights = os.fspath(weights)
-        if os.path.exists(weights):
-            return weights
+        weights = os.path.expanduser(os.fspath(weights))
+        if os.path.isfile(weights):
+            return os.path.abspath(weights)
         pkg_root_weights = Path(__file__).resolve().parent.parent.parent.parent / weights
-        if pkg_root_weights.exists():
+        if pkg_root_weights.is_file():
             return str(pkg_root_weights)
         raise FileNotFoundError(
             f"Explicit weights path does not exist: {weights}. "
@@ -177,7 +186,9 @@ def resolve_weights_path(
         hf_cache_path = try_to_load_from_cache(
             repo_id=HF_REPO_ID, filename=filename,
         )
-        if hf_cache_path is not None and os.path.exists(hf_cache_path):
+        # Returns a str path, None, or the _CACHED_NO_EXIST sentinel object —
+        # the isinstance check guards both non-str cases in one step.
+        if isinstance(hf_cache_path, str) and os.path.isfile(hf_cache_path):
             return hf_cache_path
     except Exception:
         pass
@@ -194,11 +205,11 @@ def resolve_weights_path(
     except Exception as e:
         raise RuntimeError(
             f"Could not download weights from Hugging Face ({e}). "
-            f"Specify --weights /path/to/checkpoint or set HYPHAEON_WEIGHTS env var."
+            f"Specify --weights /path/to/checkpoint or set a weights env var "
+            f"(HYPHAEON_WEIGHTS / CHRONAEON_WEIGHTS)."
         ) from e
 
 
-@functools.lru_cache(maxsize=None)
 def load_model_config(variant: Optional[str] = None) -> Dict:
     """
     Load model architecture config from the HF repo's config.json.
@@ -206,11 +217,21 @@ def load_model_config(variant: Optional[str] = None) -> Dict:
     All variants share the same architecture (config.json at repo root).
     If a variant-specific config exists (model.{variant}.config.json), it
     will be used instead.
+
+    Network results are cached per process; None and the default variant
+    name are normalized to one cache key so the repo listing isn't fetched
+    twice for the same effective variant.
     """
-    v = variant or DEFAULT_VARIANT
+    return _load_model_config_cached(variant or DEFAULT_VARIANT)
+
+
+@functools.lru_cache(maxsize=None)
+def _load_model_config_cached(v: str) -> Dict:
+    if not _VARIANT_RE.match(v):
+        raise RuntimeError(f"Invalid model variant name: {v!r}")
 
     # Check for variant-specific config first
-    variant_config = f"model.{v}.config.json"
+    variant_config = f"model.{v}.config.json"  # v is already normalized
     files = list_repo_files(HF_REPO_ID)
     if variant_config in files:
         path = hf_hub_download(repo_id=HF_REPO_ID, filename=variant_config)
@@ -256,9 +277,8 @@ def save_safetensors(
     """
     from safetensors.torch import save_file
 
-    md = {"format": "pt"}
-    if metadata:
-        md.update({k: str(v) for k, v in metadata.items()})
+    md = {k: str(v) for k, v in (metadata or {}).items()}
+    md["format"] = "pt"  # HF convention; written last so user metadata can't clobber it
     if arch:
         md[ARCH_METADATA_KEY] = json.dumps(arch)
 
@@ -297,7 +317,9 @@ def _torch_load(path: str, map_location="cpu"):
 def _extract_state_dict(ckpt):
     """Pull a state_dict out of a .pt checkpoint dict (model_state_dict > state_dict > ckpt itself)."""
     if isinstance(ckpt, dict):
-        return ckpt.get("model_state_dict") or ckpt.get("state_dict") or ckpt
+        for k in ("model_state_dict", "state_dict"):
+            if k in ckpt:
+                return ckpt[k]
     return ckpt
 
 
@@ -324,13 +346,26 @@ def _remap_unified_keys(state_dict: Dict) -> Dict:
     return mapped
 
 
+def _weights_format(path: str) -> str:
+    """Checkpoint format from file extension. Anything else is rejected here
+    rather than surfacing as a cryptic safetensors/torch parse error."""
+    if path.endswith(".safetensors"):
+        return "safetensors"
+    if path.endswith(".pt"):
+        return "pt"
+    raise RuntimeError(
+        f"Unsupported weights file extension: {path} "
+        f"(expected .safetensors or .pt)"
+    )
+
+
 def _load_from_resolved_path(path: str, map_location="cpu") -> Tuple:
     """Open a resolved weights file once -> (raw_checkpoint_or_None, state_dict).
 
     For .safetensors, raw is None (there is no checkpoint wrapper). For .pt,
     raw is the loaded checkpoint dict, which also carries arch params.
     """
-    if path.endswith(".safetensors"):
+    if _weights_format(path) == "safetensors":
         from safetensors.torch import load_file
         return None, _remap_unified_keys(load_file(path, device=str(map_location)))
     ckpt = _torch_load(path, map_location)
@@ -370,14 +405,16 @@ def _normalize_arch(a: Dict, source: Optional[str] = None) -> dict:
     warning lists which fields were defaulted, so a partial config can't
     silently masquerade as complete.
     """
+    # Falsy values (missing key, explicit null, 0) all mean 'not provided' —
+    # none of these params can be legitimately falsy.
     arch = {
-        "embed_dim": a.get("embed_dim", _DEFAULT_ARCH["embed_dim"]),
-        "num_layers": a.get("num_layers", a.get("layers", _DEFAULT_ARCH["num_layers"])),
-        "num_heads": a.get("num_heads", a.get("heads", _DEFAULT_ARCH["num_heads"])),
-        "window_size": a.get("window_size", _DEFAULT_ARCH["window_size"]),
+        "embed_dim": a.get("embed_dim") or _DEFAULT_ARCH["embed_dim"],
+        "num_layers": a.get("num_layers") or a.get("layers") or _DEFAULT_ARCH["num_layers"],
+        "num_heads": a.get("num_heads") or a.get("heads") or _DEFAULT_ARCH["num_heads"],
+        "window_size": a.get("window_size") or _DEFAULT_ARCH["window_size"],
     }
     missing = [k for k in _ARCH_KEYS
-               if k not in a and _ARCH_ALIASES.get(k) not in a]
+               if not a.get(k) and not a.get(_ARCH_ALIASES.get(k, ""))]
     if missing and source:
         defaulted = {k: arch[k] for k in missing}
         print(f"[!] {source}: arch param(s) {missing} not found; assuming defaults {defaulted}.")
@@ -422,6 +459,10 @@ def _arch_from_pt(ckpt, path: str) -> dict:
     an args dict — it yields defaults *with* a warning.
     """
     a = ckpt.get("args") if isinstance(ckpt, dict) else None
+    # argparse.Namespace and similar attribute-holders pass the restricted
+    # unpickler but lack .get() — coerce to a dict before normalizing.
+    if a is not None and not isinstance(a, dict):
+        a = vars(a) if hasattr(a, "__dict__") else None
     if not a and isinstance(ckpt, dict):
         a = {k: ckpt[k] for k in _ARCH_KEYS + tuple(_ARCH_ALIASES.values())
              if k in ckpt}
@@ -442,9 +483,10 @@ def _is_explicit_local(weights: Optional[str]) -> bool:
     metadata or a sibling config).
     """
     # HF_HUB_CACHE is a str; parents are Path objects — normalize before
-    # membership test or the comparison is silently always-True.
+    # membership test or the comparison is silently always-True. expanduser
+    # matches resolve_weights_path so a "~/..." spec resolves identically.
     return bool(weights) and Path(HF_HUB_CACHE).resolve() not in \
-        Path(weights).resolve().parents
+        Path(os.path.expanduser(os.fspath(weights))).resolve().parents
 
 
 def _resolve_arch(path: str, variant: Optional[str], is_explicit_local: bool) -> dict:
@@ -460,18 +502,20 @@ def _resolve_arch(path: str, variant: Optional[str], is_explicit_local: bool) ->
 
     # HF config only makes sense when the file came from the HF variant flow;
     # skip the network call for an explicit local file that isn't self-describing.
+    hf_error = None
     if not is_explicit_local:
         try:
             cfg = load_model_config(variant=variant)
             if cfg:
                 return _normalize_arch(cfg, f"{HF_REPO_ID} config.json")
-        except Exception:
-            pass
+        except Exception as e:
+            hf_error = e
 
-    sources = ("embedded metadata or sibling config" if is_explicit_local
-               else "embedded metadata, sibling config, or HF config")
+    detail = (f"no embedded metadata or sibling config" if is_explicit_local
+              else f"no embedded metadata, sibling config, or HF config"
+                   + (f" (fetch failed: {hf_error})" if hf_error else ""))
     print(f"[!] Could not determine architecture for {path} "
-          f"(no {sources}); "
+          f"({detail}); "
           f"assuming default arch params {_DEFAULT_ARCH}. "
           f"To embed arch params in the file, re-save via aeon_core.weights.save_safetensors().")
     return dict(_DEFAULT_ARCH)
@@ -496,7 +540,7 @@ def load_arch_config(
     opening the file twice.
     """
     path = os.fspath(resolve_weights_path(weights=weights, variant=variant))
-    if path.endswith(".pt"):
+    if _weights_format(path) == "pt":
         return _arch_from_pt(_torch_load(path), path)
     return _resolve_arch(path, variant, _is_explicit_local(weights))
 
@@ -514,6 +558,6 @@ def load_checkpoint(
     """
     path = os.fspath(resolve_weights_path(weights=weights, variant=variant))
     raw, state_dict = _load_from_resolved_path(path, map_location)
-    arch = (_arch_from_pt(raw, path) if path.endswith(".pt")
+    arch = (_arch_from_pt(raw, path) if _weights_format(path) == "pt"
             else _resolve_arch(path, variant, _is_explicit_local(weights)))
     return path, arch, state_dict

@@ -15,13 +15,8 @@ import pandas as pd
 import torch
 
 from aeon_core.inference import get_device
-from aeon_core.weights import DEFAULT_VARIANT, print_available_variants, default_weights, default_variant
-from aeon_core.cli import handle_cli_errors
-
-# HYPHAEON_* fallbacks retained for pre-refactor users
-DEFAULT_VARIANT_ENV = default_variant("CHRONAEON_VARIANT", ("HYPHAEON_VARIANT",))
-
-DEFAULT_WEIGHTS_ENV = default_weights("CHRONAEON_WEIGHTS", ("HYPHAEON_WEIGHTS",))
+from aeon_core.weights import print_available_variants
+from aeon_core.cli import handle_cli_errors, add_weights_args, weights_kwargs
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 EXAMPLES_DIR = _REPO_ROOT / "chronaeon" / "examples"
@@ -61,8 +56,7 @@ def cmd_dating(args):
         ci_method=ci_method,
         ridge=getattr(args, "ridge", "auto"),
         n_bootstrap=getattr(args, "bootstrap", 1000),
-        weights=getattr(args, "weights", DEFAULT_WEIGHTS_ENV),
-        variant=getattr(args, "variant", DEFAULT_VARIANT_ENV),
+        **weights_kwargs(args),
         device=device,
         batch_size=getattr(args, "batch_size", None),
         max_species=getattr(args, "max_species", None),
@@ -367,8 +361,7 @@ def cmd_phylogeo(args):
         min_bf=getattr(args, "min_bf", 3.0),
         fdr_thresh=getattr(args, "fdr", 0.10),
         use_neural=not getattr(args, "no_neural", False),
-        weights=getattr(args, "weights", DEFAULT_WEIGHTS_ENV),
-        variant=getattr(args, "variant", DEFAULT_VARIANT_ENV),
+        **weights_kwargs(args),
         device=device,
         output_prefix=getattr(args, "output", None),
         geojson_path=getattr(args, "geojson", None),
@@ -599,8 +592,7 @@ def cmd_autoclock(args):
             min_delta_aicc=getattr(args, "min_delta_aicc", 15.0),
             max_k_per_node=getattr(args, "max_k", 6),
             manifold=getattr(args, "manifold", "transformer"),
-            weights=getattr(args, "weights", DEFAULT_WEIGHTS_ENV),
-            variant=getattr(args, "variant", DEFAULT_VARIANT_ENV),
+            **weights_kwargs(args),
             device=getattr(args, "device", None),
             kernel_bandwidth=getattr(args, "kernel_bandwidth", None),
             output_dir=getattr(args, "output_dir", None) or (Path(args.output).parent if getattr(args, "output", None) else None),
@@ -622,8 +614,7 @@ def cmd_autoclock(args):
             date_regex=getattr(args, "date_regex", None),
             max_k=getattr(args, "max_k", 6),
             manifold=getattr(args, "manifold", "transformer"),
-            weights=getattr(args, "weights", DEFAULT_WEIGHTS_ENV),
-            variant=getattr(args, "variant", DEFAULT_VARIANT_ENV),
+            **weights_kwargs(args),
             device=getattr(args, "device", None),
             kernel_bandwidth=getattr(args, "kernel_bandwidth", None),
             min_cluster_size=getattr(args, "min_cluster_size", 5),
@@ -817,8 +808,9 @@ def main():
     date_parser.add_argument("--alluvial", action="store_true", help="Generate continuous manifold alluvial / river-flow phylogeny plot")
     date_parser.add_argument("--alluvial-path", default=None, help="Custom output path for alluvial / river-flow plot (PNG or PDF)")
     date_parser.add_argument("--color-by", default=None, help="Column name in metadata CSV to color streamlines by (e.g. 'city', 'country', 'subtype')")
-    date_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
-    date_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from HF (default: {DEFAULT_VARIANT})")
+    add_weights_args(date_parser,
+        weights_envs=("CHRONAEON_WEIGHTS", "HYPHAEON_WEIGHTS"),
+        variant_envs=("CHRONAEON_VARIANT", "HYPHAEON_VARIANT"))
     date_parser.add_argument("-s", "--max-species", type=int, default=None, help="Maximum number of taxa to include")
     date_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: adaptive hardware budget)")
     date_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
@@ -848,8 +840,9 @@ def main():
     geo_parser.add_argument("--plot", action="store_true", help="Generate publication-grade diagnostic PDF and PNG figures")
     geo_parser.add_argument("--plot-path", default=None, help="Custom output path for diagnostic plot (e.g. phylogeography.pdf)")
     geo_parser.add_argument("--geojson", default=None, help="Optional path to output GeoJSON feature collection")
-    geo_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download)")
-    geo_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from HF (default: {DEFAULT_VARIANT})")
+    add_weights_args(geo_parser,
+        weights_envs=("CHRONAEON_WEIGHTS", "HYPHAEON_WEIGHTS"),
+        variant_envs=("CHRONAEON_VARIANT", "HYPHAEON_VARIANT"))
     geo_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
     geo_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     geo_parser.add_argument("-c", "--csv", help="Optional path to output transmission routes CSV")
@@ -912,8 +905,9 @@ def main():
     autoclock_parser.add_argument("--date-regex", default=None, help="Optional regex with capture group to extract dates from headers")
     autoclock_parser.add_argument("-k", "--max-k", type=int, default=6, help="Maximum candidate number of clock communities to evaluate (default: 6)")
     autoclock_parser.add_argument("--manifold", choices=["transformer", "distance", "tn93", "auto"], default="transformer", help="Embedding manifold for spectral partitioning: 'transformer' (neural latent representations) or 'distance'/'tn93' (analytic pairwise continuous distance) (default: transformer)")
-    autoclock_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides HF download). Can also be set via CHRONAEON_WEIGHTS or HYPHAEON_WEIGHTS env var.")
-    autoclock_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from HF (default: {DEFAULT_VARIANT})")
+    add_weights_args(autoclock_parser,
+        weights_envs=("CHRONAEON_WEIGHTS", "HYPHAEON_WEIGHTS"),
+        variant_envs=("CHRONAEON_VARIANT", "HYPHAEON_VARIANT"))
     autoclock_parser.add_argument("--device", default=None, help="Execution hardware device ('cuda', 'mps', 'cpu')")
     autoclock_parser.add_argument("--kernel-bandwidth", type=float, default=None, help="Spectral affinity kernel bandwidth sigma for distance manifold (default: adaptive 10th percentile)")
     autoclock_parser.add_argument("--min-cluster-size", type=int, default=5, help="Minimum community size to consider a valid clock branch (default: 5)")

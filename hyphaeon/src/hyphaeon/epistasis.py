@@ -33,7 +33,6 @@ from aeon_core.dataset import (
     get_aa_token
 )
 from aeon_core.model import PhyloAxialTransformer
-from aeon_core.weights import load_weights, load_arch_config
 from aeon_core.stats import pvals_from_lrt_self_liang, benjamini_hochberg
 from aeon_core.inference import get_device, load_model, get_device_memory_budget, compute_adaptive_safe_batch_size
 from aeon_core._progress import ChunkProgress
@@ -632,7 +631,7 @@ def run_insilico_selection_dms(
 def run_epistatic_analysis(
     alignment_path: str,
     tree_path: Optional[str] = None,
-    weights_path: Optional[str] = None,
+    weights: Optional[str] = None,
     variant: Optional[str] = None,
     focal_taxon: Optional[str] = None,
     min_sim: float = 0.35,
@@ -667,7 +666,7 @@ def run_epistatic_analysis(
     N = len(taxa)
 
     # 3. Load Model
-    model = load_model(weights=weights_path, variant=variant, device=device)
+    model = load_model(weights=weights, variant=variant, device=device)
 
     tree_cache = model.precompute_tree_cache(d_mat.to(device), z_coords.to(device))
 
@@ -727,7 +726,7 @@ def run_epistatic_analysis(
 def run_digital_dms_analysis(
     alignment_path: str,
     tree_path: Optional[str] = None,
-    weights_path: Optional[str] = None,
+    weights: Optional[str] = None,
     variant: Optional[str] = None,
     focal_taxon: Optional[str] = None,
     cpu: bool = False,
@@ -749,7 +748,7 @@ def run_digital_dms_analysis(
     N = len(taxa)
 
     # 3. Load Model
-    model = load_model(weights=weights_path, variant=variant, device=device)
+    model = load_model(weights=weights, variant=variant, device=device)
 
     tree_cache = model.precompute_tree_cache(d_mat.to(device), z_coords.to(device))
 

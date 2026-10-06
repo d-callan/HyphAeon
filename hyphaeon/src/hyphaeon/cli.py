@@ -29,12 +29,7 @@ from aeon_core.weights import (
     resolve_weights_path,
     load_arch_config,
     load_weights,
-    list_available_variants,
     print_available_variants,
-    default_weights,
-    default_variant,
-    DEFAULT_VARIANT,
-    HF_REPO_ID,
 )
 from .phenotype import run_phenotype_association, PRESETS
 from .epistasis import run_epistasis_analysis, run_epistatic_sector_mining
@@ -43,12 +38,7 @@ from aeon_core.inference import get_device, load_model, prepare_alignment, compu
 from .inference import predict_site_lrts
 from aeon_core.io import ensure_parent_directory, write_json, write_csv, format_pq
 from aeon_core._progress import ChunkProgress
-from aeon_core.cli import handle_cli_errors
-
-DEFAULT_VARIANT_ENV = default_variant("HYPHAEON_VARIANT")
-
-# Default to monorepo model.safetensors if present, else HYPHAEON_WEIGHTS env var
-DEFAULT_WEIGHTS_ENV = default_weights("HYPHAEON_WEIGHTS")
+from aeon_core.cli import handle_cli_errors, add_weights_args, weights_kwargs
 
 def determine_adaptive_batch_size(num_species: int, total_sites: int, device: torch.device, user_batch_size: int = None) -> int:
     # DEPRECATED: retained for test/back-compat; delegates to compute_adaptive_safe_batch_size
@@ -59,9 +49,9 @@ def cmd_meme(args):
     device = get_device(cpu=getattr(args, "cpu", False))
     print(f"[*] Hardware device selected: {device.type.upper()}")
 
-    weights_path = resolve_weights_path(weights=args.weights, variant=args.variant)
+    weights_path = resolve_weights_path(**weights_kwargs(args))
     print(f"[*] Loading HyphAeon model from: {weights_path}")
-    model = load_model(weights=args.weights, variant=args.variant, device=device)
+    model = load_model(weights=weights_path, variant=args.variant, device=device)
 
     print(f"[*] Parsing Alignment: {args.alignment}")
     use_tn93 = getattr(args, "no_tree", False) or getattr(args, "use_tn93", False) or (getattr(args, "tree", None) == "tn93")
@@ -577,7 +567,6 @@ def list_models():
 def cmd_phenotype(args):
     alignment_path = os.path.expanduser(args.alignment) if getattr(args, "alignment", None) else None
     tree_path = os.path.expanduser(args.tree) if getattr(args, "tree", None) else None
-    weights_path = os.path.expanduser(args.weights) if getattr(args, "weights", None) else DEFAULT_WEIGHTS_ENV
 
     use_tn93 = getattr(args, "no_tree", False) or getattr(args, "use_tn93", False) or (getattr(args, "tree", None) == "tn93")
     print(f"[*] Executing Directional Phenotype-Genotype Mapping (PhyloWAS)...")
@@ -590,32 +579,25 @@ def cmd_phenotype(args):
         print(f"[*] Tree:      (extracting from alignment)")
     
     t0 = time.time()
-    try:
-        res = run_phenotype_association(
-            alignment_path=alignment_path,
-            tree_path=tree_path,
-            weights_path=weights_path,
-            variant=getattr(args, "variant", DEFAULT_VARIANT_ENV),
-            preset=getattr(args, "preset", None),
-            foreground=getattr(args, "foreground", None),
-            background=getattr(args, "background", None),
-            phenotype_file=getattr(args, "phenotype_file", None),
-            trait_col=getattr(args, "trait_col", None),
-            species_col=getattr(args, "species_col", None),
-            continuous=getattr(args, "continuous", False),
-            permulations=getattr(args, "permulations", 0),
-            min_taxa_per_site=getattr(args, "min_taxa", 4),
-            alpha=getattr(args, "alpha", 0.05),
-            cpu=getattr(args, "cpu", False),
-            use_tn93=use_tn93,
-            n_permutations=getattr(args, "n_permutations", 10000),
-            max_perm_p=getattr(args, "max_perm_p", None)
-        )
-    except Exception as e:
-        print(f"\n[!] Phenotype Association Error: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+    res = run_phenotype_association(
+        alignment_path=alignment_path,
+        tree_path=tree_path,
+        **weights_kwargs(args),
+        preset=getattr(args, "preset", None),
+        foreground=getattr(args, "foreground", None),
+        background=getattr(args, "background", None),
+        phenotype_file=getattr(args, "phenotype_file", None),
+        trait_col=getattr(args, "trait_col", None),
+        species_col=getattr(args, "species_col", None),
+        continuous=getattr(args, "continuous", False),
+        permulations=getattr(args, "permulations", 0),
+        min_taxa_per_site=getattr(args, "min_taxa", 4),
+        alpha=getattr(args, "alpha", 0.05),
+        cpu=getattr(args, "cpu", False),
+        use_tn93=use_tn93,
+        n_permutations=getattr(args, "n_permutations", 10000),
+        max_perm_p=getattr(args, "max_perm_p", None)
+    )
         
     elapsed = time.time() - t0
     meta = res["phenotype_meta"]
@@ -695,30 +677,24 @@ def cmd_epistasis(args):
         print(f"[*] Tree:      (extracting from alignment)")
     
     t0 = time.time()
-    try:
-        res = run_epistasis_analysis(
-            alignment_path=args.alignment,
-            tree_path=args.tree,
-            weights_path=args.weights,
-            focal_taxon=getattr(args, "focal_taxon", None),
-            min_sim=getattr(args, "min_sim", 0.30),
-            min_shared=getattr(args, "min_shared", 2),
-            max_fdr=getattr(args, "max_fdr", 0.05),
-            min_lrt=getattr(args, "min_lrt", 1.0),
-            min_clique_size=getattr(args, "min_clique_size", 3),
-            max_overlap=getattr(args, "max_overlap", 0.50),
-            min_coherence=getattr(args, "min_coherence", 0.50),
-            n_permutations=getattr(args, "n_permutations", 10000),
-            max_perm_p=getattr(args, "max_perm_p", None),
-            run_dms=not getattr(args, "no_dms", False),
-            cpu=getattr(args, "cpu", False),
-            use_tn93=use_tn93
-        )
-    except Exception as e:
-        print(f"\n[!] Epistasis / ESSM Error: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+    res = run_epistasis_analysis(
+        alignment_path=args.alignment,
+        tree_path=args.tree,
+        **weights_kwargs(args),
+        focal_taxon=getattr(args, "focal_taxon", None),
+        min_sim=getattr(args, "min_sim", 0.30),
+        min_shared=getattr(args, "min_shared", 2),
+        max_fdr=getattr(args, "max_fdr", 0.05),
+        min_lrt=getattr(args, "min_lrt", 1.0),
+        min_clique_size=getattr(args, "min_clique_size", 3),
+        max_overlap=getattr(args, "max_overlap", 0.50),
+        min_coherence=getattr(args, "min_coherence", 0.50),
+        n_permutations=getattr(args, "n_permutations", 10000),
+        max_perm_p=getattr(args, "max_perm_p", None),
+        run_dms=not getattr(args, "no_dms", False),
+        cpu=getattr(args, "cpu", False),
+        use_tn93=use_tn93
+    )
 
     elapsed = time.time() - t0
     edges = res["edges"]
@@ -828,23 +804,16 @@ def cmd_dms(args):
         print(f"[*] Tree:      (extracting from alignment)")
         
     t0 = time.time()
-    try:
-        from .epistasis import run_digital_dms_analysis
-        res = run_digital_dms_analysis(
-            alignment_path=args.alignment,
-            tree_path=args.tree,
-            weights_path=args.weights,
-            variant=getattr(args, "variant", None),
-            focal_taxon=getattr(args, "focal_taxon", None),
-            cpu=getattr(args, "cpu", False),
-            progress=True,
-            use_tn93=use_tn93
-        )
-    except Exception as e:
-        print(f"\n[!] Digital DMS / ESSM Error: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+    from .epistasis import run_digital_dms_analysis
+    res = run_digital_dms_analysis(
+        alignment_path=args.alignment,
+        tree_path=args.tree,
+        **weights_kwargs(args),
+        focal_taxon=getattr(args, "focal_taxon", None),
+        cpu=getattr(args, "cpu", False),
+        progress=True,
+        use_tn93=use_tn93
+    )
         
     elapsed = time.time() - t0
     plasticity = res["plasticity"]
@@ -906,8 +875,7 @@ def cmd_disease(args):
         mutations=args.mutations,
         canonical_human_seq=canon_seq,
         human_taxon=getattr(args, "human_taxon", None),
-        weights_path=args.weights,
-        variant=getattr(args, "variant", DEFAULT_VARIANT),
+        **weights_kwargs(args),
         device=device,
         batch_size=getattr(args, "batch_size", None)
     )
@@ -943,8 +911,7 @@ def cmd_filter(args):
     res = run_alignment_filter(
         alignment_path=args.alignment,
         tree_path=args.tree,
-        weights_path=args.weights,
-        model_variant=getattr(args, "variant", DEFAULT_VARIANT),
+        **weights_kwargs(args),
         output_alignment_path=args.output,
         audit_csv_path=args.csv,
         alpha_site=args.alpha_site,
@@ -1017,8 +984,7 @@ def cmd_temporal(args):
         date_col=getattr(args, "date_col", None),
         strain_col=getattr(args, "strain_col", None),
         root_taxon=getattr(args, "root_taxon", None),
-        weights_path=getattr(args, "weights", DEFAULT_WEIGHTS_ENV),
-        variant=getattr(args, "variant", DEFAULT_VARIANT_ENV),
+        **weights_kwargs(args),
         batch_size=getattr(args, "batch_size", None),
         max_species=getattr(args, "max_species", None),
         cpu=getattr(args, "cpu", False),
@@ -1037,8 +1003,7 @@ def cmd_splits(args):
         alignment_path=args.alignment,
         tree_path=getattr(args, "tree", None),
         use_tn93=use_tn93,
-        weights_path=getattr(args, "weights", DEFAULT_WEIGHTS_ENV),
-        variant=getattr(args, "variant", DEFAULT_VARIANT_ENV),
+        **weights_kwargs(args),
         min_clade_size=getattr(args, "min_clade_size", 2),
         max_depth=getattr(args, "max_depth", 10),
         device=None if not getattr(args, "cpu", False) else torch.device("cpu")
@@ -1089,8 +1054,7 @@ def main():
     pred_parser.add_argument("-t", "--tree", required=False, default=None, help="Path to Newick/NEXUS phylogenetic tree (optional if embedded, or if --no-tree/--use-tn93 is set)")
     pred_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93 (alias: --use-tn93)")
     pred_parser.add_argument("--use-tn93", action="store_true", help="Alias for --no-tree: estimate pairwise distances directly from alignment using TN93")
-    pred_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides Hugging Face download). Can also be set via HYPHAEON_WEIGHTS env var.")
-    pred_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from Hugging Face (default: {DEFAULT_VARIANT})")
+    add_weights_args(pred_parser)
     pred_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: adaptive; very large values may be capped to a hardware-safe threshold to prevent GPU OOM)")
     pred_parser.add_argument("-s", "--max-species", type=int, default=None, help="Maximum number of species to include (PD downsampling)")
     pred_parser.add_argument("--no-prune-duplicates", action="store_true", help="Disable automatic collapsing of 100%% identical sequence duplicates")
@@ -1110,8 +1074,7 @@ def main():
     pheno_parser.add_argument("-t", "--tree", default=None, help="Path to Newick/NEXUS phylogenetic tree (optional if embedded, or if --no-tree/--use-tn93 is set)")
     pheno_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93 (alias: --use-tn93)")
     pheno_parser.add_argument("--use-tn93", action="store_true", help="Alias for --no-tree: estimate pairwise distances directly from alignment using TN93")
-    pheno_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides Hugging Face download). Can also be set via HYPHAEON_WEIGHTS env var.")
-    pheno_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from Hugging Face (default: {DEFAULT_VARIANT})")
+    add_weights_args(pheno_parser)
     pheno_parser.add_argument("-p", "--preset", choices=list(PRESETS.keys()), help=f"Curated phenotype preset: {', '.join(PRESETS.keys())}")
     pheno_parser.add_argument("-fg", "--foreground", help="Inline comma-separated list or regex pattern of foreground species")
     pheno_parser.add_argument("-bg", "--background", help="Optional explicit list of background control species")
@@ -1134,8 +1097,7 @@ def main():
     epi_parser.add_argument("-t", "--tree", default=None, help="Path to Newick/NEXUS phylogenetic tree (optional if embedded, or if --no-tree/--use-tn93 is set)")
     epi_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93 (alias: --use-tn93)")
     epi_parser.add_argument("--use-tn93", action="store_true", help="Alias for --no-tree: estimate pairwise distances directly from alignment using TN93")
-    epi_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides Hugging Face download). Can also be set via HYPHAEON_WEIGHTS env var.")
-    epi_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from Hugging Face (default: {DEFAULT_VARIANT})")
+    add_weights_args(epi_parser)
     epi_parser.add_argument("--focal-taxon", help="Focal taxon for in silico Selection DMS sweep (default: auto/consensus)")
     epi_parser.add_argument("--min-sim", type=float, default=0.30, help="Pairwise cosine similarity threshold for co-selection edges")
     epi_parser.add_argument("--min-shared", type=int, default=2, help="Minimum shared mutated phylogenetic branches")
@@ -1158,8 +1120,7 @@ def main():
     dms_parser.add_argument("-t", "--tree", default=None, help="Path to Newick/NEXUS phylogenetic tree (optional if embedded, or if --no-tree/--use-tn93 is set)")
     dms_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93 (alias: --use-tn93)")
     dms_parser.add_argument("--use-tn93", action="store_true", help="Alias for --no-tree: estimate pairwise distances directly from alignment using TN93")
-    dms_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides Hugging Face download). Can also be set via HYPHAEON_WEIGHTS env var.")
-    dms_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from Hugging Face (default: {DEFAULT_VARIANT})")
+    add_weights_args(dms_parser)
     dms_parser.add_argument("--focal-taxon", help="Focal taxon for in silico Selection DMS sweep (default: auto/consensus)")
     dms_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
     dms_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
@@ -1176,8 +1137,7 @@ def main():
         busted_parser.add_argument("--use-tn93", action="store_true", help="Alias for --no-tree: estimate pairwise distances directly from alignment using TN93")
         busted_parser.add_argument("--tree-suffix", default=".raxml.bestTree", help="Suffix to append to alignment filename to locate matching tree (default: .raxml.bestTree)")
         busted_parser.add_argument("--tree-dir", default=None, help="Optional directory containing corresponding phylogenetic trees")
-        busted_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides Hugging Face download). Can also be set via HYPHAEON_WEIGHTS env var.")
-        busted_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from Hugging Face (default: {DEFAULT_VARIANT})")
+        add_weights_args(busted_parser)
         busted_parser.add_argument("-s", "--max-species", type=int, default=512, help="Maximum number of taxa (Farthest-Point Traversal subsampling if exceeded)")
         busted_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: adaptive; very large values may be capped to a hardware-safe threshold to prevent GPU OOM)")
         busted_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
@@ -1190,8 +1150,7 @@ def main():
     disease_parser.add_argument("-m", "--mutations", required=True, help="List of mutations ('R175H,G245S'), CSV file, or Parquet path")
     disease_parser.add_argument("--canonical-seq", default=None, help="Optional canonical human reference sequence or FASTA path")
     disease_parser.add_argument("--human-taxon", default=None, help="Name of human reference taxon in alignment (default: auto-detected)")
-    disease_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides Hugging Face download). Can also be set via HYPHAEON_WEIGHTS env var.")
-    disease_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from Hugging Face (default: {DEFAULT_VARIANT})")
+    add_weights_args(disease_parser)
     disease_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: adaptive; very large values may be capped to a hardware-safe threshold to prevent GPU OOM)")
     disease_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
     disease_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
@@ -1203,8 +1162,7 @@ def main():
     filter_parser.add_argument("-t", "--tree", default=None, help="Path to Newick/NEXUS phylogenetic tree (optional if embedded, or if --no-tree/--use-tn93 is set)")
     filter_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93 (alias: --use-tn93)")
     filter_parser.add_argument("--use-tn93", action="store_true", help="Alias for --no-tree: estimate pairwise distances directly from alignment using TN93")
-    filter_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides Hugging Face download). Can also be set via HYPHAEON_WEIGHTS env var.")
-    filter_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from Hugging Face (default: {DEFAULT_VARIANT})")
+    add_weights_args(filter_parser)
     filter_parser.add_argument("-o", "--output", help="Path to write the cleaned, surgically masked alignment (FASTA format)")
     filter_parser.add_argument("-c", "--csv", help="Optional path to write artifact audit log (CSV format)")
     filter_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: adaptive; very large values may be capped to a hardware-safe threshold to prevent GPU OOM)")
@@ -1245,8 +1203,7 @@ def main():
     temp_parser.add_argument("--sweep-mode", choices=["episodic", "fixation", "auto"], default="auto", help="'episodic': positive velocity max(0,da/dt) (viral turnover). 'fixation': cumulative amplitude shift a(t)-a(t0) (experimental-evolution permanent fixation). 'auto': fixation when --time-units!=years, else episodic (default: auto)")
     temp_parser.add_argument("--keep-duplicates", action="store_true", help="Do not collapse identical longitudinal clones before regression (auto-enabled when --time-units!=years)")
     temp_parser.add_argument("--plot", action="store_true", help="Generate publication-grade 4-panel PDF and PNG figures")
-    temp_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides Hugging Face download). Can also be set via HYPHAEON_WEIGHTS env var.")
-    temp_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from Hugging Face (default: {DEFAULT_VARIANT})")
+    add_weights_args(temp_parser)
     temp_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: adaptive; very large values may be capped to a hardware-safe threshold to prevent GPU OOM)")
     temp_parser.add_argument("-s", "--max-species", type=int, default=None, help="Maximum number of taxa to include")
     temp_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
@@ -1271,8 +1228,7 @@ def main():
     splits_parser.add_argument("-t", "--tree", default=None, help="Path to Newick/NEXUS phylogenetic tree (optional if embedded, or if --no-tree/--use-tn93 is set)")
     splits_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93 (alias: --use-tn93)")
     splits_parser.add_argument("--use-tn93", action="store_true", help="Alias for --no-tree: estimate pairwise distances directly from alignment using TN93")
-    splits_parser.add_argument("-w", "--weights", default=DEFAULT_WEIGHTS_ENV, help="Path to local model weights file (overrides Hugging Face download). Can also be set via HYPHAEON_WEIGHTS env var.")
-    splits_parser.add_argument("--model-variant", dest="variant", default=DEFAULT_VARIANT_ENV, help=f"Model variant to download from Hugging Face (default: {DEFAULT_VARIANT})")
+    add_weights_args(splits_parser)
     splits_parser.add_argument("--min-clade-size", type=int, default=2, help="Minimum clade size to continue recursive bisection (default: 2)")
     splits_parser.add_argument("--max-depth", type=int, default=10, help="Maximum tree hierarchy depth (default: 10)")
     splits_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")

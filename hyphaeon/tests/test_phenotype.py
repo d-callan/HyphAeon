@@ -197,7 +197,7 @@ class TestRunPhenotypeAssociation:
         result = run_phenotype_association(
             alignment_path=fa,
             tree_path=nwk,
-            weights_path=dummy_weights,
+            weights=dummy_weights,
             foreground="homSap*,panTro*,panPan*",
             cpu=True,
         )
@@ -217,7 +217,7 @@ class TestRunPhenotypeAssociation:
         result = run_phenotype_association(
             alignment_path=fa,
             tree_path=nwk,
-            weights_path=dummy_weights,
+            weights=dummy_weights,
             foreground="homSap*,panTro*",
             cpu=True,
         )
@@ -239,7 +239,7 @@ class TestRunPhenotypeAssociation:
         result = run_phenotype_association(
             alignment_path=fa,
             tree_path=nwk,
-            weights_path=dummy_weights,
+            weights=dummy_weights,
             foreground="homSap*,panTro*",
             cpu=True,
         )
@@ -253,7 +253,7 @@ class TestRunPhenotypeAssociation:
             run_phenotype_association(
                 alignment_path=fa,
                 tree_path=nwk,
-                weights_path=dummy_weights,
+                weights=dummy_weights,
                 foreground="zzzNonexistent*",
                 cpu=True,
             )
@@ -358,7 +358,7 @@ class TestPermulations:
         res = run_phenotype_association(
             alignment_path=fa,
             tree_path=nwk,
-            weights_path=dummy_weights,
+            weights=dummy_weights,
             foreground="homSap*,panTro*,panPan*",
             permulations=50,
             cpu=True,
@@ -378,7 +378,7 @@ class TestPermulations:
         res = run_phenotype_association(
             alignment_path=fa,
             tree_path=nwk,
-            weights_path=dummy_weights,
+            weights=dummy_weights,
             foreground="homSap*,panTro*,panPan*",
             n_permutations=100,
             cpu=True,
