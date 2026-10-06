@@ -111,7 +111,7 @@ def test_synthetic_ltee_fixation_sweep(tmp_path):
         alignment_path=str(fa), tree_path=None, use_tn93=True,
         output_prefix=str(tmp_path / "out"), n_permutations=1000,
         time_units="generations", sweep_mode="fixation", cpu=True,
-        weights_path=os.environ.get("HYPHAEON_WEIGHTS"),
+        weights=os.environ.get("HYPHAEON_WEIGHTS"),
     )
     df_sites = res["sites_summary"]
     meta = res.get("metadata", {})

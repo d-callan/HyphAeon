@@ -16,12 +16,13 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 
 from aeon_core.model import PhyloAxialTransformer, decode_soft_ordinal_lrt
+from aeon_core.weights import save_safetensors
 from hyphaeon.training_data import GeneTensorsDataset
 
 
 def load_initial_checkpoint(model, checkpoint_path):
     """Strictly initialize model weights without resuming optimizer state."""
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     if not isinstance(checkpoint, dict):
         raise ValueError(f"Checkpoint must contain a state dictionary: {checkpoint_path}")
     state_dict = checkpoint.get("model_state_dict", checkpoint)
@@ -174,7 +175,20 @@ def main():
                 'loss': loss,
                 'args': vars(args)
             }, ckpt_path)
-            print(f"    [✓] Saved new best model to: {ckpt_path}")
+            # Self-describing safetensors artifact (weights + arch metadata in header).
+            st_path = os.path.join(args.output_dir, "hyphaeon_best.safetensors")
+            save_safetensors(
+                model.state_dict(),
+                st_path,
+                arch={
+                    "embed_dim": args.embed_dim,
+                    "num_layers": args.layers,
+                    "num_heads": args.heads,
+                    "window_size": 1,
+                },
+                metadata={"epoch": str(epoch), "loss": f"{loss:.6f}"},
+            )
+            print(f"    [✓] Saved new best model to: {ckpt_path} (+ {st_path})")
 
 if __name__ == '__main__':
     main()

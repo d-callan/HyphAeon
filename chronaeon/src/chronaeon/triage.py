@@ -601,7 +601,7 @@ class ChronAeonSieve:
         """
         mm2_bin = shutil.which("minimap2")
         if not mm2_bin:
-            raise RuntimeError("minimap2 executable not found on system PATH. Please install minimap2.")
+            raise FileNotFoundError("minimap2 executable not found on system PATH. Please install minimap2.")
 
         aligned_dict = {}
         failed_dict = {}

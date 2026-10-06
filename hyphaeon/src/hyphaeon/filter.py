@@ -31,7 +31,6 @@ from aeon_core.dataset import (
     CODON_TO_AA,
     GENETIC_CODE,
 )
-from aeon_core.weights import resolve_weights_path, DEFAULT_VARIANT
 from aeon_core.inference import get_device, load_model
 from .epistasis import compute_adaptive_safe_batch_size
 
@@ -102,8 +101,8 @@ def scan_hypergeometric_patches(
 def run_alignment_filter(
     alignment_path: str,
     tree_path: Optional[str] = None,
-    weights_path: Optional[str] = None,
-    model_variant: Optional[str] = None,
+    weights: Optional[str] = None,
+    variant: Optional[str] = None,
     output_alignment_path: Optional[str] = None,
     audit_csv_path: Optional[str] = None,
     alpha_site: float = 0.05,
@@ -127,7 +126,7 @@ def run_alignment_filter(
     t_start = time.time()
 
     # 1. Load model
-    model = load_model(weights=weights_path, variant=model_variant, device=device)
+    model = load_model(weights=weights, variant=variant, device=device)
     
     # 2. Load Alignment and Tree
     c_tensor, a_tensor, d_mat, z_coords, inv_mask, taxa, L = load_alignment_and_tree(

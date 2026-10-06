@@ -297,7 +297,7 @@ class TestRunEpistaticAnalysis:
         result = run_epistatic_analysis(
             alignment_path=fa,
             tree_path=nwk,
-            weights_path=dummy_weights,
+            weights=dummy_weights,
             cpu=True,
             skip_dms=False,
         )
@@ -316,7 +316,7 @@ class TestRunEpistaticAnalysis:
         result = run_epistatic_analysis(
             alignment_path=fa,
             tree_path=nwk,
-            weights_path=dummy_weights,
+            weights=dummy_weights,
             cpu=True,
             skip_dms=True,
         )
@@ -328,7 +328,7 @@ class TestRunEpistaticAnalysis:
         result = run_epistatic_analysis(
             alignment_path=fa,
             tree_path=nwk,
-            weights_path=dummy_weights,
+            weights=dummy_weights,
             cpu=True,
         )
         for p in result["plasticity"]:

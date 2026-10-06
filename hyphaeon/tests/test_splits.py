@@ -182,7 +182,7 @@ class TestRunSpectralSplits:
         res = run_spectral_splits(
             alignment_path=fasta_file,
             tree_path=newick_file,
-            weights_path=dummy_weights,
+            weights=dummy_weights,
             device="cpu"
         )
         assert isinstance(res, dict)
@@ -204,7 +204,7 @@ class TestRunSpectralSplits:
         res = run_spectral_splits(
             alignment_path=fasta_file,
             use_tn93=True,
-            weights_path=dummy_weights,
+            weights=dummy_weights,
             device="cpu"
         )
         assert "newick" in res
@@ -220,7 +220,7 @@ class TestRunSpectralSplits:
         if not os.path.exists(fa) or not os.path.exists(nwk):
             pytest.skip("bat_oas1 example files not found")
 
-        res = run_spectral_splits(fa, tree_path=nwk, weights_path=real_weights_path)
+        res = run_spectral_splits(fa, tree_path=nwk, weights=real_weights_path)
         assert "newick" in res
         assert res["eigengap"] > 0.0
 
@@ -242,7 +242,7 @@ class TestRunSpectralSplits:
         if not os.path.exists(fa):
             pytest.skip("bat_oas1.fasta not found")
 
-        res = run_spectral_splits(fa, use_tn93=True, weights_path=real_weights_path)
+        res = run_spectral_splits(fa, use_tn93=True, weights=real_weights_path)
         assert "newick" in res
 
         yin = {"M_lyra", "H_arm", "R_sin", "R_ferr", "P_gig", "P_vamp", "P_alec", "R_aeg"}

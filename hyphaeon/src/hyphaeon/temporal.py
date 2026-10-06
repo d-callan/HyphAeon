@@ -214,7 +214,7 @@ def run_temporal_surveillance(
     date_col: Optional[str] = None,
     strain_col: Optional[str] = None,
     root_taxon: Optional[str] = None,
-    weights_path: Optional[str] = None,
+    weights: Optional[str] = None,
     variant: Optional[str] = None,
     batch_size: Optional[int] = None,
     max_species: Optional[int] = None,
@@ -250,7 +250,7 @@ def run_temporal_surveillance(
     print("=" * 85)
 
     # 1. Load Model
-    model = load_model(weights=weights_path, variant=variant, device=device)
+    model = load_model(weights=weights, variant=variant, device=device)
     model.eval()
 
     # 2. Alignment and Tree Preparation

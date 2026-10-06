@@ -13,7 +13,7 @@ import numpy as np
 import torch
 
 from .model import PhyloAxialTransformer
-from .weights import resolve_weights_path, load_arch_config, load_weights
+from .weights import load_checkpoint
 from .dataset import load_alignment_and_tree
 
 
@@ -162,20 +162,41 @@ def load_model(weights=None, variant=None, device=None, strict=False):
     """Load a PhyloAxialTransformer from weights path or HuggingFace variant.
 
     Returns an eval-mode model on the specified device.
+
+    strict=False is deliberate (unified checkpoints may omit heads for
+    other tasks), but the key diff from load_state_dict is inspected: ANY
+    missing keys — including lrt_ordinal_head.*, which head-dependent
+    commands decode their primary output from — or any unexpected keys
+    warn loudly, since they mean the checkpoint doesn't match the model
+    and inference output would be garbage (a missing head decodes from
+    random-init parameters).
     """
     if device is None:
         device = get_device()
 
-    weights_path = resolve_weights_path(weights=weights, variant=variant)
-    config = load_arch_config(weights=weights, variant=variant)
+    weights_path, config, state_dict = load_checkpoint(
+        weights=weights, variant=variant, map_location=device)
     model = PhyloAxialTransformer(
         embed_dim=config['embed_dim'],
         num_layers=config['num_layers'],
         num_heads=config['num_heads'],
         window_size=config['window_size'],
     ).to(device)
-    state_dict = load_weights(weights=weights_path, variant=variant, map_location=device)
-    model.load_state_dict(state_dict, strict=strict)
+    result = model.load_state_dict(state_dict, strict=strict)
+    if not strict:
+        missing = list(result.missing_keys)
+        # Extra 'head_*' keys are other task heads in a unified checkpoint —
+        # the standalone backbone legitimately ignores them.
+        unexpected = [k for k in result.unexpected_keys
+                      if not k.startswith("head_")]
+        if missing or unexpected:
+            print(f"[!] Weight key mismatch for {weights_path}: "
+                  f"{len(missing)} missing key(s) "
+                  f"(e.g. {missing[:3]}), "
+                  f"{len(unexpected)} unexpected key(s) "
+                  f"(e.g. {unexpected[:3]}). "
+                  f"The checkpoint does not match the model — "
+                  f"results will be unreliable.")
     model.eval()
     return model
 

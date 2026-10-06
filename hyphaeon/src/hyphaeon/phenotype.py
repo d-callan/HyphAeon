@@ -33,14 +33,7 @@ from aeon_core.dataset import (
 from aeon_core.model import PhyloAxialTransformer
 from aeon_core.stats import cauchy_combination_p, benjamini_hochberg
 from aeon_core.inference import get_device, load_model
-from aeon_core.weights import (
-    load_weights,
-    load_arch_config,
-    resolve_weights_path,
-    DEFAULT_VARIANT
-)
 
-DEFAULT_WEIGHTS = "weights/hyphaeon_v1.pt"
 from .epistasis import compute_transformer_attributions
 
 REV_AA_MAP = {v: k for k, v in AA_MAP.items()}
@@ -375,7 +368,7 @@ def generate_permulations(
 def run_phenotype_association(
     alignment_path: str,
     tree_path: Optional[str] = None,
-    weights_path: Optional[str] = DEFAULT_WEIGHTS,
+    weights: Optional[str] = None,
     variant: Optional[str] = None,
     preset: Optional[str] = None,
     foreground: Optional[Union[str, List[str]]] = None,
@@ -432,7 +425,7 @@ def run_phenotype_association(
         raise ValueError(f"Insufficient foreground taxa ({fg_count}) matching criteria among {N} taxa.")
 
     # 4. Load Neural Architecture and Pretrained Weights
-    model = load_model(weights=weights_path, variant=variant, device=device)
+    model = load_model(weights=weights, variant=variant, device=device)
     tree_cache = model.precompute_tree_cache(d_mat.to(device), z_coords.to(device))
 
     # 5. Extract Transformer Phylogenetic Attributions
