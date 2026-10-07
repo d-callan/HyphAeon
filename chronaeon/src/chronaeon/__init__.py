@@ -45,7 +45,7 @@ from .alignment import (
     ReferenceGuidedCodonThreader,
 )
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 __all__ = [
     "run_mrca_dating", "run_ols_dating", "run_pgls_dating",
     "run_restricted_spline_clock_dating", "run_powerlaw_clock_dating",

@@ -7,6 +7,10 @@ on:
       - "hyphaeon-v*"
       - "chronaeon-v*"
 
+permissions:
+  contents: read
+  id-token: write  # mints the OIDC token gh-action-pypi-publish exchanges with PyPI
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -26,9 +30,25 @@ jobs:
           elif [[ "$TAG" == chronaeon-v* ]]; then
             echo "dir=chronaeon" >> $GITHUB_OUTPUT
           fi
-      - name: Build and publish
+          echo "tag_version=${TAG##*-v}" >> $GITHUB_OUTPUT
+      - name: Verify tag matches pyproject version
+        run: |
+          cd ${{ steps.pkg.outputs.dir }}
+          PKG_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$PKG_VERSION" != "${{ steps.pkg.outputs.tag_version }}" ]; then
+            echo "::error::Tag version '${{ steps.pkg.outputs.tag_version }}' does not match pyproject.toml version '$PKG_VERSION'"
+            exit 1
+          fi
+      - name: Build and check distribution
         run: |
           pip install build twine
           cd ${{ steps.pkg.outputs.dir }}
           python -m build
-          twine upload dist/* -u __token__ -p ${{ secrets.PYPI_API_TOKEN }}
+          twine check dist/*
+      - name: Upload to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: ${{ steps.pkg.outputs.dir }}/dist
+        # Publishes via OIDC trusted publishing — no PYPI_API_TOKEN secret.
+        # Requires a trusted publisher registered on each PyPI project for
+        # this repo + workflow filename (done 2026-10-07).

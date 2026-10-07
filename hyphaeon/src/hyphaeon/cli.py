@@ -20,7 +20,11 @@ import scipy.stats as stats
 import torch
 import networkx as nx
 
-_IS_DEV = (Path(__file__).resolve().parent.parent / ".git").exists() or \
+# Dev subcommands (busted, evaluate) are only exposed in a monorepo checkout:
+# parents[3] climbs src/hyphaeon/<pkg>/cli.py -> the repo root where .git lives.
+# Installed wheels land in site-packages so the probe is False for end users;
+# HYPHAEON_DEV remains as an explicit override.
+_IS_DEV = (Path(__file__).resolve().parents[3] / ".git").exists() or \
           os.environ.get("HYPHAEON_DEV", "0").lower() in ("1", "true")
 
 from aeon_core.model import PhyloAxialTransformer, BustedMultiTaskHead
@@ -410,8 +414,7 @@ def cmd_busted(args):
                 use_tn93=use_tn93
             )
         except Exception as e:
-            if not is_batch:
-                print(f"[!] Error loading {aln_path}: {e}")
+            print(f"[!] Error loading {aln_path}: {e}")
             continue
 
         variable_indices = np.where(~inv)[0]

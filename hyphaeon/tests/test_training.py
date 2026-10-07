@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from pathlib import Path
 import subprocess
 import sys
 
@@ -194,10 +195,13 @@ def test_training_cli_runs_two_epochs_from_checkpoint(tmp_path):
     checkpoint = tmp_path / "initial.pt"
     torch.save({"model_state_dict": model.state_dict()}, checkpoint)
 
+    # Resolve via this file so the subprocess works from any cwd
+    # (parents[2] = monorepo root).
+    train_script = Path(__file__).resolve().parents[2] / "training" / "train.py"
     result = subprocess.run(
         [
             sys.executable,
-            "training/train.py",
+            str(train_script),
             "--data_dir",
             str(data_dir),
             "--init_checkpoint",

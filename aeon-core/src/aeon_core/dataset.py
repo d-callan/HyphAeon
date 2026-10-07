@@ -784,7 +784,7 @@ def compute_tn93_distance_matrix(
         except ImportError:
             raise ImportError(
                 "The 'tn93' tool or python package is required to skip the tree and compute TN93 distances. "
-                "Please install it via 'pip install tn93' or 'pip install hyphaeon[tn93]' "
+                "Please install it via 'pip install tn93' or 'pip install hyphaeon-core[tn93]' "
                 "(or install the tn93 binary from https://github.com/veg/tn93)."
             )
 
@@ -888,7 +888,9 @@ def compute_tn93_cross_distance_matrix(
                     dist_mat[i, j] = float(d)
         except ImportError:
             raise ImportError(
-                "The 'tn93' tool or python package is required to compute TN93 distances."
+                "The 'tn93' tool or python package is required to compute TN93 distances. "
+                "Please install it via 'pip install tn93' or 'pip install hyphaeon-core[tn93]' "
+                "(or install the tn93 binary from https://github.com/veg/tn93)."
             )
 
     # Fill self-distances

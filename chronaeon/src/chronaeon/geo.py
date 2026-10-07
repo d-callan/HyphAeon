@@ -204,8 +204,9 @@ def build_or_load_tree(
 
         if fasttree_bin:
             tmp_tree = Path(alignment_path).with_suffix(".fasttree.nwk")
-            cmd = f"{fasttree_bin} -nt -gtr {alignment_path} > {tmp_tree}"
-            subprocess.run(cmd, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            with open(tmp_tree, "w") as tree_out:
+                subprocess.run([fasttree_bin, "-nt", "-gtr", str(alignment_path)],
+                               check=True, stdout=tree_out, stderr=subprocess.DEVNULL)
             tree = Phylo.read(str(tmp_tree), "newick")
             if tmp_tree.exists():
                 tmp_tree.unlink()
