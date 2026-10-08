@@ -1,3 +1,11 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/rhizaeon_emblem_dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/rhizaeon_emblem.png">
+    <img alt="RhizAeon Continuous Metric Manifold Recombination Engine" src="docs/assets/rhizaeon_emblem.png" width="500">
+  </picture>
+</p>
+
 # RhizAeon: Ultra-Fast Physical Attention Force Field Recombination Engine
 
 [![Rust](https://img.shields.io/badge/rust-1.80%2B-orange.svg)](https://www.rust-lang.org)
