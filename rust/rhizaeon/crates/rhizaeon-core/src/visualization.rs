@@ -285,6 +285,7 @@ pub fn generate_visualization_dossier(
                     lineage,
                     color: meta.color.clone(),
                     is_plateau: None,
+                    breakpoint_id: None,
                 }],
             );
         } else {
@@ -308,6 +309,7 @@ pub fn generate_visualization_dossier(
                     .unwrap_or_else(|| "#d55e00".to_string());
 
                 let bp_5p = breakpoints.iter().find(|b| &b.recombinant == t && b.breakpoint_nt == ev.u1);
+                let bp_5p_id = bp_5p.map(|b| b.breakpoint_id.clone());
                 let ci_l_5p = bp_5p.map(|b| b.ci_left).unwrap_or(ev.u1.saturating_sub(5).max(1)).max(curr);
                 let ci_r_5p = bp_5p.map(|b| b.ci_right).unwrap_or((ev.u1 + 5).min(l)).min(ev.u2);
 
@@ -319,6 +321,7 @@ pub fn generate_visualization_dossier(
                         lineage: format!("Parent: {}", home_name),
                         color: home_col.clone(),
                         is_plateau: None,
+                        breakpoint_id: None,
                     });
                 }
 
@@ -330,6 +333,7 @@ pub fn generate_visualization_dossier(
                     lineage: format!("Breakpoint 5' [nt {}, Δ={} nt]", ev.u1, plat_5p_w),
                     color: "#fbbf24".to_string(), // Yellow
                     is_plateau: Some(true),
+                    breakpoint_id: bp_5p_id.clone(),
                 });
 
                 if ev.is_crossover {
@@ -340,12 +344,14 @@ pub fn generate_visualization_dossier(
                             lineage: format!("Donor: {}", donor_display),
                             color: donor_col,
                             is_plateau: None,
+                            breakpoint_id: bp_5p_id.clone(),
                         });
                     }
                     curr = l + 1;
                     break;
                 } else {
                     let bp_3p = breakpoints.iter().find(|b| &b.recombinant == t && b.breakpoint_nt == ev.u2);
+                    let bp_3p_id = bp_3p.map(|b| b.breakpoint_id.clone());
                     let tract_st = (ci_r_5p + 1).min(ev.u2);
                     let ci_l_3p = bp_3p.map(|b| b.ci_left).unwrap_or(ev.u2.saturating_sub(5).max(1)).max(tract_st);
                     let ci_r_3p = bp_3p.map(|b| b.ci_right).unwrap_or((ev.u2 + 5).min(l));
@@ -358,6 +364,7 @@ pub fn generate_visualization_dossier(
                             lineage: format!("Donor: {}", donor_display),
                             color: donor_col,
                             is_plateau: None,
+                            breakpoint_id: bp_5p_id.clone(),
                         });
                     }
 
@@ -369,6 +376,7 @@ pub fn generate_visualization_dossier(
                         lineage: format!("Breakpoint 3' [nt {}, Δ={} nt]", ev.u2, plat_3p_w),
                         color: "#fbbf24".to_string(), // Yellow
                         is_plateau: Some(true),
+                        breakpoint_id: bp_3p_id,
                     });
 
                     curr = ci_r_3p + 1;
@@ -383,6 +391,7 @@ pub fn generate_visualization_dossier(
                     lineage: format!("Parent: {}", home_name),
                     color: home_col,
                     is_plateau: None,
+                    breakpoint_id: None,
                 });
             }
 

@@ -699,10 +699,29 @@
     </div>
   </div>
 
-  <!-- LEVEL 6: Breakpoint Inventory Table -->
+  <!-- LEVEL 6: Phylogenetic Verification (NJ Trees) -->
+  <div class="panel" id="panel-nj-trees">
+    <div class="panel-header">
+      <span>6 &middot; Phylogenetic Verification (Midpoint-Rooted NJ Trees)</span>
+    </div>
+    <div class="panel-body">
+      <div class="subspaces-grid">
+        <div class="subspace-box">
+          <h4 id="tree-p1-title" style="font-size:12px; color:var(--cyan); font-weight:600;">Background Tree (Outside Tract)</h4>
+          <div class="subspace-canvas-wrapper" style="height:250px;"><canvas id="canvas-tree-p1"></canvas></div>
+        </div>
+        <div class="subspace-box">
+          <h4 id="tree-p2-title" style="font-size:12px; color:var(--purple); font-weight:600;">Recombinant Tract Tree</h4>
+          <div class="subspace-canvas-wrapper" style="height:250px;"><canvas id="canvas-tree-p2"></canvas></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LEVEL 7: Breakpoint Inventory Table -->
   <div class="panel" id="panel-inventory">
     <div class="panel-header">
-      <span>6 &middot; Recombination Breakpoint &amp; Crossover Inventory Table</span>
+      <span>7 &middot; Recombination Breakpoint &amp; Crossover Inventory Table</span>
       <span style="font-size:11px; font-weight:normal; color:var(--text-muted)">Click [Inspect] on any event to focus and jump</span>
     </div>
     <div class="panel-body" style="padding:0">
@@ -833,6 +852,196 @@ __RHIZAEON_DATA_JSON__
 
       // Setup Canvas with Retina scaling
       function setupCanvas(canvas) {
+function computeDistanceMatrix(spans, taxaList, sequences, L_TOTAL) {
+    const N = taxaList.length;
+    const D = [];
+    for (let i = 0; i < N; i++) D[i] = new Float64Array(N);
+
+    for (let i = 0; i < N; i++) {
+        const seq_i = sequences[taxaList[i]];
+        for (let j = i + 1; j < N; j++) {
+            const seq_j = sequences[taxaList[j]];
+            let diffs = 0, valid = 0;
+            for (const [s0, s1] of spans) {
+                const start = Math.max(0, s0 - 1);
+                const end = Math.min(L_TOTAL, s1);
+                for (let k = start; k < end; k++) {
+                    const c1 = seq_i[k];
+                    const c2 = seq_j[k];
+                    if (c1 !== '-' && c2 !== '-') {
+                        valid++;
+                        if (c1 !== c2) diffs++;
+                    }
+                }
+            }
+            const dist = valid > 0 ? diffs / valid : 0;
+            D[i][j] = dist;
+            D[j][i] = dist;
+        }
+    }
+    return D;
+}
+
+function neighborJoining(D, taxaNames) {
+    let n = D.length;
+    if (n === 0) return null;
+    if (n === 1) return { id: 0, name: taxaNames[0], isLeaf: true, edgeLength: 0 };
+    
+    let nodes = taxaNames.map((name, i) => ({ id: i, name, left: null, right: null, edgeLength: 0, isLeaf: true }));
+    let active = nodes.map((_, i) => i);
+    let dist = D.map(row => [...row]);
+    let nextId = n;
+
+    while (active.length > 2) {
+        let numActive = active.length;
+        let r = new Float64Array(nextId);
+        for (let i = 0; i < numActive; i++) {
+            let sum = 0;
+            for (let j = 0; j < numActive; j++) {
+                if (i !== j) sum += dist[active[i]][active[j]];
+            }
+            r[active[i]] = sum / (numActive - 2);
+        }
+
+        let minQ = Infinity;
+        let minI = -1, minJ = -1;
+        for (let i = 0; i < numActive; i++) {
+            for (let j = i + 1; j < numActive; j++) {
+                let u = active[i];
+                let v = active[j];
+                let q = dist[u][v] - r[u] - r[v];
+                if (q < minQ) {
+                    minQ = q; minI = i; minJ = j;
+                }
+            }
+        }
+
+        let u = active[minI];
+        let v = active[minJ];
+        let distUV = dist[u][v];
+
+        let distToU = distUV / 2 + (r[u] - r[v]) / 2;
+        let distToV = distUV - distToU;
+        if (distToU < 0) distToU = 0;
+        if (distToV < 0) distToV = 0;
+
+        let newNode = { id: nextId++, left: nodes[u], right: nodes[v], edgeLength: 0, isLeaf: false };
+        nodes[u].edgeLength = distToU;
+        nodes[v].edgeLength = distToV;
+        nodes.push(newNode);
+
+        dist[newNode.id] = [];
+        for (let i = 0; i < numActive; i++) {
+            if (i !== minI && i !== minJ) {
+                let w = active[i];
+                let d = (dist[u][w] + dist[v][w] - distUV) / 2;
+                if (d < 0) d = 0;
+                dist[newNode.id][w] = d;
+                dist[w][newNode.id] = d;
+            }
+        }
+        active = active.filter((_, idx) => idx !== minI && idx !== minJ);
+        active.push(newNode.id);
+    }
+
+    let root = { id: nextId++, left: nodes[active[0]], right: nodes[active[1]], edgeLength: 0, isLeaf: false };
+    let remainingDist = dist[active[0]][active[1]];
+    nodes[active[0]].edgeLength = remainingDist / 2;
+    nodes[active[1]].edgeLength = remainingDist / 2;
+    nodes.push(root);
+
+    return root;
+}
+
+function drawRectangularTree(canvas, root, taxaList, state, metaData) {
+    if (!root) return;
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    const width = rect.width;
+    const height = rect.height;
+    ctx.clearRect(0, 0, width, height);
+
+    // Calculate depths
+    function calcDepth(node) {
+        if (!node) return 0;
+        if (node.isLeaf) {
+            node.totalDepth = node.edgeLength || 0;
+            return node.totalDepth;
+        }
+        let dl = calcDepth(node.left);
+        let dr = calcDepth(node.right);
+        node.totalDepth = Math.max(dl, dr) + (node.edgeLength || 0);
+        return node.totalDepth;
+    }
+    let maxDepth = calcDepth(root);
+    if (maxDepth === 0) maxDepth = 1;
+
+    // Assign Y coordinates to leaves
+    let leavesCount = 0;
+    function countLeaves(node) {
+        if (!node) return;
+        if (node.isLeaf) leavesCount++;
+        countLeaves(node.left);
+        countLeaves(node.right);
+    }
+    countLeaves(root);
+
+    let yStep = (height - 40) / Math.max(1, leavesCount - 1);
+    let currentY = 20;
+
+    function assignY(node) {
+        if (node.isLeaf) {
+            node.y = currentY;
+            currentY += yStep;
+            return node.y;
+        }
+        let yl = assignY(node.left);
+        let yr = assignY(node.right);
+        node.y = (yl + yr) / 2;
+        return node.y;
+    }
+    assignY(root);
+
+    let startX = 20;
+    let endX = width - 100;
+
+    function renderNode(node, pX, pY) {
+        let x = pX + ((node.edgeLength || 0) / maxDepth) * (endX - startX);
+        
+        ctx.beginPath();
+        ctx.moveTo(pX, pY);
+        ctx.lineTo(pX, node.y);
+        ctx.lineTo(x, node.y);
+        ctx.strokeStyle = '#64748b';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        if (node.isLeaf) {
+            let isFocal = (node.name === state.focalTaxon);
+            let isP1 = (node.name === state.p1Taxon);
+            let isP2 = (node.name === state.p2Taxon);
+            let meta = metaData[node.name] || { color: '#64748b' };
+            
+            ctx.beginPath();
+            ctx.arc(x, node.y, 4, 0, 2*Math.PI);
+            ctx.fillStyle = isFocal ? '#a855f7' : (isP1 ? '#d55e00' : (isP2 ? '#0072b2' : meta.color));
+            ctx.fill();
+
+            ctx.fillStyle = ctx.fillStyle;
+            ctx.font = isFocal ? 'bold 10px monospace' : '9px monospace';
+            ctx.fillText(node.name, x + 8, node.y + 3);
+        } else {
+            renderNode(node.left, x, node.y);
+            renderNode(node.right, x, node.y);
+        }
+    }
+    renderNode(root.left, startX, root.y);
+    renderNode(root.right, startX, root.y);
+}
         const rect = canvas.getBoundingClientRect();
         const dpr = window.devicePixelRatio || 1;
         canvas.width = rect.width * dpr;
@@ -1242,6 +1451,16 @@ __RHIZAEON_DATA_JSON__
             if (seg.is_plateau) {
               segDiv.style.border = '1px dashed #fbbf24';
               segDiv.style.boxShadow = '0 0 6px rgba(245,158,11,0.5)';
+            }
+            if (seg.breakpoint_id) {
+              segDiv.style.cursor = 'pointer';
+              segDiv.onclick = (e) => {
+                e.stopPropagation();
+                const bp = DATA.breakpoints.find(b => b.breakpoint_id === seg.breakpoint_id);
+                if (bp) {
+                  inspectEvent(bp.breakpoint_id, bp.recombinant, bp.parent_1, bp.parent_2, bp.ci_left, bp.ci_right);
+                }
+              };
             }
             segDiv.title = `${t}: ${seg.lineage} [nt ${seg.start} – ${seg.end}]`;
             bar.appendChild(segDiv);
@@ -1763,9 +1982,11 @@ __RHIZAEON_DATA_JSON__
             <td>${b.kinetic_z.toFixed(2)}</td>
             <td>${b.l_pir.toFixed(4)}</td>
             <td>
-              <button class="btn btn-outline" onclick="inspectEvent('${b.breakpoint_id}', '${b.recombinant}', '${b.parent_1}', '${b.parent_2}', ${b.ci_left}, ${b.ci_right})" style="padding:2px 7px; font-size:10px;">Inspect</button>
+              <button class="btn btn-outline" style="padding:2px 7px; font-size:10px;">Inspect</button>
             </td>
           `;
+          tr.style.cursor = 'pointer';
+          tr.onclick = () => inspectEvent(b.breakpoint_id, b.recombinant, b.parent_1, b.parent_2, b.ci_left, b.ci_right);
           inventoryTableBody.appendChild(tr);
         });
       }
@@ -1826,11 +2047,63 @@ __RHIZAEON_DATA_JSON__
 
       window.setFocalTaxon = setFocalTaxon;
 
+      function renderTrees() {
+        const myBps = DATA.breakpoints.filter(b => b.recombinant === state.focalTaxon);
+        if (myBps.length === 0) {
+            // Just draw one whole tree
+            const D = computeDistanceMatrix([[1, L_TOTAL]], DATA.taxa, DATA.sequences, L_TOTAL);
+            const root = neighborJoining(D, DATA.taxa);
+            drawRectangularTree(document.getElementById('canvas-tree-p1'), root, DATA.taxa, state, DATA.taxa_meta);
+            drawRectangularTree(document.getElementById('canvas-tree-p2'), root, DATA.taxa, state, DATA.taxa_meta);
+            return;
+        }
+
+        const activeBp = myBps.find(b => b.breakpoint_id === state.activeBpId) || myBps[0];
+        
+        let u1 = activeBp.ci_left;
+        let u2 = activeBp.ci_right;
+        
+        // Find if there is a 3' partner if this is a 5' BP
+        if (activeBp.breakpoint_id.includes("5'")) {
+            const partnerId = activeBp.breakpoint_id.replace("5'", "3'");
+            const partner = myBps.find(b => b.breakpoint_id === partnerId);
+            if (partner) {
+                u2 = partner.ci_right;
+            } else {
+                u2 = L_TOTAL;
+            }
+        } else if (activeBp.breakpoint_id.includes("3'")) {
+            const partnerId = activeBp.breakpoint_id.replace("3'", "5'");
+            const partner = myBps.find(b => b.breakpoint_id === partnerId);
+            if (partner) {
+                u1 = partner.ci_left;
+            } else {
+                u1 = 1;
+            }
+        } else {
+            // Crossover
+            u2 = L_TOTAL;
+        }
+
+        const tractSpans = [[u1, u2]];
+        const bgSpans = [[1, Math.max(1, u1 - 1)], [Math.min(L_TOTAL, u2 + 1), L_TOTAL]];
+
+        const D_tract = computeDistanceMatrix(tractSpans, DATA.taxa, DATA.sequences, L_TOTAL);
+        const root_tract = neighborJoining(D_tract, DATA.taxa);
+        
+        const D_bg = computeDistanceMatrix(bgSpans, DATA.taxa, DATA.sequences, L_TOTAL);
+        const root_bg = neighborJoining(D_bg, DATA.taxa);
+
+        drawRectangularTree(document.getElementById('canvas-tree-p1'), root_bg, DATA.taxa, state, DATA.taxa_meta);
+        drawRectangularTree(document.getElementById('canvas-tree-p2'), root_tract, DATA.taxa, state, DATA.taxa_meta);
+      }
+
       function refreshAll() {
         renderMinimap();
         renderSignals();
         renderBaseBrowser();
         renderSubspaces();
+        renderTrees();
       }
 
       // Minimap Brush Drag, Resize & Stationary Click-to-Center
