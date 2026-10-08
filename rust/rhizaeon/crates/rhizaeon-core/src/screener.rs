@@ -307,8 +307,6 @@ impl LocalFluxScreener {
         let thresh_v = med_v + z_crit_ev * scale_v;
         let thresh_pulse = med_pulse + z_crit_ev * scale_pulse;
 
-        // eprintln!("DEBUG SCREENER: thresh_v={}, thresh_pulse={}", thresh_v, thresh_pulse);
-        // for i in 0..n { eprintln!("DEBUG TAXON {}: v_cont={}, pulse={}", i, v_cont[i], cont_pulse[i]); }
         let mut candidate_mask = vec![false; n];
         for &i in &pool_indices {
             if v_cont[i] > thresh_v || cont_pulse[i] > thresh_pulse || is_ghost_candidate[i] {
@@ -350,12 +348,17 @@ impl LocalFluxScreener {
         }
 
         // Pervasive Recombination Admission Sieve (DIR-RHIZ-PAFF-013.3 Requirement 2)
-        let contemporary_cand_count = candidate_mask.iter().filter(|&&c| c).count();
-        if contemporary_cand_count == 0 && !pool_indices.is_empty() {
+        // In cohorts with pervasive recombination (e.g. viral swarms, potyviruses, CRFs),
+        // the cohort-wide variance is orders of magnitude above the clonal floor (mean_v >= 10.0).
+        // In this regime, median-based outlier thresholds suffer from breakdown point masking.
+        // We admit all non-burst taxa whose local variance or pulse exceeds the clonal floor.
+        if !pool_indices.is_empty() {
             let mean_v_cohort: f64 = pool_v.iter().sum::<f64>() / (pool_v.len().max(1) as f64);
-            if mean_v_cohort >= 1.50 {
+            let max_v = pool_v.iter().cloned().fold(0.0f64, f64::max);
+            let disp_ratio = max_v / med_v.max(1e-6);
+            if mean_v_cohort >= 10.0 || (disp_ratio <= 4.0 && med_v >= 5.0) {
                 for &i in &pool_indices {
-                    if v_cont[i] >= med_v || cont_pulse[i] >= 15.0 {
+                    if !is_rate_burst[i] && (v_cont[i] >= 10.0 || cont_pulse[i] >= 15.0) {
                         candidate_mask[i] = true;
                     }
                 }

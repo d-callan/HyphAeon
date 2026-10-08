@@ -101,13 +101,13 @@ impl RhizAeonEngine {
             &b_prior,
             &root_seq,
         );
-        let d_att = t0_att.elapsed();
+        let _d_att = t0_att.elapsed();
 
         // 5. Pass 1 Screener
         let t0_scr = std::time::Instant::now();
         let screener = LocalFluxScreener::new();
         let screening = screener.screen(&f_tensor, &c_tensor, &aln, &landmarks);
-        let d_scr = t0_scr.elapsed();
+        let _d_scr = t0_scr.elapsed();
 
         if screening.is_non_recombinant_h0 {
             return ScanResult {
@@ -156,12 +156,6 @@ impl RhizAeonEngine {
                     num_channels,
                 );
                 time_deconvolve += t0.elapsed();
-                if cand_idx == 64 {
-                    for t in &tracts {
-                        eprintln!("CAND 64 RAW TRACT: pair (h={}, d={}) -> [{}-{}] z={}",
-                            pair.home_channel, pair.donor_channel, t.u1_discrete, t.u2_discrete, t.z_phys);
-                    }
-                }
                 candidate_tracts.extend(tracts);
             }
 
@@ -195,8 +189,6 @@ impl RhizAeonEngine {
                         event.u2 += u_offset;
                         event.u1_continuous += u_offset as f64;
                         event.u2_continuous += u_offset as f64;
-                        eprintln!("RAW VERIFIED EVENT: cand={} ({}), home={}, donor={}, [{}-{}]",
-                            event.candidate_idx, event.candidate_name, event.home_name, event.donor_name, event.u1, event.u2);
                         verified_events.push(event);
                     }
                 }
@@ -218,17 +210,8 @@ impl RhizAeonEngine {
         // Adjudicate reticulation graph (DIR-RHIZ-PAFF-013.1)
         let t0_adj = std::time::Instant::now();
         let verified_events = due_diligence.adjudicate_reticulation_graph(verified_events, &raw_aln, &screening);
-        let d_adj = t0_adj.elapsed();
-        let d_cand_total = t0_cand.elapsed();
-
-        eprintln!("PROFILING BREAKDOWN:");
-        eprintln!("  Attention:      {:?}", d_att);
-        eprintln!("  Screening:      {:?}", d_scr);
-        eprintln!("  Candidate Total:{:?}", d_cand_total);
-        eprintln!("    Deconvolve:   {:?}", time_deconvolve);
-        eprintln!("    Localized:    {:?}", time_localized);
-        eprintln!("    Verify Tract: {:?}", time_verify);
-        eprintln!("  Adjudication:   {:?}", d_adj);
+        let _d_adj = t0_adj.elapsed();
+        let _d_cand_total = t0_cand.elapsed();
 
         let is_h0 = verified_events.is_empty();
 

@@ -445,6 +445,22 @@ impl SequenceDueDiligence {
                     continue;
                 }
 
+                // Mutual cycle adjudication requires the two events to be homologous in genomic space:
+                // either overlapping tracts (for cassettes/conversions) or complementary partitions (for crossovers).
+                let ov_start = e1.u1.max(e2.u1);
+                let ov_end = e1.u2.min(e2.u2);
+                let overlap = if ov_end >= ov_start { ov_end - ov_start + 1 } else { 0 };
+                let min_len = (e1.u2.saturating_sub(e1.u1) + 1).min(e2.u2.saturating_sub(e2.u1) + 1);
+
+                let is_overlapping = (overlap as f64) >= 0.25 * (min_len as f64);
+                let is_complementary_crossover = (e1.is_crossover || e1.u1 <= 5 || e1.u2 >= _aln.length.saturating_sub(5))
+                    && (e2.is_crossover || e2.u1 <= 5 || e2.u2 >= _aln.length.saturating_sub(5))
+                    && (e1.u2.abs_diff(e2.u1) <= 10 || e2.u2.abs_diff(e1.u1) <= 10);
+
+                if !is_overlapping && !is_complementary_crossover {
+                    continue;
+                }
+
                 // Check if e1 cites c2 (as Home or Donor)
                 let e1_cites_c2 = (e1.home_idx == Some(c2)) || (e1.donor_idx == Some(c2));
                 // Check if e2 cites c1 (as Home or Donor)
@@ -517,57 +533,6 @@ impl SequenceDueDiligence {
                 }
             }
         }
-        }
-
-        // Pass 2: Iterative Recombinant Donor & Home Pruning
-        // Eliminate spurious events that cite confirmed recombinant children as their Donor or Home.
-        let mut changed = true;
-        while changed {
-            changed = false;
-
-            let mut verified_recombinants = std::collections::HashSet::new();
-            for (idx, e) in events.iter().enumerate() {
-                if !pruned[idx] {
-                    verified_recombinants.insert(e.candidate_idx);
-                }
-            }
-
-            for (idx, e) in events.iter().enumerate() {
-                if pruned[idx] {
-                    continue;
-                }
-
-                // Rule 2: Recombinant Donor Pruning
-                // A contemporary recombinant child cannot be the donor of an ancestral/reference lineage.
-                if let Some(donor) = e.donor_idx {
-                    if verified_recombinants.contains(&donor) && donor != e.candidate_idx {
-                        pruned[idx] = true;
-                        changed = true;
-                        continue;
-                    }
-                }
-
-                // Rule 3: Recombinant Home Pruning
-                // Any candidate event citing an active verified recombinant as Home is pruned if:
-                // 1. The recombinant derived its Home from the candidate (or candidate's sister clade).
-                // 2. The candidate's mosaic residual is poor (res >= 0.04 or d_tract_donor >= 0.03).
-                if let Some(home) = e.home_idx {
-                    if verified_recombinants.contains(&home) && home != e.candidate_idx {
-                        let home_derived_from_cand = events.iter().enumerate().any(|(h_idx, h_ev)| {
-                            !pruned[h_idx]
-                                && h_ev.candidate_idx == home
-                                && (h_ev.home_idx == Some(e.candidate_idx) || h_ev.donor_idx == Some(e.candidate_idx))
-                        });
-
-                        let res = e.d_tract_donor + e.d_flank_home;
-                        if home_derived_from_cand || res >= 0.04 || e.d_tract_donor >= 0.03 {
-                            pruned[idx] = true;
-                            changed = true;
-                            continue;
-                        }
-                    }
-                }
-            }
         }
 
         events

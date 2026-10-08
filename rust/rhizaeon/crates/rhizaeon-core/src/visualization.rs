@@ -127,15 +127,22 @@ pub fn generate_visualization_dossier(
     }
 
     // 4. Detailed Breakpoint Records and Uncertainty Plateaus
-    let mut breakpoints = Vec::with_capacity(scan_res.events.len());
+    let mut breakpoints = Vec::with_capacity(scan_res.events.len() * 2);
     let mut total_plateau_width = 0usize;
+    let mut bp_counter = 1usize;
 
-    for (bp_i, ev) in scan_res.events.iter().enumerate() {
+    for ev in &scan_res.events {
         let cand_idx = ev.candidate_idx;
         let home_idx = ev.home_idx.unwrap_or(0);
         let donor_idx_opt = ev.donor_idx;
 
-        // Find flanking informative sites
+        let donor_display_name = if ev.is_ghost_donor {
+            "Ghost (Unsampled)".to_string()
+        } else {
+            ev.donor_name.clone()
+        };
+
+        // 4A. 5' Breakpoint at ev.u1
         let mut left_flank = None;
         let mut right_flank = None;
 
@@ -168,17 +175,17 @@ pub fn generate_visualization_dossier(
         let plat_w = if ci_r >= ci_l { ci_r - ci_l } else { 0 };
         total_plateau_width += plat_w;
 
-        let donor_display_name = if ev.is_ghost_donor {
-            "Ghost (Unsampled)".to_string()
+        let bp_5p_id = if ev.is_crossover {
+            format!("BP_{}", bp_counter)
         } else {
-            ev.donor_name.clone()
+            format!("BP_{} (5')", bp_counter)
         };
 
         breakpoints.push(VisualizationBreakpoint {
-            breakpoint_id: format!("BP_{}", bp_i + 1),
+            breakpoint_id: bp_5p_id,
             recombinant: ev.candidate_name.clone(),
             parent_1: ev.home_name.clone(),
-            parent_2: donor_display_name,
+            parent_2: donor_display_name.clone(),
             breakpoint_nt: ev.u1,
             coarse_bp: ev.u1_continuous.round() as usize,
             ci_left: ci_l,
@@ -193,15 +200,75 @@ pub fn generate_visualization_dossier(
             is_crossover: ev.is_crossover,
             is_ghost_donor: ev.is_ghost_donor,
         });
+
+        // 4B. 3' Breakpoint at ev.u2 (for cassettes/conversions)
+        if !ev.is_crossover && ev.u2 > ev.u1 && ev.u2 < l {
+            let mut left_flank_3p = None;
+            let mut right_flank_3p = None;
+
+            if let Some(donor_idx) = donor_idx_opt {
+                let search_3p = ev.u2.saturating_sub(1);
+                // Scan left inside tract for donor match (u < ev.u2)
+                for u in (0..search_3p).rev() {
+                    let rc = aln.get(cand_idx, u);
+                    let rh = aln.get(home_idx, u);
+                    let rd = aln.get(donor_idx, u);
+                    if rc > 0 && rh > 0 && rd > 0 && rh != rd && rc == rd {
+                        left_flank_3p = Some(u + 1);
+                        break;
+                    }
+                }
+                // Scan right outside tract for home match (u >= ev.u2)
+                for u in search_3p..l {
+                    let rc = aln.get(cand_idx, u);
+                    let rh = aln.get(home_idx, u);
+                    let rd = aln.get(donor_idx, u);
+                    if rc > 0 && rh > 0 && rd > 0 && rh != rd && rc == rh {
+                        right_flank_3p = Some(u + 1);
+                        break;
+                    }
+                }
+            }
+
+            let ci_l_3p = left_flank_3p.unwrap_or_else(|| ev.u2.saturating_sub(5).max(1));
+            let ci_r_3p = right_flank_3p.unwrap_or_else(|| (ev.u2 + 5).min(l));
+            let plat_w_3p = if ci_r_3p >= ci_l_3p { ci_r_3p - ci_l_3p } else { 0 };
+            total_plateau_width += plat_w_3p;
+
+            breakpoints.push(VisualizationBreakpoint {
+                breakpoint_id: format!("BP_{} (3')", bp_counter),
+                recombinant: ev.candidate_name.clone(),
+                parent_1: donor_display_name,
+                parent_2: ev.home_name.clone(),
+                breakpoint_nt: ev.u2,
+                coarse_bp: ev.u2_continuous.round() as usize,
+                ci_left: ci_l_3p,
+                ci_right: ci_r_3p,
+                plateau_width: plat_w_3p,
+                flanking_p1_site: left_flank_3p,
+                flanking_p2_site: right_flank_3p,
+                log_likelihood_gain: (ev.z_phys * 2.5).max(0.0),
+                kinetic_z: ev.z_phys,
+                l_pir: ev.d_tract_donor,
+                p_fisher: ev.p_fisher,
+                is_crossover: false,
+                is_ghost_donor: ev.is_ghost_donor,
+            });
+        }
+        bp_counter += 1;
     }
 
     // 5. Build Mosaic Tracks for each taxon
     let mut mosaic_taxa = BTreeMap::new();
     for t in &sorted_taxa {
-        let t_bps: Vec<&VisualizationBreakpoint> =
-            breakpoints.iter().filter(|b| &b.recombinant == t).collect();
+        let mut t_events: Vec<&crate::types::RecombinationEvent> = scan_res
+            .events
+            .iter()
+            .filter(|e| &e.candidate_name == t)
+            .collect();
+        t_events.sort_by_key(|e| e.u1);
 
-        if t_bps.is_empty() {
+        if t_events.is_empty() {
             let meta = taxa_meta.get(t).unwrap();
             let lineage = if meta.taxon_type == "parent" {
                 format!("{} (Parental Reference)", t)
@@ -221,47 +288,98 @@ pub fn generate_visualization_dossier(
         } else {
             let mut segments = Vec::new();
             let mut curr = 1usize;
+            let home_name = &t_events[0].home_name;
+            let home_col = parent_colors
+                .get(home_name)
+                .cloned()
+                .unwrap_or_else(|| "#0072b2".to_string());
 
-            for b in &t_bps {
-                let p1_col = parent_colors
-                    .get(&b.parent_1)
+            for ev in &t_events {
+                let donor_display = if ev.is_ghost_donor {
+                    "Ghost (Unsampled)"
+                } else {
+                    &ev.donor_name
+                };
+                let donor_col = parent_colors
+                    .get(donor_display)
                     .cloned()
-                    .unwrap_or_else(|| "#0072b2".to_string());
+                    .unwrap_or_else(|| "#d55e00".to_string());
 
-                let cl = b.ci_left.max(curr);
-                let cr = b.ci_right.min(l);
+                let bp_5p = breakpoints.iter().find(|b| &b.recombinant == t && b.breakpoint_nt == ev.u1);
+                let ci_l_5p = bp_5p.map(|b| b.ci_left).unwrap_or(ev.u1.saturating_sub(5).max(1)).max(curr);
+                let ci_r_5p = bp_5p.map(|b| b.ci_right).unwrap_or((ev.u1 + 5).min(l)).min(ev.u2);
 
-                if cl > curr {
+                // Flank before 5' breakpoint
+                if ci_l_5p > curr {
                     segments.push(MosaicSegment {
                         start: curr,
-                        end: cl - 1,
-                        lineage: format!("Donor: {}", b.parent_1),
-                        color: p1_col,
+                        end: ci_l_5p - 1,
+                        lineage: format!("Parent: {}", home_name),
+                        color: home_col.clone(),
                         is_plateau: None,
                     });
                 }
 
+                // 5' Plateau
+                let plat_5p_w = if ci_r_5p >= ci_l_5p { ci_r_5p - ci_l_5p } else { 0 };
                 segments.push(MosaicSegment {
-                    start: cl,
-                    end: cr,
-                    lineage: format!("Plateau {} [Δ={} nt]", b.breakpoint_id, b.plateau_width),
-                    color: "#fbbf24".to_string(), // Yellow plateau
+                    start: ci_l_5p,
+                    end: ci_r_5p,
+                    lineage: format!("Breakpoint 5' [nt {}, Δ={} nt]", ev.u1, plat_5p_w),
+                    color: "#fbbf24".to_string(), // Yellow
                     is_plateau: Some(true),
                 });
-                curr = cr + 1;
+
+                if ev.is_crossover {
+                    if ci_r_5p + 1 <= l {
+                        segments.push(MosaicSegment {
+                            start: ci_r_5p + 1,
+                            end: l,
+                            lineage: format!("Donor: {}", donor_display),
+                            color: donor_col,
+                            is_plateau: None,
+                        });
+                    }
+                    curr = l + 1;
+                    break;
+                } else {
+                    let bp_3p = breakpoints.iter().find(|b| &b.recombinant == t && b.breakpoint_nt == ev.u2);
+                    let tract_st = (ci_r_5p + 1).min(ev.u2);
+                    let ci_l_3p = bp_3p.map(|b| b.ci_left).unwrap_or(ev.u2.saturating_sub(5).max(1)).max(tract_st);
+                    let ci_r_3p = bp_3p.map(|b| b.ci_right).unwrap_or((ev.u2 + 5).min(l));
+
+                    // Donor tract between 5' and 3' plateaus
+                    if ci_l_3p > tract_st {
+                        segments.push(MosaicSegment {
+                            start: tract_st,
+                            end: ci_l_3p - 1,
+                            lineage: format!("Donor: {}", donor_display),
+                            color: donor_col,
+                            is_plateau: None,
+                        });
+                    }
+
+                    // 3' Plateau
+                    let plat_3p_w = if ci_r_3p >= ci_l_3p { ci_r_3p - ci_l_3p } else { 0 };
+                    segments.push(MosaicSegment {
+                        start: ci_l_3p,
+                        end: ci_r_3p,
+                        lineage: format!("Breakpoint 3' [nt {}, Δ={} nt]", ev.u2, plat_3p_w),
+                        color: "#fbbf24".to_string(), // Yellow
+                        is_plateau: Some(true),
+                    });
+
+                    curr = ci_r_3p + 1;
+                }
             }
 
+            // Trailing flank returning to Home
             if curr <= l {
-                let last_b = t_bps.last().unwrap();
-                let trailing_col = parent_colors
-                    .get(&last_b.parent_2)
-                    .cloned()
-                    .unwrap_or_else(|| "#d55e00".to_string());
                 segments.push(MosaicSegment {
                     start: curr,
                     end: l,
-                    lineage: format!("Donor: {}", last_b.parent_2),
-                    color: trailing_col,
+                    lineage: format!("Parent: {}", home_name),
+                    color: home_col,
                     is_plateau: None,
                 });
             }
