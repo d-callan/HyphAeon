@@ -150,122 +150,182 @@ pub fn generate_visualization_dossier(
             ev.donor_name.clone()
         };
 
-        // 4A. 5' Breakpoint at ev.u1
-        let mut left_flank = None;
-        let mut right_flank = None;
+        // 4. Detailed Breakpoint Records and Uncertainty Plateaus
+        let is_5p_crossover = ev.is_crossover && ev.u1 <= 5 && ev.u2 < l;
 
-        if let Some(donor_idx) = donor_idx_opt {
-            // Scan left for home match (u < ev.u1)
-            let search_start = ev.u1.saturating_sub(1);
-            for u in (0..search_start).rev() {
-                let rc = aln.get(cand_idx, u);
-                let rh = aln.get(home_idx, u);
-                let rd = aln.get(donor_idx, u);
-                if rc > 0 && rh > 0 && rd > 0 && rh != rd && rc == rh {
-                    left_flank = Some(u + 1); // 1-indexed
-                    break;
-                }
-            }
-            // Scan right for donor match (u >= ev.u1 - 1)
-            for u in search_start..l {
-                let rc = aln.get(cand_idx, u);
-                let rh = aln.get(home_idx, u);
-                let rd = aln.get(donor_idx, u);
-                if rc > 0 && rh > 0 && rd > 0 && rh != rd && rc == rd {
-                    right_flank = Some(u + 1); // 1-indexed
-                    break;
-                }
-            }
-        }
-
-        let ci_l = left_flank.unwrap_or_else(|| ev.u1.saturating_sub(5).max(1));
-        let ci_r = right_flank.unwrap_or_else(|| (ev.u1 + 5).min(l));
-        let plat_w = if ci_r >= ci_l { ci_r - ci_l } else { 0 };
-        total_plateau_width += plat_w;
-
-        let bp_5p_id = if ev.is_crossover {
-            format!("BP_{}", bp_counter)
-        } else {
-            format!("BP_{} (5')", bp_counter)
-        };
-
-        breakpoints.push(VisualizationBreakpoint {
-            breakpoint_id: bp_5p_id,
-            event_id: ev.event_id,
-            isolates: ev.isolates.clone(),
-            recombinant: ev.candidate_name.clone(),
-            parent_1: ev.home_name.clone(),
-            parent_2: donor_display_name.clone(),
-            breakpoint_nt: ev.u1,
-            coarse_bp: ev.u1_continuous.round() as usize,
-            ci_left: ci_l,
-            ci_right: ci_r,
-            plateau_width: plat_w,
-            flanking_p1_site: left_flank,
-            flanking_p2_site: right_flank,
-            log_likelihood_gain: (ev.z_phys * 2.5).max(0.0),
-            kinetic_z: ev.z_phys,
-            l_pir: ev.d_tract_donor,
-            p_fisher: ev.p_fisher,
-            is_crossover: ev.is_crossover,
-            is_ghost_donor: ev.is_ghost_donor,
-        });
-
-        // 4B. 3' Breakpoint at ev.u2 (for cassettes/conversions)
-        if !ev.is_crossover && ev.u2 > ev.u1 && ev.u2 < l {
-            let mut left_flank_3p = None;
-            let mut right_flank_3p = None;
+        if is_5p_crossover {
+            // 5' Terminal Crossover: Donor from 1..ev.u2, Breakpoint at ev.u2 transitioning to Home
+            let mut left_flank = None;
+            let mut right_flank = None;
 
             if let Some(donor_idx) = donor_idx_opt {
-                let search_3p = ev.u2.saturating_sub(1);
+                let search_start = ev.u2.saturating_sub(1);
                 // Scan left inside tract for donor match (u < ev.u2)
-                for u in (0..search_3p).rev() {
+                for u in (0..search_start).rev() {
                     let rc = aln.get(cand_idx, u);
                     let rh = aln.get(home_idx, u);
                     let rd = aln.get(donor_idx, u);
                     if rc > 0 && rh > 0 && rd > 0 && rh != rd && rc == rd {
-                        left_flank_3p = Some(u + 1);
+                        left_flank = Some(u + 1); // 1-indexed
                         break;
                     }
                 }
-                // Scan right outside tract for home match (u >= ev.u2)
-                for u in search_3p..l {
+                // Scan right outside tract for home match (u >= ev.u2 - 1)
+                for u in search_start..l {
                     let rc = aln.get(cand_idx, u);
                     let rh = aln.get(home_idx, u);
                     let rd = aln.get(donor_idx, u);
                     if rc > 0 && rh > 0 && rd > 0 && rh != rd && rc == rh {
-                        right_flank_3p = Some(u + 1);
+                        right_flank = Some(u + 1); // 1-indexed
                         break;
                     }
                 }
             }
 
-            let ci_l_3p = left_flank_3p.unwrap_or_else(|| ev.u2.saturating_sub(5).max(1));
-            let ci_r_3p = right_flank_3p.unwrap_or_else(|| (ev.u2 + 5).min(l));
-            let plat_w_3p = if ci_r_3p >= ci_l_3p { ci_r_3p - ci_l_3p } else { 0 };
-            total_plateau_width += plat_w_3p;
+            let ci_l = left_flank.unwrap_or_else(|| ev.u2.saturating_sub(5).max(1));
+            let ci_r = right_flank.unwrap_or_else(|| (ev.u2 + 5).min(l));
+            let plat_w = if ci_r >= ci_l { ci_r - ci_l } else { 0 };
+            total_plateau_width += plat_w;
 
             breakpoints.push(VisualizationBreakpoint {
-                breakpoint_id: format!("BP_{} (3')", bp_counter),
+                breakpoint_id: format!("BP_{}", bp_counter),
                 event_id: ev.event_id,
                 isolates: ev.isolates.clone(),
                 recombinant: ev.candidate_name.clone(),
-                parent_1: donor_display_name,
+                parent_1: donor_display_name.clone(),
                 parent_2: ev.home_name.clone(),
                 breakpoint_nt: ev.u2,
                 coarse_bp: ev.u2_continuous.round() as usize,
-                ci_left: ci_l_3p,
-                ci_right: ci_r_3p,
-                plateau_width: plat_w_3p,
-                flanking_p1_site: left_flank_3p,
-                flanking_p2_site: right_flank_3p,
+                ci_left: ci_l,
+                ci_right: ci_r,
+                plateau_width: plat_w,
+                flanking_p1_site: left_flank,
+                flanking_p2_site: right_flank,
                 log_likelihood_gain: (ev.z_phys * 2.5).max(0.0),
                 kinetic_z: ev.z_phys,
                 l_pir: ev.d_tract_donor,
                 p_fisher: ev.p_fisher,
-                is_crossover: false,
+                is_crossover: true,
                 is_ghost_donor: ev.is_ghost_donor,
             });
+        } else {
+            // 4A. 5' Breakpoint at ev.u1 (for 3' crossovers or cassettes)
+            let mut left_flank = None;
+            let mut right_flank = None;
+
+            if let Some(donor_idx) = donor_idx_opt {
+                // Scan left for home match (u < ev.u1)
+                let search_start = ev.u1.saturating_sub(1);
+                for u in (0..search_start).rev() {
+                    let rc = aln.get(cand_idx, u);
+                    let rh = aln.get(home_idx, u);
+                    let rd = aln.get(donor_idx, u);
+                    if rc > 0 && rh > 0 && rd > 0 && rh != rd && rc == rh {
+                        left_flank = Some(u + 1); // 1-indexed
+                        break;
+                    }
+                }
+                // Scan right for donor match (u >= ev.u1 - 1)
+                for u in search_start..l {
+                    let rc = aln.get(cand_idx, u);
+                    let rh = aln.get(home_idx, u);
+                    let rd = aln.get(donor_idx, u);
+                    if rc > 0 && rh > 0 && rd > 0 && rh != rd && rc == rd {
+                        right_flank = Some(u + 1); // 1-indexed
+                        break;
+                    }
+                }
+            }
+
+            let ci_l = left_flank.unwrap_or_else(|| ev.u1.saturating_sub(5).max(1));
+            let ci_r = right_flank.unwrap_or_else(|| (ev.u1 + 5).min(l));
+            let plat_w = if ci_r >= ci_l { ci_r - ci_l } else { 0 };
+            total_plateau_width += plat_w;
+
+            let bp_5p_id = if ev.is_crossover {
+                format!("BP_{}", bp_counter)
+            } else {
+                format!("BP_{} (5')", bp_counter)
+            };
+
+            breakpoints.push(VisualizationBreakpoint {
+                breakpoint_id: bp_5p_id,
+                event_id: ev.event_id,
+                isolates: ev.isolates.clone(),
+                recombinant: ev.candidate_name.clone(),
+                parent_1: ev.home_name.clone(),
+                parent_2: donor_display_name.clone(),
+                breakpoint_nt: ev.u1,
+                coarse_bp: ev.u1_continuous.round() as usize,
+                ci_left: ci_l,
+                ci_right: ci_r,
+                plateau_width: plat_w,
+                flanking_p1_site: left_flank,
+                flanking_p2_site: right_flank,
+                log_likelihood_gain: (ev.z_phys * 2.5).max(0.0),
+                kinetic_z: ev.z_phys,
+                l_pir: ev.d_tract_donor,
+                p_fisher: ev.p_fisher,
+                is_crossover: ev.is_crossover,
+                is_ghost_donor: ev.is_ghost_donor,
+            });
+
+            // 4B. 3' Breakpoint at ev.u2 (for cassettes/conversions)
+            if !ev.is_crossover && ev.u2 > ev.u1 && ev.u2 < l {
+                let mut left_flank_3p = None;
+                let mut right_flank_3p = None;
+
+                if let Some(donor_idx) = donor_idx_opt {
+                    let search_3p = ev.u2.saturating_sub(1);
+                    // Scan left inside tract for donor match (u < ev.u2)
+                    for u in (0..search_3p).rev() {
+                        let rc = aln.get(cand_idx, u);
+                        let rh = aln.get(home_idx, u);
+                        let rd = aln.get(donor_idx, u);
+                        if rc > 0 && rh > 0 && rd > 0 && rh != rd && rc == rd {
+                            left_flank_3p = Some(u + 1);
+                            break;
+                        }
+                    }
+                    // Scan right outside tract for home match (u >= ev.u2)
+                    for u in search_3p..l {
+                        let rc = aln.get(cand_idx, u);
+                        let rh = aln.get(home_idx, u);
+                        let rd = aln.get(donor_idx, u);
+                        if rc > 0 && rh > 0 && rd > 0 && rh != rd && rc == rh {
+                            right_flank_3p = Some(u + 1);
+                            break;
+                        }
+                    }
+                }
+
+                let ci_l_3p = left_flank_3p.unwrap_or_else(|| ev.u2.saturating_sub(5).max(1));
+                let ci_r_3p = right_flank_3p.unwrap_or_else(|| (ev.u2 + 5).min(l));
+                let plat_w_3p = if ci_r_3p >= ci_l_3p { ci_r_3p - ci_l_3p } else { 0 };
+                total_plateau_width += plat_w_3p;
+
+                breakpoints.push(VisualizationBreakpoint {
+                    breakpoint_id: format!("BP_{} (3')", bp_counter),
+                    event_id: ev.event_id,
+                    isolates: ev.isolates.clone(),
+                    recombinant: ev.candidate_name.clone(),
+                    parent_1: donor_display_name,
+                    parent_2: ev.home_name.clone(),
+                    breakpoint_nt: ev.u2,
+                    coarse_bp: ev.u2_continuous.round() as usize,
+                    ci_left: ci_l_3p,
+                    ci_right: ci_r_3p,
+                    plateau_width: plat_w_3p,
+                    flanking_p1_site: left_flank_3p,
+                    flanking_p2_site: right_flank_3p,
+                    log_likelihood_gain: (ev.z_phys * 2.5).max(0.0),
+                    kinetic_z: ev.z_phys,
+                    l_pir: ev.d_tract_donor,
+                    p_fisher: ev.p_fisher,
+                    is_crossover: false,
+                    is_ghost_donor: ev.is_ghost_donor,
+                });
+            }
         }
         bp_counter += 1;
     }
@@ -296,6 +356,7 @@ pub fn generate_visualization_dossier(
                     color: meta.color.clone(),
                     is_plateau: None,
                     breakpoint_id: None,
+                    event_id: None,
                 }],
             );
         } else {
@@ -308,6 +369,10 @@ pub fn generate_visualization_dossier(
                 .unwrap_or_else(|| "#0072b2".to_string());
 
             for ev in &t_events {
+                if ev.u2 <= curr {
+                    continue;
+                }
+
                 let donor_display = if ev.is_ghost_donor {
                     "Ghost (Unsampled)"
                 } else {
@@ -318,78 +383,119 @@ pub fn generate_visualization_dossier(
                     .cloned()
                     .unwrap_or_else(|| "#d55e00".to_string());
 
-                let bp_5p = breakpoints.iter().find(|b| b.isolates.contains(t) && b.breakpoint_nt == ev.u1);
-                let bp_5p_id = bp_5p.map(|b| b.breakpoint_id.clone());
-                let ci_l_5p = bp_5p.map(|b| b.ci_left).unwrap_or(ev.u1.saturating_sub(5).max(1)).max(curr);
-                let ci_r_5p = bp_5p.map(|b| b.ci_right).unwrap_or((ev.u1 + 5).min(l)).min(ev.u2);
+                let is_5p_crossover = ev.is_crossover && ev.u1 <= 5 && ev.u2 < l;
 
-                // Flank before 5' breakpoint
-                if ci_l_5p > curr {
-                    segments.push(MosaicSegment {
-                        start: curr,
-                        end: ci_l_5p - 1,
-                        lineage: format!("Parent: {}", home_name),
-                        color: home_col.clone(),
-                        is_plateau: None,
-                        breakpoint_id: None,
-                    });
-                }
+                if is_5p_crossover {
+                    let bp_rec = breakpoints.iter().find(|b| b.isolates.contains(t) && b.breakpoint_nt == ev.u2);
+                    let bp_id = bp_rec.map(|b| b.breakpoint_id.clone());
+                    let ci_l = bp_rec.map(|b| b.ci_left).unwrap_or(ev.u2.saturating_sub(5).max(1)).max(curr);
+                    let ci_r = bp_rec.map(|b| b.ci_right).unwrap_or((ev.u2 + 5).min(l)).max(ci_l);
 
-                // 5' Plateau
-                let plat_5p_w = if ci_r_5p >= ci_l_5p { ci_r_5p - ci_l_5p } else { 0 };
-                segments.push(MosaicSegment {
-                    start: ci_l_5p,
-                    end: ci_r_5p,
-                    lineage: format!("Breakpoint 5' [nt {}, Δ={} nt]", ev.u1, plat_5p_w),
-                    color: "#fbbf24".to_string(), // Yellow
-                    is_plateau: Some(true),
-                    breakpoint_id: bp_5p_id.clone(),
-                });
-
-                if ev.is_crossover {
-                    if ci_r_5p + 1 <= l {
+                    // Donor segment starting from curr up to ci_l - 1
+                    if ci_l > curr {
                         segments.push(MosaicSegment {
-                            start: ci_r_5p + 1,
-                            end: l,
+                            start: curr,
+                            end: ci_l - 1,
                             lineage: format!("Donor: {}", donor_display),
-                            color: donor_col,
+                            color: donor_col.clone(),
                             is_plateau: None,
-                            breakpoint_id: bp_5p_id.clone(),
-                        });
-                    }
-                    curr = l + 1;
-                    break;
-                } else {
-                    let bp_3p = breakpoints.iter().find(|b| b.isolates.contains(t) && b.breakpoint_nt == ev.u2);
-                    let bp_3p_id = bp_3p.map(|b| b.breakpoint_id.clone());
-                    let tract_st = (ci_r_5p + 1).min(ev.u2);
-                    let ci_l_3p = bp_3p.map(|b| b.ci_left).unwrap_or(ev.u2.saturating_sub(5).max(1)).max(tract_st);
-                    let ci_r_3p = bp_3p.map(|b| b.ci_right).unwrap_or((ev.u2 + 5).min(l));
-
-                    // Donor tract between 5' and 3' plateaus
-                    if ci_l_3p > tract_st {
-                        segments.push(MosaicSegment {
-                            start: tract_st,
-                            end: ci_l_3p - 1,
-                            lineage: format!("Donor: {}", donor_display),
-                            color: donor_col,
-                            is_plateau: None,
-                            breakpoint_id: bp_5p_id.clone(),
+                            breakpoint_id: bp_id.clone(),
+                            event_id: Some(ev.event_id),
                         });
                     }
 
-                    // 3' Plateau
-                    let plat_3p_w = if ci_r_3p >= ci_l_3p { ci_r_3p - ci_l_3p } else { 0 };
+                    // Plateau around ev.u2
+                    let plat_w = if ci_r >= ci_l { ci_r - ci_l } else { 0 };
                     segments.push(MosaicSegment {
-                        start: ci_l_3p,
-                        end: ci_r_3p,
-                        lineage: format!("Breakpoint 3' [nt {}, Δ={} nt]", ev.u2, plat_3p_w),
+                        start: ci_l,
+                        end: ci_r,
+                        lineage: format!("Breakpoint [nt {}, Δ={} nt]", ev.u2, plat_w),
                         color: "#fbbf24".to_string(), // Yellow
                         is_plateau: Some(true),
-                        breakpoint_id: bp_3p_id,
+                        breakpoint_id: bp_id,
+                        event_id: Some(ev.event_id),
                     });
 
-                    curr = ci_r_3p + 1;
+                    curr = ci_r + 1;
+                } else {
+                    let bp_5p = breakpoints.iter().find(|b| b.isolates.contains(t) && b.breakpoint_nt == ev.u1);
+                    let bp_5p_id = bp_5p.map(|b| b.breakpoint_id.clone());
+                    let ci_l_5p = bp_5p.map(|b| b.ci_left).unwrap_or(ev.u1.saturating_sub(5).max(1)).max(curr);
+                    let ci_r_5p = bp_5p.map(|b| b.ci_right).unwrap_or((ev.u1 + 5).min(l)).min(ev.u2).max(ci_l_5p);
+
+                    // Flank before 5' breakpoint
+                    if ci_l_5p > curr {
+                        segments.push(MosaicSegment {
+                            start: curr,
+                            end: ci_l_5p - 1,
+                            lineage: format!("Parent: {}", home_name),
+                            color: home_col.clone(),
+                            is_plateau: None,
+                            breakpoint_id: None,
+                            event_id: None,
+                        });
+                    }
+
+                    // 5' Plateau
+                    let plat_5p_w = if ci_r_5p >= ci_l_5p { ci_r_5p - ci_l_5p } else { 0 };
+                    segments.push(MosaicSegment {
+                        start: ci_l_5p,
+                        end: ci_r_5p,
+                        lineage: format!("Breakpoint 5' [nt {}, Δ={} nt]", ev.u1, plat_5p_w),
+                        color: "#fbbf24".to_string(), // Yellow
+                        is_plateau: Some(true),
+                        breakpoint_id: bp_5p_id.clone(),
+                        event_id: Some(ev.event_id),
+                    });
+
+                    if ev.is_crossover {
+                        if ci_r_5p + 1 <= l {
+                            segments.push(MosaicSegment {
+                                start: ci_r_5p + 1,
+                                end: l,
+                                lineage: format!("Donor: {}", donor_display),
+                                color: donor_col,
+                                is_plateau: None,
+                                breakpoint_id: bp_5p_id.clone(),
+                                event_id: Some(ev.event_id),
+                            });
+                        }
+                        curr = l + 1;
+                        break;
+                    } else {
+                        let bp_3p = breakpoints.iter().find(|b| b.isolates.contains(t) && b.breakpoint_nt == ev.u2);
+                        let bp_3p_id = bp_3p.map(|b| b.breakpoint_id.clone());
+                        let tract_st = (ci_r_5p + 1).min(ev.u2);
+                        let ci_l_3p = bp_3p.map(|b| b.ci_left).unwrap_or(ev.u2.saturating_sub(5).max(1)).max(tract_st);
+                        let ci_r_3p = bp_3p.map(|b| b.ci_right).unwrap_or((ev.u2 + 5).min(l)).max(ci_l_3p);
+
+                        // Donor tract between 5' and 3' plateaus
+                        if ci_l_3p > tract_st {
+                            segments.push(MosaicSegment {
+                                start: tract_st,
+                                end: ci_l_3p - 1,
+                                lineage: format!("Donor: {}", donor_display),
+                                color: donor_col,
+                                is_plateau: None,
+                                breakpoint_id: bp_5p_id.clone(),
+                                event_id: Some(ev.event_id),
+                            });
+                        }
+
+                        // 3' Plateau
+                        let plat_3p_w = if ci_r_3p >= ci_l_3p { ci_r_3p - ci_l_3p } else { 0 };
+                        segments.push(MosaicSegment {
+                            start: ci_l_3p,
+                            end: ci_r_3p,
+                            lineage: format!("Breakpoint 3' [nt {}, Δ={} nt]", ev.u2, plat_3p_w),
+                            color: "#fbbf24".to_string(), // Yellow
+                            is_plateau: Some(true),
+                            breakpoint_id: bp_3p_id,
+                            event_id: Some(ev.event_id),
+                        });
+
+                        curr = ci_r_3p + 1;
+                    }
                 }
             }
 
@@ -402,6 +508,7 @@ pub fn generate_visualization_dossier(
                     color: home_col,
                     is_plateau: None,
                     breakpoint_id: None,
+                    event_id: None,
                 });
             }
 

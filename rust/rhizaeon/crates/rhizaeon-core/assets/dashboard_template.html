@@ -473,8 +473,22 @@
     }
     table.inventory-table tr:hover { background: var(--bg-surface-hover); }
     table.inventory-table tr.active-row {
-      background: rgba(168, 85, 247, 0.16) !important;
-      border-left: 3px solid var(--purple);
+      background: rgba(168, 85, 247, 0.22) !important;
+      border-left: 4px solid var(--purple);
+    }
+    table.inventory-table tr.related-taxon-row {
+      background: rgba(168, 85, 247, 0.06);
+    }
+    @keyframes pulseTract {
+      0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.8); }
+      70% { box-shadow: 0 0 0 5px rgba(239, 68, 68, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+    }
+    .selected-mosaic-tract {
+      outline: 2px solid #ef4444 !important;
+      outline-offset: -1px;
+      z-index: 10;
+      animation: pulseTract 1.5s infinite;
     }
     .pill-badge {
       display: inline-block;
@@ -892,18 +906,28 @@ __RHIZAEON_DATA_JSON__
       }
 
       function neighborJoining(D, taxaNames) {
-          let n = D.length;
+          const n = D.length;
           if (n === 0) return null;
           if (n === 1) return { id: 0, name: taxaNames[0], isLeaf: true, edgeLength: 0 };
-          
-          let nodes = taxaNames.map((name, i) => ({ id: i, name, left: null, right: null, edgeLength: 0, isLeaf: true }));
-          let active = nodes.map((_, i) => i);
-          let dist = D.map(row => [...row]);
+          if (n === 2) {
+              const half = Math.max(0, D[0][1] / 2);
+              return {
+                  id: 9999, name: "", isLeaf: false, edgeLength: 0,
+                  left: { id: 0, name: taxaNames[0], isLeaf: true, edgeLength: half },
+                  right: { id: 1, name: taxaNames[1], isLeaf: true, edgeLength: half },
+                  diameter: D[0][1], farthestTaxa: [taxaNames[0], taxaNames[1]]
+              };
+          }
+
+          const nodes = taxaNames.map((name, i) => ({ id: i, name, isLeaf: true }));
+          const active = nodes.map((_, i) => i);
+          const dist = D.map(row => [...row]);
           let nextId = n;
+          const edges = [];
 
           while (active.length > 2) {
-              let numActive = active.length;
-              let r = new Float64Array(nextId);
+              const numActive = active.length;
+              const r = new Float64Array(nextId);
               for (let i = 0; i < numActive; i++) {
                   let sum = 0;
                   for (let j = 0; j < numActive; j++) {
@@ -916,50 +940,152 @@ __RHIZAEON_DATA_JSON__
               let minI = -1, minJ = -1;
               for (let i = 0; i < numActive; i++) {
                   for (let j = i + 1; j < numActive; j++) {
-                      let u = active[i];
-                      let v = active[j];
-                      let q = dist[u][v] - r[u] - r[v];
+                      const u = active[i];
+                      const v = active[j];
+                      const q = dist[u][v] - r[u] - r[v];
                       if (q < minQ) {
                           minQ = q; minI = i; minJ = j;
                       }
                   }
               }
 
-              let u = active[minI];
-              let v = active[minJ];
-              let distUV = dist[u][v];
+              const u = active[minI];
+              const v = active[minJ];
+              const distUV = dist[u][v];
 
-              let distToU = distUV / 2 + (r[u] - r[v]) / 2;
-              let distToV = distUV - distToU;
-              if (distToU < 0) distToU = 0;
-              if (distToV < 0) distToV = 0;
+              const distToU = Math.max(0, distUV / 2 + (r[u] - r[v]) / 2);
+              const distToV = Math.max(0, distUV - distToU);
 
-              let newNode = { id: nextId++, left: nodes[u], right: nodes[v], edgeLength: 0, isLeaf: false };
-              nodes[u].edgeLength = distToU;
-              nodes[v].edgeLength = distToV;
-              nodes.push(newNode);
+              const newNodeId = nextId++;
+              nodes.push({ id: newNodeId, name: "", isLeaf: false });
+              edges.push({ u: newNodeId, v: u, weight: distToU });
+              edges.push({ u: newNodeId, v: v, weight: distToV });
 
-              dist[newNode.id] = [];
+              dist[newNodeId] = [];
               for (let i = 0; i < numActive; i++) {
                   if (i !== minI && i !== minJ) {
-                      let w = active[i];
-                      let d = (dist[u][w] + dist[v][w] - distUV) / 2;
-                      if (d < 0) d = 0;
-                      dist[newNode.id][w] = d;
-                      dist[w][newNode.id] = d;
+                      const w = active[i];
+                      const d = Math.max(0, (dist[u][w] + dist[v][w] - distUV) / 2);
+                      dist[newNodeId][w] = d;
+                      dist[w][newNodeId] = d;
                   }
               }
               active = active.filter((_, idx) => idx !== minI && idx !== minJ);
-              active.push(newNode.id);
+              active.push(newNodeId);
           }
 
-          let root = { id: nextId++, left: nodes[active[0]], right: nodes[active[1]], edgeLength: 0, isLeaf: false };
-          let remainingDist = dist[active[0]][active[1]];
-          nodes[active[0]].edgeLength = Math.max(0, remainingDist / 2);
-          nodes[active[1]].edgeLength = Math.max(0, remainingDist / 2);
-          nodes.push(root);
+          // Direct unrooted edge connecting the final two active clusters
+          edges.push({ u: active[0], v: active[1], weight: Math.max(0, dist[active[0]][active[1]]) });
 
-          return root;
+          // Exact Midpoint Rooting across the longest leaf-to-leaf path (Tree Diameter)
+          const adj = new Map();
+          nodes.forEach(nd => adj.set(nd.id, []));
+          edges.forEach(e => {
+              adj.get(e.u).push({ to: e.v, weight: e.weight });
+              adj.get(e.v).push({ to: e.u, weight: e.weight });
+          });
+
+          let maxDist = -1;
+          let leafA = -1, leafB = -1;
+          let bestPath = [];
+
+          for (let i = 0; i < n; i++) {
+              const dMap = new Map();
+              const pMap = new Map();
+              dMap.set(i, 0);
+              pMap.set(i, null);
+              const queue = [i];
+
+              while (queue.length > 0) {
+                  const curr = queue.shift();
+                  const cd = dMap.get(curr);
+                  for (const edge of adj.get(curr)) {
+                      if (!dMap.has(edge.to)) {
+                          dMap.set(edge.to, cd + edge.weight);
+                          pMap.set(edge.to, curr);
+                          queue.push(edge.to);
+                      }
+                  }
+              }
+
+              for (let j = i + 1; j < n; j++) {
+                  const d = dMap.get(j) || 0;
+                  if (d > maxDist) {
+                      maxDist = d;
+                      leafA = i; leafB = j;
+                      const path = [];
+                      let c = j;
+                      while (c !== null) {
+                          path.push(c);
+                          c = pMap.get(c);
+                      }
+                      bestPath = path.reverse();
+                  }
+              }
+          }
+
+          if (maxDist <= 0 || bestPath.length < 2) {
+              const half = edges[0] ? edges[0].weight / 2 : 0;
+              return {
+                  id: nextId++, name: "", isLeaf: false, edgeLength: 0,
+                  left: { id: 0, name: taxaNames[0], isLeaf: true, edgeLength: half },
+                  right: { id: 1, name: taxaNames[1] || taxaNames[0], isLeaf: true, edgeLength: half },
+                  diameter: 0, farthestTaxa: [taxaNames[0], taxaNames[1] || taxaNames[0]]
+              };
+          }
+
+          const targetMid = maxDist / 2;
+          let accumulated = 0;
+          let splitU = -1, splitV = -1;
+          let lenU = 0, lenV = 0;
+
+          for (let idx = 0; idx < bestPath.length - 1; idx++) {
+              const u = bestPath[idx];
+              const v = bestPath[idx + 1];
+              const edge = adj.get(u).find(e => e.to === v);
+              const w = edge ? edge.weight : 0;
+              if (accumulated + w >= targetMid - 1e-9) {
+                  splitU = u;
+                  splitV = v;
+                  lenU = targetMid - accumulated;
+                  lenV = Math.max(0, w - lenU);
+                  break;
+              }
+              accumulated += w;
+          }
+
+          function buildSubtree(currId, fromId, edgeLen) {
+              const isLeaf = (currId < n);
+              const res = {
+                  id: currId,
+                  name: isLeaf ? taxaNames[currId] : "",
+                  isLeaf: isLeaf,
+                  edgeLength: edgeLen,
+                  left: null,
+                  right: null
+              };
+              if (isLeaf) return res;
+
+              const children = adj.get(currId).filter(e => e.to !== fromId);
+              if (children.length >= 2) {
+                  res.left = buildSubtree(children[0].to, currId, children[0].weight);
+                  res.right = buildSubtree(children[1].to, currId, children[1].weight);
+              } else if (children.length === 1) {
+                  res.left = buildSubtree(children[0].to, currId, children[0].weight);
+              }
+              return res;
+          }
+
+          return {
+              id: nextId++,
+              name: "",
+              isLeaf: false,
+              edgeLength: 0,
+              left: buildSubtree(splitU, splitV, lenU),
+              right: buildSubtree(splitV, splitU, lenV),
+              diameter: maxDist,
+              farthestTaxa: [taxaNames[leafA], taxaNames[leafB]]
+          };
       }
 
       function drawRectangularTree(canvas, root, taxaList, state, metaData) {
@@ -1486,11 +1612,16 @@ __RHIZAEON_DATA_JSON__
               segDiv.style.border = '1px dashed #fbbf24';
               segDiv.style.boxShadow = '0 0 6px rgba(245,158,11,0.5)';
             }
-            if (seg.breakpoint_id) {
+            const isSelectedTract = (state.activeBpId && seg.breakpoint_id === state.activeBpId) ||
+                                    (state.activeEventId && seg.event_id === state.activeEventId);
+            if (isSelectedTract) {
+              segDiv.classList.add('selected-mosaic-tract');
+            }
+            if (seg.breakpoint_id || seg.event_id) {
               segDiv.style.cursor = 'pointer';
               segDiv.onclick = (e) => {
                 e.stopPropagation();
-                const bp = DATA.breakpoints.find(b => b.breakpoint_id === seg.breakpoint_id);
+                const bp = DATA.breakpoints.find(b => (seg.breakpoint_id && b.breakpoint_id === seg.breakpoint_id) || (seg.event_id && b.event_id === seg.event_id));
                 if (bp) {
                   inspectEvent(bp.breakpoint_id, bp.recombinant, bp.parent_1, bp.parent_2, bp.ci_left, bp.ci_right);
                 }
@@ -1998,8 +2129,13 @@ __RHIZAEON_DATA_JSON__
 
         DATA.breakpoints.forEach(b => {
           const tr = document.createElement('tr');
-          const isFocal = b.isolates.includes(state.focalTaxon);
-          if (isFocal) tr.classList.add('active-row');
+          const isActive = (state.activeBpId && b.breakpoint_id === state.activeBpId) ||
+                           (state.activeEventId && b.event_id === state.activeEventId);
+          if (isActive) {
+            tr.classList.add('active-row');
+          } else if (b.isolates.includes(state.focalTaxon)) {
+            tr.classList.add('related-taxon-row');
+          }
 
           const flankP1 = (b.flanking_p1_site !== null) ? `nt ${b.flanking_p1_site}` : 'None';
           const flankP2 = (b.flanking_p2_site !== null) ? `nt ${b.flanking_p2_site}` : 'None';
@@ -2021,16 +2157,44 @@ __RHIZAEON_DATA_JSON__
             </td>
           `;
           tr.style.cursor = 'pointer';
-          tr.onclick = () => inspectEvent(b.breakpoint_id, b.recombinant, b.parent_1, b.parent_2, b.ci_left, b.ci_right);
+          tr.onclick = () => inspectEvent(b.breakpoint_id, b.recombinant, b.parent_1, b.parent_2, b.ci_left, b.ci_right, b.event_id);
           inventoryTableBody.appendChild(tr);
         });
       }
 
-      window.inspectEvent = function(bId, rec, p1, p2, ciL, ciR) {
+      window.inspectEvent = function(bId, rec, p1, p2, ciL, ciR, eventId) {
         state.activeBpId = bId;
+        if (eventId) {
+          state.activeEventId = eventId;
+        } else {
+          const bp = DATA.breakpoints.find(b => b.breakpoint_id === bId);
+          if (bp) state.activeEventId = bp.event_id;
+        }
         setFocalTaxon(rec, p1, p2);
         window.jumpTo(ciL - 45, ciR + 45);
-        document.getElementById('signals-stack').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        document.getElementById('panel-cohort-matrix').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      };
+
+      window.inspectEventById = function(eventId) {
+        state.activeEventId = eventId;
+        const bp = DATA.breakpoints.find(b => b.event_id === eventId);
+        if (bp) {
+          state.activeBpId = bp.breakpoint_id;
+          let u1 = bp.ci_left, u2 = bp.ci_right;
+          const tracks = DATA.mosaic_tracks[bp.recombinant] || [];
+          const donorSeg = tracks.find(s => s.event_id === eventId && s.lineage && s.lineage.includes('Donor'));
+          if (donorSeg) {
+            u1 = donorSeg.start;
+            u2 = donorSeg.end;
+          }
+          setFocalTaxon(bp.recombinant, bp.parent_1, bp.parent_2);
+          window.jumpTo(u1 - 45, u2 + 45);
+        } else {
+          renderMatrix();
+          renderInventoryTable();
+          refreshAll();
+        }
+        document.getElementById('panel-cohort-matrix').scrollIntoView({ behavior: 'smooth', block: 'start' });
       };
 
       // Global View Controllers
@@ -2090,38 +2254,60 @@ __RHIZAEON_DATA_JSON__
             const root = neighborJoining(D, DATA.taxa);
             drawRectangularTree(document.getElementById('canvas-tree-p1'), root, DATA.taxa, state, DATA.taxa_meta);
             drawRectangularTree(document.getElementById('canvas-tree-p2'), root, DATA.taxa, state, DATA.taxa_meta);
+            const t1 = document.getElementById('tree-p1-title');
+            const t2 = document.getElementById('tree-p2-title');
+            if (t1) t1.textContent = 'Whole-Genome Alignment Tree (nt 1..' + L_TOTAL + ')';
+            if (t2) t2.textContent = 'Whole-Genome Alignment Tree (nt 1..' + L_TOTAL + ')';
             return;
         }
 
-        const activeBp = myBps.find(b => b.breakpoint_id === state.activeBpId) || myBps[0];
+        const activeBp = myBps.find(b => (state.activeBpId && b.breakpoint_id === state.activeBpId) ||
+                                         (state.activeEventId && b.event_id === state.activeEventId)) || myBps[0];
         
         let u1 = activeBp.ci_left;
         let u2 = activeBp.ci_right;
-        
-        // Find if there is a 3' partner if this is a 5' BP
-        if (activeBp.breakpoint_id.includes("5'")) {
-            const partnerId = activeBp.breakpoint_id.replace("5'", "3'");
-            const partner = myBps.find(b => b.breakpoint_id === partnerId);
-            if (partner) {
-                u2 = partner.ci_right;
-            } else {
-                u2 = L_TOTAL;
-            }
-        } else if (activeBp.breakpoint_id.includes("3'")) {
-            const partnerId = activeBp.breakpoint_id.replace("3'", "5'");
-            const partner = myBps.find(b => b.breakpoint_id === partnerId);
-            if (partner) {
-                u1 = partner.ci_left;
-            } else {
-                u1 = 1;
-            }
+
+        // Check if there is an explicit donor mosaic segment for this event
+        const tracks = DATA.mosaic_tracks[state.focalTaxon] || [];
+        const donorSeg = tracks.find(s => activeBp.event_id && s.event_id === activeBp.event_id && s.lineage && s.lineage.includes('Donor'));
+
+        if (donorSeg) {
+            u1 = donorSeg.start;
+            u2 = donorSeg.end;
         } else {
-            // Crossover
-            u2 = L_TOTAL;
+            // Find all partner breakpoints for the same event
+            const partnerBps = myBps.filter(b => activeBp.event_id && b.event_id === activeBp.event_id);
+            if (partnerBps.length >= 2) {
+                u1 = Math.min(...partnerBps.map(b => b.breakpoint_nt));
+                u2 = Math.max(...partnerBps.map(b => b.breakpoint_nt));
+            } else if (activeBp.breakpoint_id.includes("5'")) {
+                const partnerId = activeBp.breakpoint_id.replace("5'", "3'");
+                const partner = myBps.find(b => b.breakpoint_id === partnerId);
+                u2 = partner ? partner.ci_right : L_TOTAL;
+            } else if (activeBp.breakpoint_id.includes("3'")) {
+                const partnerId = activeBp.breakpoint_id.replace("3'", "5'");
+                const partner = myBps.find(b => b.breakpoint_id === partnerId);
+                u1 = partner ? partner.ci_left : 1;
+            } else {
+                // Crossover
+                if (activeBp.breakpoint_nt <= L_TOTAL / 2) {
+                    u1 = 1;
+                    u2 = activeBp.breakpoint_nt;
+                } else {
+                    u1 = activeBp.breakpoint_nt;
+                    u2 = L_TOTAL;
+                }
+            }
         }
 
+        u1 = Math.max(1, Math.min(L_TOTAL, u1));
+        u2 = Math.max(u1, Math.min(L_TOTAL, u2));
+
         const tractSpans = [[u1, u2]];
-        const bgSpans = [[1, Math.max(1, u1 - 1)], [Math.min(L_TOTAL, u2 + 1), L_TOTAL]];
+        const bgSpans = [];
+        if (u1 > 1) bgSpans.push([1, u1 - 1]);
+        if (u2 < L_TOTAL) bgSpans.push([u2 + 1, L_TOTAL]);
+        if (bgSpans.length === 0) bgSpans.push([1, L_TOTAL]);
 
         const D_tract = computeDistanceMatrix(tractSpans, DATA.taxa, DATA.sequences, L_TOTAL);
         const root_tract = neighborJoining(D_tract, DATA.taxa);
@@ -2131,6 +2317,12 @@ __RHIZAEON_DATA_JSON__
 
         drawRectangularTree(document.getElementById('canvas-tree-p1'), root_bg, DATA.taxa, state, DATA.taxa_meta);
         drawRectangularTree(document.getElementById('canvas-tree-p2'), root_tract, DATA.taxa, state, DATA.taxa_meta);
+
+        const t1 = document.getElementById('tree-p1-title');
+        const t2 = document.getElementById('tree-p2-title');
+        const bgLabel = bgSpans.map(([s, e]) => `${s}–${e}`).join(' & ');
+        if (t1) t1.textContent = `Background Tree (Outside Tract: nt ${bgLabel})`;
+        if (t2) t2.textContent = `Recombinant Tract Tree (nt ${u1}–${u2})`;
       }
 
       function refreshAll() {

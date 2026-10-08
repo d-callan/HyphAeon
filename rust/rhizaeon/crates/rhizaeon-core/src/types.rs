@@ -194,6 +194,8 @@ pub struct MosaicSegment {
     pub is_plateau: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub breakpoint_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<usize>,
 }
 
 /// Informative SNP site record
