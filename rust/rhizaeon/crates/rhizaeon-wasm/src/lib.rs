@@ -9,14 +9,21 @@ pub fn init_panic_hook() {
 
 /// Scans a FASTA string for recombination events and returns a JS Object payload
 #[wasm_bindgen]
-pub fn scan_fasta(fasta_str: &str, target_landmarks: Option<usize>) -> Result<JsValue, JsValue> {
+pub fn scan_fasta(
+    fasta_str: &str,
+    target_landmarks: Option<usize>,
+    compress_snps: Option<bool>,
+) -> Result<JsValue, JsValue> {
     init_panic_hook();
 
     let start_time = js_sys::Date::now();
     let aln = parse_fasta(fasta_str).map_err(|e| JsValue::from_str(&e))?;
 
     let k = target_landmarks.unwrap_or(16);
-    let engine = RhizAeonEngine::new().with_landmarks(k);
+    let mut engine = RhizAeonEngine::new().with_landmarks(k);
+    if let Some(cs) = compress_snps {
+        engine = engine.with_compress_snps(cs);
+    }
     let mut res = engine.scan(&aln);
 
     let end_time = js_sys::Date::now();
@@ -27,14 +34,21 @@ pub fn scan_fasta(fasta_str: &str, target_landmarks: Option<usize>) -> Result<Js
 
 /// Scans a FASTA string and returns a formatted JSON string (optimal for zero-copy UI passing)
 #[wasm_bindgen]
-pub fn scan_fasta_json(fasta_str: &str, target_landmarks: Option<usize>) -> Result<String, JsValue> {
+pub fn scan_fasta_json(
+    fasta_str: &str,
+    target_landmarks: Option<usize>,
+    compress_snps: Option<bool>,
+) -> Result<String, JsValue> {
     init_panic_hook();
 
     let start_time = js_sys::Date::now();
     let aln = parse_fasta(fasta_str).map_err(|e| JsValue::from_str(&e))?;
 
     let k = target_landmarks.unwrap_or(16);
-    let engine = RhizAeonEngine::new().with_landmarks(k);
+    let mut engine = RhizAeonEngine::new().with_landmarks(k);
+    if let Some(cs) = compress_snps {
+        engine = engine.with_compress_snps(cs);
+    }
     let mut res = engine.scan(&aln);
 
     let end_time = js_sys::Date::now();
@@ -56,6 +70,7 @@ pub fn scan_fasta_dossier(
     fasta_str: &str,
     title: Option<String>,
     target_landmarks: Option<usize>,
+    compress_snps: Option<bool>,
 ) -> Result<JsValue, JsValue> {
     init_panic_hook();
 
@@ -63,7 +78,10 @@ pub fn scan_fasta_dossier(
     let aln = parse_fasta(fasta_str).map_err(|e| JsValue::from_str(&e))?;
 
     let k = target_landmarks.unwrap_or(16);
-    let engine = RhizAeonEngine::new().with_landmarks(k);
+    let mut engine = RhizAeonEngine::new().with_landmarks(k);
+    if let Some(cs) = compress_snps {
+        engine = engine.with_compress_snps(cs);
+    }
     let mut res = engine.scan(&aln);
 
     let end_time = js_sys::Date::now();
@@ -79,6 +97,7 @@ pub fn scan_fasta_dossier_json(
     fasta_str: &str,
     title: Option<String>,
     target_landmarks: Option<usize>,
+    compress_snps: Option<bool>,
 ) -> Result<String, JsValue> {
     init_panic_hook();
 
@@ -86,7 +105,10 @@ pub fn scan_fasta_dossier_json(
     let aln = parse_fasta(fasta_str).map_err(|e| JsValue::from_str(&e))?;
 
     let k = target_landmarks.unwrap_or(16);
-    let engine = RhizAeonEngine::new().with_landmarks(k);
+    let mut engine = RhizAeonEngine::new().with_landmarks(k);
+    if let Some(cs) = compress_snps {
+        engine = engine.with_compress_snps(cs);
+    }
     let mut res = engine.scan(&aln);
 
     let end_time = js_sys::Date::now();
@@ -102,6 +124,7 @@ pub fn scan_fasta_html(
     fasta_str: &str,
     title: Option<String>,
     target_landmarks: Option<usize>,
+    compress_snps: Option<bool>,
 ) -> Result<String, JsValue> {
     init_panic_hook();
 
@@ -109,7 +132,10 @@ pub fn scan_fasta_html(
     let aln = parse_fasta(fasta_str).map_err(|e| JsValue::from_str(&e))?;
 
     let k = target_landmarks.unwrap_or(16);
-    let engine = RhizAeonEngine::new().with_landmarks(k);
+    let mut engine = RhizAeonEngine::new().with_landmarks(k);
+    if let Some(cs) = compress_snps {
+        engine = engine.with_compress_snps(cs);
+    }
     let mut res = engine.scan(&aln);
 
     let end_time = js_sys::Date::now();

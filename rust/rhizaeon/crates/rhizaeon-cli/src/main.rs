@@ -43,6 +43,14 @@ struct Args {
     /// Minimum supporting informative sites
     #[arg(short, long, default_value_t = 3)]
     poisson_floor: usize,
+
+    /// Force compression to parsimony-informative SNPs (auto-triggers for L > 50kb or sparse density)
+    #[arg(long, conflicts_with = "no_compress_snps")]
+    compress_snps: bool,
+
+    /// Force full physical sequence scanning (disables automatic SNP compression)
+    #[arg(long, conflicts_with = "compress_snps")]
+    no_compress_snps: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -55,6 +63,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Input alignment: {:?}", args.input);
     println!("  Landmarks (K):   {}", args.landmarks);
     println!("  Significance:    alpha = {}", args.alpha);
+    if args.compress_snps {
+        println!("  SNP Compression: FORCED (Informative SNPs only)");
+    } else if args.no_compress_snps {
+        println!("  SNP Compression: DISABLED (Full nucleotide sequence)");
+    } else {
+        println!("  SNP Compression: AUTO (Trigger if L > 50kb or density < 0.10)");
+    }
     println!("--------------------------------------------------------------------------------");
 
     let fasta_content = fs::read_to_string(&args.input)?;
@@ -64,8 +79,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("  Alignment loaded: {} taxa, {} bp (parsed in {:.2?})", aln.num_taxa, aln.length, parse_dur);
 
-    let engine = RhizAeonEngine::new()
-        .with_landmarks(args.landmarks);
+    let mut engine = RhizAeonEngine::new()
+        .with_landmarks(args.landmarks)
+        .with_alpha(args.alpha)
+        .with_poisson_floor(args.poisson_floor);
+
+    if args.compress_snps {
+        engine = engine.with_compress_snps(true);
+    } else if args.no_compress_snps {
+        engine = engine.with_compress_snps(false);
+    }
 
     let scan_start = Instant::now();
     let mut result = engine.scan(&aln);

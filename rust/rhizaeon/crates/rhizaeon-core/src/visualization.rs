@@ -34,11 +34,13 @@ pub fn generate_visualization_dossier(
     let default_title = format!("RhizAeon Scan Analysis ({} taxa, {} bp)", n, l);
     let title = title_opt.unwrap_or(&default_title).to_string();
 
-    // 1. Reconstruct decoded nucleotide sequences
+    // 1. Reconstruct decoded nucleotide sequences (capped for megabase alignments to prevent JSON bloat)
     let mut sequences = BTreeMap::new();
+    let max_store_len = 100_000;
+    let store_l = l.min(max_store_len);
     for i in 0..n {
-        let mut seq_str = String::with_capacity(l);
-        for u in 0..l {
+        let mut seq_str = String::with_capacity(store_l);
+        for u in 0..store_l {
             let ch = match aln.get(i, u) {
                 1 => 'A',
                 2 => 'C',

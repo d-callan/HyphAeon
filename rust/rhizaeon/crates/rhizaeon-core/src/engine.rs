@@ -1,7 +1,10 @@
 use crate::attention::PhyloAttentionEngine;
 use crate::attribution::TrajectoryParentalResolver;
 use crate::due_diligence::SequenceDueDiligence;
-use crate::fasta::{compute_min_informative_sites, count_parsimony_informative_sites, trim_coverage_envelope};
+use crate::fasta::{
+    compute_min_informative_sites, count_parsimony_informative_sites,
+    extract_informative_snp_alignment, trim_coverage_envelope,
+};
 use crate::landmarks::select_landmarks;
 use crate::polishing::CumulativeTrajectoryPolisher;
 use crate::prior::PhyloBias;
@@ -18,6 +21,11 @@ pub struct RhizAeonEngine {
     pub root_sink_factor: f64,
     pub poisson_floor: usize,
     pub alpha: f64,
+    /// Informative SNP compression mode:
+    /// None = Auto-trigger (L > 50,000 bp OR (L > 10,000 bp AND M_inf / L < 0.10))
+    /// Some(true) = Force SNP compression
+    /// Some(false) = Force full physical nucleotide scan
+    pub compress_snps: Option<bool>,
 }
 
 impl Default for RhizAeonEngine {
@@ -30,6 +38,7 @@ impl Default for RhizAeonEngine {
             root_sink_factor: 1.0,
             poisson_floor: 3,
             alpha: 0.05,
+            compress_snps: None,
         }
     }
 }
@@ -44,20 +53,40 @@ impl RhizAeonEngine {
         self
     }
 
+    pub fn with_compress_snps(mut self, compress: bool) -> Self {
+        self.compress_snps = Some(compress);
+        self
+    }
+
+    pub fn with_auto_compress_snps(mut self) -> Self {
+        self.compress_snps = None;
+        self
+    }
+
+    pub fn with_alpha(mut self, alpha: f64) -> Self {
+        self.alpha = alpha;
+        self
+    }
+
+    pub fn with_poisson_floor(mut self, floor: usize) -> Self {
+        self.poisson_floor = floor;
+        self
+    }
+
     /// Scans an alignment for mosaic recombination events using the full PA-FF v2.1 pipeline
     pub fn scan(&self, raw_aln: &Alignment) -> ScanResult {
-        let (aln, u_offset) = trim_coverage_envelope(raw_aln);
-        let n = aln.num_taxa;
-        let l = aln.length;
+        let (aln_trimmed, u_offset) = trim_coverage_envelope(raw_aln);
+        let n = aln_trimmed.num_taxa;
+        let l_chromosomal = raw_aln.length;
 
-        let m_inf = count_parsimony_informative_sites(&aln);
+        let m_inf = count_parsimony_informative_sites(&aln_trimmed);
         let m_min = compute_min_informative_sites(n);
 
         // Early exit: non-recombinant H0 if informative sites below admission floor
         if m_inf < m_min {
             return ScanResult {
                 num_taxa: n,
-                length: l,
+                length: l_chromosomal,
                 informative_sites: m_inf,
                 is_non_recombinant_h0: true,
                 screening: ScreeningResult {
@@ -76,6 +105,22 @@ impl RhizAeonEngine {
                 run_time_ms: 0.0,
             };
         }
+
+        // Auto-Trigger Threshold Policy:
+        // Automatically compress to informative SNPs when L > 50,000 bp OR (L > 10,000 bp AND M_inf / L < 0.10)
+        let should_compress = self.compress_snps.unwrap_or_else(|| {
+            aln_trimmed.length > 50_000
+                || (aln_trimmed.length > 10_000 && (m_inf as f64) / (aln_trimmed.length as f64) < 0.10)
+        });
+
+        let (aln, snp_map_opt) = if should_compress && m_inf >= m_min {
+            let (snp_aln, map) = extract_informative_snp_alignment(&aln_trimmed);
+            (snp_aln, Some(map))
+        } else {
+            (aln_trimmed, None)
+        };
+        let l = aln.length;
+
 
         // 1. Landmark Selection on Delta^K with adaptive scaling for large cohorts
         let effective_k = self.target_landmarks.max(n / 2).min(32).min(n);
@@ -164,16 +209,28 @@ impl RhizAeonEngine {
                     Some(tract.home_channel),
                     Some(tract.donor_channel),
                 );
-
                 let tract_opt = due_diligence.verify_tract(&tract, &local_parental, &aln, &landmarks, &screening.rate_burst_indices);
 
                 if let Some(mut event) = tract_opt {
                     if event.is_verified {
-                        // Offset coordinates back to full original alignment
-                        event.u1 += u_offset;
-                        event.u2 += u_offset;
-                        event.u1_continuous += u_offset as f64;
-                        event.u2_continuous += u_offset as f64;
+                        if let Some(ref snp_map) = snp_map_opt {
+                            // Map from 1-indexed SNP coordinates [1..M] to original chromosomal coordinates
+                            let s_snp = event.u1.saturating_sub(1).min(snp_map.len().saturating_sub(1));
+                            let e_snp = event.u2.saturating_sub(1).min(snp_map.len().saturating_sub(1));
+                            let orig_u1 = snp_map[s_snp] + 1 + u_offset;
+                            let orig_u2 = snp_map[e_snp] + 1 + u_offset;
+                            event.u1 = orig_u1;
+                            event.u2 = orig_u2;
+                            event.u1_continuous = orig_u1 as f64;
+                            event.u2_continuous = orig_u2 as f64;
+                            event.tract_length = if orig_u2 >= orig_u1 { orig_u2 - orig_u1 + 1 } else { 0 };
+                        } else {
+                            // Standard full-length alignment offset
+                            event.u1 += u_offset;
+                            event.u2 += u_offset;
+                            event.u1_continuous += u_offset as f64;
+                            event.u2_continuous += u_offset as f64;
+                        }
                         verified_events.push(event);
                     }
                 }

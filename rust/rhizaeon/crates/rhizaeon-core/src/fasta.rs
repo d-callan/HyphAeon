@@ -140,3 +140,45 @@ pub fn trim_coverage_envelope(aln: &Alignment) -> (Alignment, usize) {
         _ => (aln.clone(), 0),
     }
 }
+
+/// Extracts parsimony-informative sites into a compressed Alignment, returning the sub-alignment
+/// and a vector mapping each compressed column index (0-based) to its original 0-based coordinate.
+/// A site is parsimony-informative if at least two distinct valid nucleotide states (1..4) each appear in >= 2 taxa.
+pub fn extract_informative_snp_alignment(aln: &Alignment) -> (Alignment, Vec<usize>) {
+    let mut snp_map = Vec::new();
+
+    for u in 0..aln.length {
+        let mut char_counts = [0usize; 5];
+        for i in 0..aln.num_taxa {
+            let c = aln.get(i, u) as usize;
+            char_counts[c] += 1;
+        }
+
+        let mut states_with_ge_2 = 0;
+        for c in 1..=4 {
+            if char_counts[c] >= 2 {
+                states_with_ge_2 += 1;
+            }
+        }
+
+        if states_with_ge_2 >= 2 {
+            snp_map.push(u);
+        }
+    }
+
+    let m = snp_map.len();
+    let num_taxa = aln.num_taxa;
+    let mut new_matrix = Vec::with_capacity(num_taxa * m);
+
+    for i in 0..num_taxa {
+        for &u in &snp_map {
+            new_matrix.push(aln.get(i, u));
+        }
+    }
+
+    (
+        Alignment::new(aln.taxa.clone(), m, new_matrix),
+        snp_map,
+    )
+}
+
