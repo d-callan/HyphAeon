@@ -1,0 +1,21 @@
+[package]
+name = "rhizaeon-wasm"
+version = "0.1.0"
+edition = "2021"
+authors = ["Sergei L. Kosakovsky Pond", "Antigravity AI Engine"]
+description = "WebAssembly client-side engine for RhizAeon PA-FF (v2.1)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rhizaeon-core = { path = "../rhizaeon-core" }
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+serde-wasm-bindgen = "0.6"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+console_error_panic_hook = { version = "0.1", optional = true }
+
+[features]
+default = ["console_error_panic_hook"]

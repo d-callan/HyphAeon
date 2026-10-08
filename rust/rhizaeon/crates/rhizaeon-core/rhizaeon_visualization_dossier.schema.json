@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RhizAeonVisualizationDossier",
+  "description": "Comprehensive, organism-agnostic, self-contained visualization dossier emitted by RhizAeon PA-FF (v2.1) in Rust and WASM.",
+  "type": "object",
+  "required": [
+    "metadata",
+    "taxa",
+    "taxa_meta",
+    "macro_segments",
+    "breakpoints",
+    "mosaic_taxa",
+    "signals",
+    "subspaces",
+    "sequences"
+  ],
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "required": [
+        "title",
+        "alignment_length",
+        "taxa_count",
+        "query_id",
+        "p1_id",
+        "p2_id",
+        "recombinants_count",
+        "breakpoints_count",
+        "informative_snps_count",
+        "mean_plateau_width",
+        "max_support",
+        "run_time_ms",
+        "is_non_recombinant_h0"
+      ],
+      "properties": {
+        "title": { "type": "string", "description": "Human-readable dataset/scan title." },
+        "alignment_length": { "type": "integer", "minimum": 1, "description": "Total length in nucleotides." },
+        "taxa_count": { "type": "integer", "minimum": 1, "description": "Total number of sequences/taxa." },
+        "query_id": { "type": "string", "description": "Primary focal recombinant identifier." },
+        "p1_id": { "type": "string", "description": "Primary home parent identifier." },
+        "p2_id": { "type": "string", "description": "Primary donor parent identifier." },
+        "recombinants_count": { "type": "integer", "minimum": 0, "description": "Number of detected recombinant lineages." },
+        "breakpoints_count": { "type": "integer", "minimum": 0, "description": "Total count of verified breakpoints." },
+        "informative_snps_count": { "type": "integer", "minimum": 0, "description": "Parsimony-informative segregating sites." },
+        "mean_plateau_width": { "type": "number", "minimum": 0, "description": "Average width in nt of uninformative physical plateaus." },
+        "max_support": { "type": "number", "description": "Maximum statistical or physical support (Z-score or Delta ln L)." },
+        "run_time_ms": { "type": "number", "minimum": 0, "description": "Scan wall-clock time in milliseconds." },
+        "is_non_recombinant_h0": { "type": "boolean", "description": "True if alignment is certified non-recombinant under H0." }
+      }
+    },
+    "taxa": {
+      "type": "array",
+      "description": "Taxon names ordered by role: Recombinants first, then Parents, then References.",
+      "items": { "type": "string" }
+    },
+    "taxa_meta": {
+      "type": "object",
+      "description": "Display metadata and role assignment for each taxon.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["label", "type", "color"],
+        "properties": {
+          "label": { "type": "string", "description": "Formatted taxon display name with role badge." },
+          "type": { "type": "string", "enum": ["recombinant", "parent", "reference"], "description": "Lineage role." },
+          "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Categorical hex color." }
+        }
+      }
+    },
+    "macro_segments": {
+      "type": "array",
+      "description": "Genomic partitions, domains, or breakpoint-delimited macro intervals.",
+      "items": {
+        "type": "object",
+        "required": ["name", "start", "end", "color"],
+        "properties": {
+          "name": { "type": "string" },
+          "start": { "type": "integer", "minimum": 1 },
+          "end": { "type": "integer", "minimum": 1 },
+          "color": { "type": "string" }
+        }
+      }
+    },
+    "breakpoints": {
+      "type": "array",
+      "description": "Inventory of verified recombination breakpoints with uncertainty bounds.",
+      "items": {
+        "type": "object",
+        "required": [
+          "breakpoint_id",
+          "recombinant",
+          "parent_1",
+          "parent_2",
+          "breakpoint_nt",
+          "coarse_bp",
+          "ci_left",
+          "ci_right",
+          "plateau_width",
+          "log_likelihood_gain",
+          "kinetic_z",
+          "l_pir",
+          "p_fisher",
+          "is_crossover",
+          "is_ghost_donor"
+        ],
+        "properties": {
+          "breakpoint_id": { "type": "string" },
+          "recombinant": { "type": "string" },
+          "parent_1": { "type": "string" },
+          "parent_2": { "type": "string" },
+          "breakpoint_nt": { "type": "integer", "minimum": 1 },
+          "coarse_bp": { "type": "integer", "minimum": 1 },
+          "ci_left": { "type": "integer", "minimum": 1 },
+          "ci_right": { "type": "integer", "minimum": 1 },
+          "plateau_width": { "type": "integer", "minimum": 0 },
+          "flanking_p1_site": { "type": ["integer", "null"] },
+          "flanking_p2_site": { "type": ["integer", "null"] },
+          "log_likelihood_gain": { "type": "number" },
+          "kinetic_z": { "type": "number" },
+          "l_pir": { "type": "number" },
+          "p_fisher": { "type": "number" },
+          "is_crossover": { "type": "boolean" },
+          "is_ghost_donor": { "type": "boolean" }
+        }
+      }
+    },
+    "mosaic_taxa": {
+      "type": "object",
+      "description": "Genomic mosaic segments for each taxon (parental tracts and plateau voids).",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["start", "end", "lineage", "color"],
+          "properties": {
+            "start": { "type": "integer", "minimum": 1 },
+            "end": { "type": "integer", "minimum": 1 },
+            "lineage": { "type": "string" },
+            "color": { "type": "string" },
+            "is_plateau": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "signals": {
+      "type": "object",
+      "description": "Continuous tracking curves and discrete parsimony-informative site profiles.",
+      "required": [
+        "trajectory_x",
+        "trajectory_y",
+        "velocity_dy",
+        "informative_snps",
+        "walk_x",
+        "walk_s",
+        "drawdown",
+        "brownian_bridge"
+      ],
+      "properties": {
+        "trajectory_x": { "type": "array", "items": { "type": "integer" } },
+        "trajectory_y": { "type": "array", "items": { "type": "number" } },
+        "velocity_dy": { "type": "array", "items": { "type": "number" } },
+        "informative_snps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["pos", "type", "base_r", "base_p1", "base_p2"],
+            "properties": {
+              "pos": { "type": "integer", "minimum": 1 },
+              "type": { "type": "string", "enum": ["match_p1", "match_p2", "divergent"] },
+              "base_r": { "type": "string", "maxLength": 1 },
+              "base_p1": { "type": "string", "maxLength": 1 },
+              "base_p2": { "type": "string", "maxLength": 1 }
+            }
+          }
+        },
+        "walk_x": { "type": "array", "items": { "type": "integer" } },
+        "walk_s": { "type": "array", "items": { "type": "integer" } },
+        "drawdown": { "type": "array", "items": { "type": "number" } },
+        "brownian_bridge": { "type": "array", "items": { "type": "number" } }
+      }
+    },
+    "subspaces": {
+      "type": "object",
+      "description": "2D Classical Multidimensional Scaling (MDS) metric scatter for flank partitions.",
+      "required": ["partition_1", "partition_2", "p1_title", "p2_title"],
+      "properties": {
+        "partition_1": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "partition_2": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "p1_title": { "type": "string" },
+        "p2_title": { "type": "string" }
+      }
+    },
+    "canonical_manifold": {
+      "type": "object",
+      "description": "Whole-gene Classical MDS manifold, out-of-sample Gower trajectory, and chord colinearity.",
+      "required": [
+        "ref_coords",
+        "gower_trajectory",
+        "home_coord",
+        "donor_coord",
+        "chord_vector",
+        "cos_theta",
+        "theta_deg",
+        "is_colinear"
+      ],
+      "properties": {
+        "ref_coords": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "gower_trajectory": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["x", "y", "u"],
+            "properties": {
+              "x": { "type": "number" },
+              "y": { "type": "number" },
+              "u": { "type": "integer" }
+            }
+          }
+        },
+        "home_coord": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+        "donor_coord": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+        "chord_vector": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+        "cos_theta": { "type": "number" },
+        "theta_deg": { "type": "number" },
+        "is_colinear": { "type": "boolean" }
+      }
+    },
+    "sequences": {
+      "type": "object",
+      "description": "Full ASCII sequence strings for each taxon (supporting interactive matrix zoom).",
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}

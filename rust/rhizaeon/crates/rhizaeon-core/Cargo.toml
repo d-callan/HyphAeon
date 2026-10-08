@@ -1,0 +1,12 @@
+[package]
+name = "rhizaeon-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["Sergei L. Kosakovsky Pond", "Antigravity AI Engine"]
+description = "High-performance, zero-dependency algorithmic kernel for RhizAeon PA-FF (v2.1)"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]

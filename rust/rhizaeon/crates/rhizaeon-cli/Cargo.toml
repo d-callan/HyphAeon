@@ -1,0 +1,17 @@
+[package]
+name = "rhizaeon-cli"
+version = "0.1.0"
+edition = "2021"
+authors = ["Sergei L. Kosakovsky Pond", "Antigravity AI Engine"]
+description = "Native standalone CLI executable for RhizAeon PA-FF (v2.1)"
+
+[dependencies]
+rhizaeon-core = { path = "../rhizaeon-core" }
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rayon = "1.10"
+
+[[bin]]
+name = "rhizaeon"
+path = "src/main.rs"
