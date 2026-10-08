@@ -5,6 +5,16 @@
 # TRACE-5.0: Dynamic Transmission Surveillance
 ### *or How HIV-TRACE Learned to Stop Worrying and Love the Molecular Clock*
 
+<p align="center">
+  <a href="https://veg.github.io/trace-5.0/">
+    <img src="https://img.shields.io/badge/🌐%20Launch%20Live%20Web%20App-veg.github.io%2Ftrace--5.0-0969da?style=for-the-badge&logoColor=white" alt="Launch Live Web App" height="40">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://veg.github.io/trace-5.0/"><strong>👉 Try the Interactive Web Application on GitHub Pages (Zero-Install · Client-Side WASM)</strong></a>
+</p>
+
 [![Live Demo](https://img.shields.io/badge/Live_Demo-GitHub_Pages-2ea44f?style=flat-square)](https://veg.github.io/trace-5.0/)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg?style=flat-square)](https://www.rust-lang.org/)
 [![WASM](https://img.shields.io/badge/wasm-ready-blue.svg?style=flat-square)](https://webassembly.org/)
@@ -12,6 +22,9 @@
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
 
 > **A unified, multi-scale statistical framework for molecular epidemiology that replaces arbitrary distance cutoffs with coalescent Bayes Factors, spectral evolutionary velocity deconvolution, and macro-epidemic quadratic scaling dynamics.**
+
+> 🌐 **Interactive Web Application**: [https://veg.github.io/trace-5.0/](https://veg.github.io/trace-5.0/)  
+> Screen municipal sequence registries, explore dynamic molecular clock phase spaces, and deconstruct transmission networks in seconds. 100% client-side WebAssembly execution ensures zero sensitive sequence data leaves your local computer.
 
 **[Interactive Web Application](https://veg.github.io/trace-5.0/)** · **[Documentation](docs/)** · **[Manuscript Preprint](paper/main.pdf)**
 
@@ -124,9 +137,11 @@ The compiled executable is located at `target/release/trace50`.
 
 ---
 
-## 4. Quickstart: WebAssembly (WASM) & Web Dashboards
+## 4. Web Application (GitHub Pages) & WebAssembly Engine
 
-The WebAssembly engine enables TRACE-5.0 to run entirely client-side inside Web browsers, Observable Framework, D3.js visualizations, and Node.js without requiring backend server compute.
+🌐 **Live Web Application**: **[https://veg.github.io/trace-5.0/](https://veg.github.io/trace-5.0/)**
+
+The TRACE-5.0 web dashboard provides zero-install, 100% client-side molecular surveillance analysis directly in any modern web browser. All calculations (TN93 distance matrix, DANNO coalescent Bayes Factors, STEVE spectral deconvolution, and CHIN macro scaling) run in browser memory using WebAssembly—no clinical sequence data or protected health information (PHI) ever leaves your local machine.
 
 ### Compile WASM Target
 ```bash
