@@ -24,43 +24,83 @@
 RhizAeon replaces combinatorial triplet scanning with continuous metric manifold projection and physical attention force field deconvolution.
 
 ### 2.1. Buneman Metric Manifold & Spectral Landmarks
+
 1. Given an alignment of $N$ contemporary sequences of length $L$, compute whole-sequence normalized Hamming divergence $D_{\text{glob}} \in \mathbb{R}^{N \times N}$.
+
 2. Apply double-centering:
-   $$B = -\frac{1}{2} H (D_{\text{glob}}^{\odot 2}) H, \quad H = I_N - \frac{1}{N} \mathbf{1} \mathbf{1}^T$$
+
+   $$
+   B = -\frac{1}{2} H (D_{\text{glob}}^{\odot 2}) H, \quad H = I_N - \frac{1}{N} \mathbf{1} \mathbf{1}^T
+   $$
+
 3. Compute top $k=4$ eigenvectors via analytical Jacobi rotation (`jacobi.rs`):
-   $$m_i = V_4[i] \odot \sqrt{\Lambda_4} \in \mathbb{R}^4$$
-4. Anchor the unpolarized $[ROOT]$ sink token at the metric origin:
-   $$m_{\text{root}} = [0.0, 0.0, 0.0, 0.0] \in \mathbb{R}^4$$
+
+   $$
+   m_i = V_4[i] \odot \sqrt{\Lambda_4} \in \mathbb{R}^4
+   $$
+
+4. Anchor the unpolarized `[ROOT]` sink token at the metric origin:
+
+   $$
+   m_{\text{root}} = [0.0, 0.0, 0.0, 0.0] \in \mathbb{R}^4
+   $$
+
 5. For large cohorts ($N > 32$), select $K \le 32$ spectral landmarks on the simplex $\Delta^K$ using farthest-point sampling (`landmarks.rs`).
 
 ### 2.2. Tree-RoPE & PhyloBias Continuous-Time Markov Prior
+
 1. **Tree-RoPE Phase Computation (`tree_rope.rs`):** Rotary embedding angles for sequence $i$ in channel $d \in \{0, \dots, \frac{D}{2}-1\}$:
-   $$\theta_{i, d} = \sum_{c=1}^4 m_{i, c} \cdot \Theta_{d, c}$$
-2. **PhyloBias Prior (`prior.rs`):** Log-space continuous-time substitution prior:
-   $$P_{ij} = \epsilon_0 + (1 - \epsilon_0) \exp(-\lambda_h \cdot D_{\text{glob}}[i, j]), \quad \epsilon_0 = 0.05 \ (1/20 \text{ amino acids})$$
-   $$\text{PhyloBias}_{ij} = \ln(\max(10^{-5}, P_{ij}))$$
-3. **Continuous Attention Weights (`attention.rs`):**
-   Softmax is computed over all $N+1$ nodes (Index 0 = $[ROOT]$, Indices $1 \dots N$ = Leaves):
-   $$A_u[i \to \text{root}] + \sum_{j=1}^N A_u[i \to j] = 1.0$$
+
+   $$
+   \theta_{i, d} = \sum_{c=1}^4 m_{i, c} \cdot \Theta_{d, c}
+   $$
+
+2. **PhyloBias Prior (`prior.rs`):** Log-space continuous-time substitution prior with background pseudocount $\epsilon_0 = 0.05$:
+
+   $$
+   P_{ij} = \epsilon_0 + (1 - \epsilon_0) \exp(-\lambda_h \cdot D_{\text{glob}}[i, j])
+   $$
+
+   $$
+   \text{PhyloBias}_{ij} = \ln(\max(10^{-5}, P_{ij}))
+   $$
+
+3. **Continuous Attention Weights (`attention.rs`):** Softmax is computed over all $N+1$ nodes (Index 0 = `[ROOT]`, Indices $1, \dots, N$ = Leaves):
+
+   $$
+   A_u(i \to \text{root}) + \sum_{j=1}^N A_u(i \to j) = 1.0
+   $$
+
 4. **Cumulative Attention Curves:**
-   $$C_{i, m}(u) = \sum_{t=0}^u \alpha_{i, m}(t) \in \mathbb{R}^{N \times M \times (U+1)}$$
+
+   $$
+   C_{i, m}(u) = \sum_{t=0}^u \alpha_{i, m}(t) \in \mathbb{R}^{N \times M \times (U+1)}
+   $$
 
 ### 2.3. Candidate Outlier Screener (`screener.rs`)
+
 To maintain $O(N \cdot K \cdot L)$ throughput, the screener applies strict zero-heap memory invariants:
+
 - **Spatial Coherence:** Evaluated via an in-place circular buffer of window size $W=50$ (zero heap allocation in inner loops).
 - **Lazy Participation Ratio (PR):** Only evaluated for taxa exceeding outlier bounds ($z_r > z_{\alpha_r}$ and $\gamma_{\text{root}} \le \theta$), bypassing $>95\%$ of clonal sequences.
-- **Autapomorphic Rate Burst Filter:** Sequences with $\gamma_{\text{root}} \le \theta$ (energy pooling into $[ROOT]$) are tagged as rate bursts/hypermutations, preventing spurious recombinant calls.
+- **Autapomorphic Rate Burst Filter:** Sequences with $\gamma_{\text{root}} \le \theta$ (energy pooling into `[ROOT]`) are tagged as rate bursts/hypermutations, preventing spurious recombinant calls.
 
 ### 2.4. Dual-Flank Hookean Displacement & Parental Attribution (`attribution.rs`)
-1. Recombination creates localized tension between the background clade (Home) and the introgressed segment (Donor).
+
+1. Recombination creates localized tension between the background clade ($\text{Home}$) and the introgressed segment ($\text{Donor}$).
 2. For candidate child $R$, segment $u \in [u_1, u_2]$ experiences force $f_{\text{tract}}$, while flanking segments experience $f_{\text{flank}}$.
 3. Hookean apparent coordinate displacement:
-   $$x_{\text{apparent}}(u) = m_R + \frac{f(u)}{\lambda}$$
-4. Home is chosen as the clade minimizing $\|x_{\text{apparent}}(\text{flank}) - m_{\text{clade}}\|$.
-5. Donor is chosen as the clade minimizing $\|x_{\text{apparent}}(\text{tract}) - m_{\text{clade}}\|$.
+
+   $$
+   x_{\text{apparent}}(u) = m_R + \frac{f(u)}{\lambda}
+   $$
+
+4. $\text{Home}$ is chosen as the clade minimizing $\lVert x_{\text{apparent}}(\text{flank}) - m_{\text{clade}} \rVert$.
+5. $\text{Donor}$ is chosen as the clade minimizing $\lVert x_{\text{apparent}}(\text{tract}) - m_{\text{clade}} \rVert$.
 6. If no sampled clade is within metric tolerance of the tract displacement, the event is certified as a **Ghost Donor Introgression** (`is_ghost_donor = true`).
 
 ### 2.5. Rigorous Due Diligence & Cycle Adjudication (`due_diligence.rs`)
+
 1. **Fisher's Exact 2x2 Test:** Contingency table of informative sites supporting Home vs. Donor in tract vs. flanks must satisfy $p < \alpha / M$.
 2. **Poisson Informative Site Floor:** Minimum 3 supporting informative sites required.
 3. **Reticulation Cycle Adjudication:** If mutual events are reported ($A \to B$ and $B \to A$), construct a directed reticulation graph and resolve the 2-cycle in favor of the lineage exhibiting maximal dynamic metric velocity reversal.

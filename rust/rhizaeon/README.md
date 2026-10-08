@@ -15,7 +15,7 @@ By avoiding the combinatorial $O(N^3)$ bottleneck of triplet methods (such as 3S
 ## Key Highlights
 
 - **Linear-Time Scaling ($O(NK)$ vs. $O(N^3)$):** Evaluates alignments against $K \le 32$ Buneman metric landmarks. Scans 128 full-length genomes ($12\text{ kb}$) in **1.16 seconds**, compared to ~9.2 minutes for 3SEQ (**~500x speedup**).
-- **Immune to Heterotachy & Hypermutation ($FPR = 0.00\%$):** Private autapomorphic rate bursts (e.g. the Darren heterotachy trap) and localized hypermutation showers (e.g. APOBEC) are dissipated into a continuous $[ROOT]$ sink token, preventing false-positive donor attribution.
+- **Immune to Heterotachy & Hypermutation ($\text{FPR} = 0.00\%$):** Private autapomorphic rate bursts (e.g. the Darren heterotachy trap) and localized hypermutation showers (e.g. APOBEC) are dissipated into a continuous `[ROOT]` sink token, preventing false-positive donor attribution.
 - **Multi-Way Mosaic Deconvolution:** Simultaneously detects multiple distinct parental donor cassettes across a recombinant chromosome without triplet truncation.
 - **Zero-Dependency Native Binary & WASM:** Compiled as a standalone, statically linked native binary (`rhizaeon`) and zero-overhead WebAssembly library for client-side execution directly in web browsers.
 - **Interactive Visual Reporting:** Emits standalone, zero-dependency HTML dashboards (`--html`) featuring interactive trajectory manifold visualizations, restoring potential curves, and breakpoint locators.
@@ -141,13 +141,46 @@ rhizaeon [OPTIONS] --input <INPUT_FASTA>
                     Verified Recombination Events (|E|)
 ```
 
-### 1. The $[ROOT]$ Sink Token Architecture
-Conventional sliding-window and triplet algorithms are vulnerable to private rate variation (the **Darren heterotachy trap**) and hypermutation bursts (such as APOBEC). RhizAeon reserves index 0 in the taxa attention dimension for an unpolarized $[ROOT]$ sink token anchored at the Buneman metric origin. Private substitutions naturally pool their attention weights into $[ROOT]$ ($\gamma_{\text{root}} \le \theta$), dissipating spurious reticulation energy before it can trigger false parent calls.
+### 1. Buneman Metric Manifold & Spectral Landmarks
+RhizAeon projects whole-sequence Hamming divergence $D_{\text{glob}} \in \mathbb{R}^{N \times N}$ into a canonical 4D metric space via double-centering:
 
-### 2. Physical Force Field Deconvolution
-Recombination events generate localized tension between a sequence's background phylogenetic affinities (Home) and its converted tract affinities (Donor). RhizAeon models this tension as a continuous restoring potential whose zero-crossing inflections provide sub-15 nucleotide breakpoint localization without parametric window slicing.
+$$
+B = -\frac{1}{2} H (D_{\text{glob}}^{\odot 2}) H, \quad H = I_N - \frac{1}{N} \mathbf{1} \mathbf{1}^T
+$$
 
-### 3. Reticulation Cycle Adjudication
+Analytical Jacobi rotation extracts coordinates $m_i = V_4[i] \odot \sqrt{\Lambda_4} \in \mathbb{R}^4$, and farthest-point sampling selects $K \le 32$ spectral landmarks on $\Delta^K$ to enable linear-time $O(N \cdot K \cdot L)$ throughput.
+
+### 2. Continuous Tree-RoPE Attention & The `[ROOT]` Sink Token
+Conventional sliding-window and triplet algorithms are vulnerable to private rate variation (the **Darren heterotachy trap**) and hypermutation bursts (such as APOBEC). RhizAeon computes rotary embedding phase angles from Buneman coordinates:
+
+$$
+\theta_{i, d} = \sum_{c=1}^4 m_{i, c} \cdot \Theta_{d, c}
+$$
+
+and integrates a continuous-time Markov substitution prior with background pseudocount $\epsilon_0 = 0.05$:
+
+$$
+P_{ij} = \epsilon_0 + (1 - \epsilon_0) \exp(-\lambda_h \cdot D_{\text{glob}}[i, j]), \quad \text{PhyloBias}_{ij} = \ln(\max(10^{-5}, P_{ij}))
+$$
+
+Continuous cross-attention Softmax is evaluated over all $N+1$ nodes:
+
+$$
+A_u(i \to \text{root}) + \sum_{j=1}^N A_u(i \to j) = 1.0
+$$
+
+By anchoring an unpolarized `[ROOT]` sink token at the metric origin ($m_{\text{root}} = \mathbf{0} \in \mathbb{R}^4$), private mutations pool their attention into `[ROOT]` ($\gamma_{\text{root}} \le \theta$), dissipating spurious noise before it can trigger false parent calls.
+
+### 3. Physical Force Field Deconvolution & Parental Attribution
+Recombination events generate localized mechanical tension between a sequence's background phylogenetic affinities ($\text{Home}$) and its converted tract affinities ($\text{Donor}$). RhizAeon models this tension via Hookean apparent coordinate displacement:
+
+$$
+x_{\text{apparent}}(u) = m_R + \frac{f(u)}{\lambda}
+$$
+
+Continuous restoring potential zero-crossing inflections provide sub-15 nucleotide breakpoint localization without sliding-window slicing, and dual-flank metric displacement unambiguously resolves $\text{Home}$ and $\text{Donor}$ parentage (or certifies introgression from unsampled ghost lineages).
+
+### 4. Reticulation Cycle Adjudication
 To prevent reciprocal mirror-image reporting ($A \to B$ vs. $B \to A$), RhizAeon constructs a directed reticulation graph across candidate events, resolving cycles in favor of the lineage exhibiting maximal dynamic metric velocity reversal.
 
 ---
