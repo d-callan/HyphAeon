@@ -1102,6 +1102,29 @@ __RHIZAEON_DATA_JSON__
           };
       }
 
+      function getActiveEventRecombinants() {
+        if (state.activeEventId) {
+          const bp = DATA.breakpoints.find(b => b.event_id === state.activeEventId);
+          if (bp && bp.isolates && bp.isolates.length > 0) {
+            return bp.isolates;
+          }
+        }
+        if (state.activeBpId) {
+          const bp = DATA.breakpoints.find(b => b.breakpoint_id === state.activeBpId);
+          if (bp && bp.isolates && bp.isolates.length > 0) {
+            return bp.isolates;
+          }
+        }
+        if (state.focalTaxon) {
+          const bp = DATA.breakpoints.find(b => b.recombinant === state.focalTaxon || (b.isolates && b.isolates.includes(state.focalTaxon)));
+          if (bp && bp.isolates && bp.isolates.length > 0) {
+            return bp.isolates;
+          }
+          return [state.focalTaxon];
+        }
+        return [];
+      }
+
       function drawLabeledRoleArrow(ctx, x, y, label, textColor, bgColor, borderColor, direction = 'left', targetX = null, targetY = null) {
           ctx.save();
           ctx.strokeStyle = textColor;
@@ -1282,31 +1305,32 @@ __RHIZAEON_DATA_JSON__
               ctx.stroke();
 
               if (node.isLeaf) {
-                  let isFocal = (node.name === state.focalTaxon);
-                  let isP1 = (node.name === state.p1Taxon) || (state.p1Taxon && metaData[node.name] && metaData[node.name].clade === state.p1Taxon);
-                  let isP2 = (node.name === state.p2Taxon) || (state.p2Taxon && metaData[node.name] && metaData[node.name].clade === state.p2Taxon);
+                  let eventRecs = getActiveEventRecombinants();
+                  let isRec = eventRecs.includes(node.name);
+                  let isP1 = !isRec && ((node.name === state.p1Taxon) || (state.p1Taxon && metaData[node.name] && metaData[node.name].clade === state.p1Taxon));
+                  let isP2 = !isRec && ((node.name === state.p2Taxon) || (state.p2Taxon && metaData[node.name] && metaData[node.name].clade === state.p2Taxon));
                   let meta = metaData[node.name] || { color: '#64748b' };
                   
-                  let dotRadius = (isFocal || isP1 || isP2) ? 5.5 : 3.5;
+                  let dotRadius = (isRec || isP1 || isP2) ? 5.5 : 3.5;
                   ctx.beginPath();
                   ctx.arc(x, node.y, dotRadius, 0, 2*Math.PI);
-                  ctx.fillStyle = isFocal ? '#a855f7' : (isP1 ? '#d55e00' : (isP2 ? '#0072b2' : meta.color));
+                  ctx.fillStyle = isRec ? '#a855f7' : (isP1 ? '#d55e00' : (isP2 ? '#0072b2' : meta.color));
                   ctx.fill();
-                  if (isFocal || isP1 || isP2) {
+                  if (isRec || isP1 || isP2) {
                       ctx.strokeStyle = '#ffffff';
                       ctx.lineWidth = 1.5;
                       ctx.stroke();
                   }
 
-                  ctx.fillStyle = isFocal ? '#a855f7' : (isP1 ? '#d55e00' : (isP2 ? '#0072b2' : (meta.color || '#334155')));
-                  ctx.font = (isFocal || isP1 || isP2) ? 'bold 10px monospace' : '9px monospace';
+                  ctx.fillStyle = isRec ? '#a855f7' : (isP1 ? '#d55e00' : (isP2 ? '#0072b2' : (meta.color || '#334155')));
+                  ctx.font = (isRec || isP1 || isP2) ? 'bold 10px monospace' : '9px monospace';
                   ctx.textAlign = 'left';
                   ctx.textBaseline = 'alphabetic';
                   ctx.fillText(node.name, x + 8, node.y + 3);
 
                   let nameW = ctx.measureText(node.name).width;
                   let arrowX = x + 8 + nameW + 8;
-                  if (isFocal) {
+                  if (isRec) {
                       drawLabeledRoleArrow(ctx, arrowX, node.y, 'Recombinant', '#7e22ce', '#f3e8ff', '#c084fc', 'left');
                   } else if (isP1) {
                       drawLabeledRoleArrow(ctx, arrowX, node.y, 'Donor', '#c2410c', '#ffedd5', '#fb923c', 'left');
@@ -2229,15 +2253,16 @@ __RHIZAEON_DATA_JSON__
           ctx.setLineDash([]);
         }
 
-        // Separate background vs foreground taxa (Home, Donor, Recombinant)
+        // Separate background vs foreground taxa (Home, Donor, Recombinants)
+        const eventRecs = getActiveEventRecombinants();
         const bgEntries = [];
         let p2Entry = null;
         let p1Entry = null;
-        let focalEntry = null;
+        const recEntries = [];
 
         Object.entries(coords).forEach(([t, c]) => {
-          if (t === state.focalTaxon) {
-            focalEntry = [t, c];
+          if (eventRecs.includes(t)) {
+            recEntries.push([t, c]);
           } else if (t === state.p1Taxon) {
             p1Entry = [t, c];
           } else if (t === state.p2Taxon) {
@@ -2267,11 +2292,14 @@ __RHIZAEON_DATA_JSON__
           ctx.fillText(t, px + 7, py);
         });
 
-        // 2. Draw Foreground Taxa (Home -> Donor -> Recombinant strictly in foreground)
+        // 2. Draw Foreground Taxa (Home -> Donor -> Recombinants strictly in foreground)
         const fgItems = [];
         if (p2Entry) fgItems.push({ t: p2Entry[0], c: p2Entry[1], role: 'Home', color: '#0072b2', textCol: '#0369a1', bgCol: '#e0f2fe', borderCol: '#38bdf8', radius: 7.0 });
         if (p1Entry) fgItems.push({ t: p1Entry[0], c: p1Entry[1], role: 'Donor', color: '#d55e00', textCol: '#c2410c', bgCol: '#ffedd5', borderCol: '#fb923c', radius: 7.0 });
-        if (focalEntry) fgItems.push({ t: focalEntry[0], c: focalEntry[1], role: 'Recombinant', color: '#a855f7', textCol: '#7e22ce', bgCol: '#f3e8ff', borderCol: '#c084fc', radius: 8.5 });
+        recEntries.forEach(([t, c]) => {
+          const isFocal = (t === state.focalTaxon);
+          fgItems.push({ t, c, role: 'Recombinant', color: '#a855f7', textCol: '#7e22ce', bgCol: '#f3e8ff', borderCol: '#c084fc', radius: isFocal ? 8.5 : 7.5 });
+        });
 
         // Calculate positions and avoid vertical collision among close foreground items
         fgItems.forEach(item => {
