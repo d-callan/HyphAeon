@@ -16,7 +16,7 @@
 
 **RhizAeon (PA-FF v2.1)** is a next-generation genomic recombination detection engine built from first principles in native Rust and WebAssembly. It replaces exhaustive combinatorial triplet scanning with continuous metric manifold projection and physical attention force-field deconvolution.
 
-By avoiding the combinatorial $O(N^3)$ bottleneck of triplet methods (such as 3SEQ and RDP), RhizAeon scales strictly **linearly** with taxon cohort size ($O(N \cdot K \cdot L)$), running **130x to 500x faster** on moderate-to-large cohorts while naturally resolving **multi-way mosaicism** (3+ parents) and introgression from **unsampled (ghost) lineages**.
+By avoiding the combinatorial `O(N³)` bottleneck of triplet methods (such as 3SEQ and RDP), RhizAeon scales strictly **linearly** with taxon cohort size (`O(N · K · L)`), running **130x to 500x faster** on moderate-to-large cohorts while naturally resolving **multi-way mosaicism** (3+ parents) and introgression from **unsampled (ghost) lineages**.
 
 ---
 
@@ -33,8 +33,8 @@ Run RhizAeon directly in your web browser with zero installation:
 
 ## Key Highlights
 
-- **Linear-Time Scaling ($O(NK)$ vs. $O(N^3)$):** Evaluates alignments against $K \le 32$ Buneman metric landmarks. Scans 128 full-length genomes ($12\text{ kb}$) in **1.16 seconds**, compared to ~9.2 minutes for 3SEQ (**~500x speedup**).
-- **Immune to Heterotachy & Hypermutation ($\text{FPR} = 0.00\%$):** Private autapomorphic rate bursts (e.g. the Darren heterotachy trap) and localized hypermutation showers (e.g. APOBEC) are dissipated into a continuous `[ROOT]` sink token, preventing false-positive donor attribution.
+- **Linear-Time Scaling (`O(NK)` vs. `O(N³)`):** Evaluates alignments against *K* ≤ 32 Buneman metric landmarks. Scans 128 full-length genomes (12 kb) in **1.16 seconds**, compared to ~9.2 minutes for 3SEQ (**~500x speedup**).
+- **Immune to Heterotachy & Hypermutation (FPR = 0.00%):** Private autapomorphic rate bursts (e.g. the Darren heterotachy trap) and localized hypermutation showers (e.g. APOBEC) are dissipated into a continuous `[ROOT]` sink token, preventing false-positive donor attribution.
 - **Multi-Way Mosaic Deconvolution:** Simultaneously detects multiple distinct parental donor cassettes across a recombinant chromosome without triplet truncation.
 - **Zero-Dependency Native Binary & WASM:** Compiled as a standalone, statically linked native binary (`rhizaeon`) and zero-overhead WebAssembly library for client-side execution directly in web browsers.
 - **Interactive Visual Reporting:** Emits standalone, zero-dependency HTML dashboards (`--html`) featuring interactive trajectory manifold visualizations, restoring potential curves, and breakpoint locators.
@@ -43,7 +43,7 @@ Run RhizAeon directly in your web browser with zero installation:
 
 ## Computational Complexity & Scaling
 
-| Cohort Size ($N$) | Alignment Length ($L$) | 3SEQ Runtime ($O(N^3)$) | RhizAeon Runtime ($O(NK)$) | Empirical Speedup |
+| Cohort Size (*N*) | Alignment Length (*L*) | 3SEQ Runtime (`O(N³)`) | RhizAeon Runtime (`O(NK)`) | Empirical Speedup |
 | :---: | :---: | :---: | :---: | :---: |
 | **4 taxa** | 1,800 nt | 14.1 ms | **8.7 ms** | **1.6x faster** |
 | **8 taxa** | 6,000 nt | 25.0 ms | **20.2 ms** | **1.2x faster** |
@@ -91,7 +91,7 @@ rhizaeon [OPTIONS] --input <INPUT_FASTA>
 - `-v, --viz <PATH>`: Write rich visualization dossier JSON (schema draft 2020-12).
 - `--html <PATH>`: Generate a standalone, zero-dependency interactive HTML dashboard.
 - `-t, --title <STRING>`: Custom title for dashboard and report headers.
-- `-l, --landmarks <INT>`: Target spectral landmarks $K$ on $\Delta^K$ (default: `16`).
+- `-l, --landmarks <INT>`: Target spectral landmarks *K* on the simplex Δ^*K* (default: `16`).
 - `-a, --alpha <FLOAT>`: Family-wise significance threshold (default: `0.05`).
 - `-p, --poisson-floor <INT>`: Minimum supporting informative sites (default: `3`).
 
@@ -167,9 +167,9 @@ $$
 B = -\frac{1}{2} H (D_{\text{glob}}^{\odot 2}) H, \quad H = I_N - \frac{1}{N} \mathbf{1} \mathbf{1}^T
 $$
 
-Analytical Jacobi rotation extracts coordinates $m_i = V_4[i] \odot \sqrt{\Lambda_4} \in \mathbb{R}^4$, and farthest-point sampling selects $K \le 32$ spectral landmarks on $\Delta^K$ to enable linear-time $O(N \cdot K \cdot L)$ throughput.
+Analytical Jacobi rotation extracts coordinates $m_i = V_{4, i} \odot \sqrt{\Lambda_4} \in \mathbb{R}^4$, and farthest-point sampling selects $K \le 32$ spectral landmarks on $\Delta^K$ to enable linear-time `O(N · K · L)` throughput.
 
-### 2. Continuous Tree-RoPE Attention & The `[ROOT]` Sink Token
+### 2. Continuous Tree-RoPE Attention & The [ROOT] Sink Token
 Conventional sliding-window and triplet algorithms are vulnerable to private rate variation (the **Darren heterotachy trap**) and hypermutation bursts (such as APOBEC). RhizAeon computes rotary embedding phase angles from Buneman coordinates:
 
 $$
@@ -179,7 +179,7 @@ $$
 and integrates a continuous-time Markov substitution prior with background pseudocount $\epsilon_0 = 0.05$:
 
 $$
-P_{ij} = \epsilon_0 + (1 - \epsilon_0) \exp(-\lambda_h \cdot D_{\text{glob}}[i, j]), \quad \text{PhyloBias}_{ij} = \ln(\max(10^{-5}, P_{ij}))
+P_{ij} = \epsilon_0 + (1 - \epsilon_0) \exp(-\lambda_h \cdot D_{\text{glob}}(i, j)), \quad \text{PhyloBias}_{ij} = \ln(\max(10^{-5}, P_{ij}))
 $$
 
 Continuous cross-attention Softmax is evaluated over all $N+1$ nodes:
@@ -188,19 +188,19 @@ $$
 A_u(i \to \text{root}) + \sum_{j=1}^N A_u(i \to j) = 1.0
 $$
 
-By anchoring an unpolarized `[ROOT]` sink token at the metric origin ($m_{\text{root}} = \mathbf{0} \in \mathbb{R}^4$), private mutations pool their attention into `[ROOT]` ($\gamma_{\text{root}} \le \theta$), dissipating spurious noise before it can trigger false parent calls.
+By anchoring an unpolarized **[ROOT]** sink token at the metric origin ($m_{\text{root}} = \mathbf{0} \in \mathbb{R}^4$), private mutations pool their attention into **[ROOT]** ($\gamma_{\text{root}} \le \theta$), dissipating spurious noise before it can trigger false parent calls.
 
 ### 3. Physical Force Field Deconvolution & Parental Attribution
-Recombination events generate localized mechanical tension between a sequence's background phylogenetic affinities ($\text{Home}$) and its converted tract affinities ($\text{Donor}$). RhizAeon models this tension via Hookean apparent coordinate displacement:
+Recombination events generate localized mechanical tension between a sequence's background phylogenetic affinities (**Home**) and its converted tract affinities (**Donor**). RhizAeon models this tension via Hookean apparent coordinate displacement:
 
 $$
 x_{\text{apparent}}(u) = m_R + \frac{f(u)}{\lambda}
 $$
 
-Continuous restoring potential zero-crossing inflections provide sub-15 nucleotide breakpoint localization without sliding-window slicing, and dual-flank metric displacement unambiguously resolves $\text{Home}$ and $\text{Donor}$ parentage (or certifies introgression from unsampled ghost lineages).
+Continuous restoring potential zero-crossing inflections provide sub-15 nucleotide breakpoint localization without sliding-window slicing, and dual-flank metric displacement unambiguously resolves **Home** and **Donor** parentage (or certifies introgression from unsampled ghost lineages).
 
 ### 4. Reticulation Cycle Adjudication
-To prevent reciprocal mirror-image reporting ($A \to B$ vs. $B \to A$), RhizAeon constructs a directed reticulation graph across candidate events, resolving cycles in favor of the lineage exhibiting maximal dynamic metric velocity reversal.
+To prevent reciprocal mirror-image reporting (A → B vs. B → A), RhizAeon constructs a directed reticulation graph across candidate events, resolving cycles in favor of the lineage exhibiting maximal dynamic metric velocity reversal.
 
 ---
 
