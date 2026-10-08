@@ -1,11 +1,19 @@
-# TRACE-5.0: Dynamic Molecular Surveillance of Viral Transmission Networks
+<p align="center">
+  <img src="docs/trace50_icon.jpeg" width="220" alt="TRACE-5.0 Logo" />
+</p>
 
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
-[![WASM](https://img.shields.io/badge/wasm-ready-blue.svg)](https://webassembly.org/)
-[![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+# TRACE-5.0: Dynamic Transmission Surveillance
+### *or How HIV-TRACE Learned to Stop Worrying and Love the Molecular Clock*
+
+[![Live Demo](https://img.shields.io/badge/Live_Demo-GitHub_Pages-2ea44f?style=flat-square)](https://veg.github.io/trace-5.0/)
+[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg?style=flat-square)](https://www.rust-lang.org/)
+[![WASM](https://img.shields.io/badge/wasm-ready-blue.svg?style=flat-square)](https://webassembly.org/)
+[![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg?style=flat-square)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
 
 > **A unified, multi-scale statistical framework for molecular epidemiology that replaces arbitrary distance cutoffs with coalescent Bayes Factors, spectral evolutionary velocity deconvolution, and macro-epidemic quadratic scaling dynamics.**
+
+**[Interactive Web Application](https://veg.github.io/trace-5.0/)** · **[Documentation](docs/)** · **[Manuscript Preprint](paper/main.pdf)**
 
 ---
 
@@ -92,7 +100,7 @@ The compiled executable is located at `target/release/trace50`.
  Total Pairwise Comparisons:           75078
  Candidate Dyads Screened:             39
  Clock Violations Purged (Wo Fat):     0
- Certified Transmission Edges:         8 (FDR q <= 0.05)
+ Supported Transmission Edges:         8 (FDR q <= 0.05)
 --------------------------------------------------------------------------------
  Static Distance Benchmark (d <= 1.5%):
    - Total Clusters:                   19
@@ -154,7 +162,7 @@ const config = {
 };
 
 const dossier = run_trace50_object(fastaContent, config);
-console.log("Certified edges:", dossier.kpi.certified_transmission_edges);
+console.log("Supported edges:", dossier.kpi.supported_transmission_edges || dossier.kpi.certified_transmission_edges);
 console.log("Giant component reduction:", dossier.kpi.giant_component_reduction_pct, "%");
 console.log("Estimated active reservoir N_act:", dossier.kpi.inferred_active_transmitting_pool);
 ```
@@ -182,7 +190,7 @@ D = compute_tn93_distance_matrix(M_bits)
 # 2. DANNO Bayesian edge inference & FDR control
 dates = [2015.1, 2015.2, 2015.3, 2016.1, 2017.0, 2017.4]
 danno = DannoEstimator(seq_len=M_bits.shape[1], mu=2e-3, tau_bar=1.0, omega=2.0)
-certified_dyads = danno.screen_dyads(
+supported_dyads = danno.screen_dyads(
     indices=list(range(len(headers))),
     dates=dates,
     D_matrix=D,
@@ -192,7 +200,7 @@ certified_dyads = danno.screen_dyads(
 
 # 3. Macro-scale population inversion
 chin = ChinEstimator(R0_default=1.5)
-active_pool = chin.estimate_active_population(len(headers), len(certified_dyads))
+active_pool = chin.estimate_active_population(len(headers), len(supported_dyads))
 print(f"Active transmitting pool N_act: {active_pool['N_act']:.1f}")
 ```
 
@@ -205,10 +213,10 @@ Both the native CLI and WASM engines output a standardized, self-contained JSON 
 | Section | Contents |
 | :--- | :--- |
 | `metadata` | Sequence count, alignment length, temporal span, runtime, model parameters. |
-| `kpi` | Pairwise comparisons, candidate pairs, clock violations purged, certified transmission links, static vs. DANNO giant component sizes, active pool $N_{\text{act}}$, and sampling coverage $\hat{\rho}$. |
-| `nodes` | Sequence identifier, collection date, static degree, certified degree, cluster membership, resolved community ID, and operational triage tier. |
+| `kpi` | Pairwise comparisons, candidate pairs, clock violations purged, supported transmission links, static vs. DANNO giant component sizes, active pool $N_{\text{act}}$, and sampling coverage $\hat{\rho}$. |
+| `nodes` | Sequence identifier, collection date, static degree, supported degree, cluster membership, resolved community ID, and operational triage tier. |
 | `edges` | Source, target, TN93 distance, elapsed time $\Delta T$, substitution count $K$, continuous Bayes Factor, PEP, $q$-value, adequacy $p$-value, and status. |
-| `clusters` | Certified transmission clusters with member lists, size spectrum, and internal time spans. |
+| `clusters` | Supported transmission clusters with member lists, size spectrum, and internal time spans. |
 | `communities` | STEVE spectral communities with evolutionary clock velocity $\mu$, $t_{\text{MRCA}}$, Fieller theorem confidence set, and active outbreak flag. |
 | `macro_scaling` | Inverted composite transmission parameter $\theta$, sampling fraction $\rho$, active pool $N_{\text{act}}$, and Borel decay statistics. |
 | `phase_space_points` | Points for the $(d, \Delta T)$ phase plot categorized by epidemiological status. |
@@ -218,7 +226,7 @@ Both the native CLI and WASM engines output a standardized, self-contained JSON 
 
 ## 7. Empirical Benchmarks on Real-World Cohorts
 
-| Surveillance Cohort | Sequences ($N$) | Comparisons | Legacy Giant Component ($d \le 1.5\%$) | DANNO Certified Network | Clock Violations Purged |
+| Surveillance Cohort | Sequences ($N$) | Comparisons | Legacy Giant Component ($d \le 1.5\%$) | DANNO Supported Network | Clock Violations Purged |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Washington, DC** (Perez et al.) | 1,658 | 1.37 M | 90 patients | 23 patients max | 8 links |
 | **Middle Tennessee** (Dennis et al.) | 2,915 | 4.25 M | 332 patients | 27 patients max | 422 links |
@@ -250,8 +258,8 @@ If you use TRACE-5.0, DANNO, STEVE / AutoClock, or CHIN in your research or surv
 
 ```bibtex
 @article{kosakovskypond2026trace50,
-  title={Dynamic Molecular Surveillance of Viral Transmission Networks},
-  author={Kosakovsky Pond, Sergei L. and colleagues},
+  title={TRACE-5.0: Dynamic Transmission Surveillance, or How HIV-TRACE Learned to Stop Worrying and Love the Molecular Clock},
+  author={Kosakovsky Pond, Sergei L. and Weaver, Steven and Martin, Darren P. and Wertheim, Joel O.},
   journal={Virus Evolution},
   year={2026}
 }
