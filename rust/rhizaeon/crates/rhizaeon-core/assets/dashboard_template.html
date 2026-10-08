@@ -763,7 +763,6 @@
               <th>Breakpoint (ML nt)</th>
               <th>Uncertainty Plateau [L, R]</th>
               <th>Plateau Width (&Delta;)</th>
-              <th>Flanking Discriminating SNPs</th>
               <th>Parental Transition</th>
               <th>&Delta; ln L</th>
               <th>Kinetic Z</th>
@@ -2227,7 +2226,7 @@ __RHIZAEON_DATA_JSON__
       function renderInventoryTable() {
         inventoryTableBody.innerHTML = '';
         if (DATA.breakpoints.length === 0) {
-          inventoryTableBody.innerHTML = `<tr><td colspan="11" style="text-align:center; padding:18px; color:var(--text-muted)">No recombination breakpoints detected. Alignment is strictly clonal.</td></tr>`;
+          inventoryTableBody.innerHTML = `<tr><td colspan="10" style="text-align:center; padding:18px; color:var(--text-muted)">No recombination breakpoints detected. Alignment is strictly clonal.</td></tr>`;
           return;
         }
 
@@ -2241,8 +2240,6 @@ __RHIZAEON_DATA_JSON__
             tr.classList.add('related-taxon-row');
           }
 
-          const flankP1 = (b.flanking_p1_site !== null) ? `nt ${b.flanking_p1_site}` : 'None';
-          const flankP2 = (b.flanking_p2_site !== null) ? `nt ${b.flanking_p2_site}` : 'None';
           const isolatesDisplay = b.isolates.join(', ');
 
           tr.innerHTML = `
@@ -2251,7 +2248,6 @@ __RHIZAEON_DATA_JSON__
             <td><b>nt ${b.breakpoint_nt.toLocaleString()}</b></td>
             <td><span style="color:var(--amber)">[${b.ci_left.toLocaleString()}, ${b.ci_right.toLocaleString()}]</span></td>
             <td><b>${b.plateau_width} nt</b></td>
-            <td>${flankP1} &rarr; ${flankP2}</td>
             <td><span style="color:var(--text-main)">${b.parent_1} &rarr; ${b.parent_2}</span></td>
             <td style="color:var(--emerald); font-weight:600">+${b.log_likelihood_gain.toFixed(2)}</td>
             <td>${b.kinetic_z.toFixed(2)}</td>
