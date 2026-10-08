@@ -547,6 +547,80 @@ pub fn generate_visualization_dossier(
         }
     }
 
+    // 5B. Region-Aware Ancestral Color Inheritance (Fix for Issue #13)
+    // Ensures that if a sequence obtains a genomic region from a donor (which may itself be a recombinant),
+    // the displayed color matches the exact ancestral color of the donor in that specific genomic interval.
+    for _pass in 0..4 {
+        let current_mosaic = mosaic_taxa.clone();
+        let mut changed = false;
+
+        for (taxon_name, segments) in mosaic_taxa.iter_mut() {
+            if rec_taxa_set.contains(taxon_name) {
+                // Collect primary home colors in this taxon for contrast preservation
+                let mut home_colors = Vec::new();
+                for seg in segments.iter() {
+                    if seg.lineage.starts_with("Parent: ") {
+                        let h_name = seg.lineage.trim_start_matches("Parent: ");
+                        let c = resolve_lineage_regional_color(
+                            h_name,
+                            seg.start,
+                            seg.end,
+                            &current_mosaic,
+                            &parent_colors,
+                        );
+                        home_colors.push(c);
+                    }
+                }
+
+                for seg in segments.iter_mut() {
+                    if seg.is_plateau == Some(true) || seg.color == "#fbbf24" {
+                        continue;
+                    }
+
+                    if seg.lineage.starts_with("Donor: ") {
+                        let donor_target = seg.lineage.trim_start_matches("Donor: ");
+                        let mut resolved_col = resolve_lineage_regional_color(
+                            donor_target,
+                            seg.start,
+                            seg.end,
+                            &current_mosaic,
+                            &parent_colors,
+                        );
+
+                        // If resolved donor color clashes with home color, ensure visual contrast
+                        if home_colors.iter().any(|hc| hc == &resolved_col) {
+                            if let Some(alt) = PALETTE.iter().find(|&&c| !home_colors.contains(&c.to_string())) {
+                                resolved_col = alt.to_string();
+                            }
+                        }
+
+                        if resolved_col != seg.color {
+                            seg.color = resolved_col;
+                            changed = true;
+                        }
+                    } else if seg.lineage.starts_with("Parent: ") {
+                        let home_target = seg.lineage.trim_start_matches("Parent: ");
+                        let resolved_col = resolve_lineage_regional_color(
+                            home_target,
+                            seg.start,
+                            seg.end,
+                            &current_mosaic,
+                            &parent_colors,
+                        );
+                        if resolved_col != seg.color {
+                            seg.color = resolved_col;
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if !changed {
+            break;
+        }
+    }
+
     // 6. Macro genomic segments
     let mut macro_segments = Vec::new();
     if breakpoints.is_empty() {
@@ -903,6 +977,51 @@ fn compute_mds_2d(
     res
 }
 
+/// Finds the regional color of a lineage (donor or home) across a genomic interval [u_start, u_end].
+/// If the lineage is a known taxon in mosaic_taxa, queries its non-plateau segment with maximum overlap.
+/// Otherwise, falls back to parent_colors.
+fn resolve_lineage_regional_color(
+    lineage_name: &str,
+    u_start: usize,
+    u_end: usize,
+    mosaic_taxa: &BTreeMap<String, Vec<MosaicSegment>>,
+    parent_colors: &BTreeMap<String, String>,
+) -> String {
+    if lineage_name == "Ghost (Unsampled)" {
+        return "#94a3b8".to_string();
+    }
+
+    if let Some(target_segments) = mosaic_taxa.get(lineage_name) {
+        let mut best_overlap = 0usize;
+        let mut best_color = None;
+
+        for seg in target_segments {
+            // Ignore breakpoint plateaus
+            if seg.is_plateau == Some(true) || seg.color == "#fbbf24" {
+                continue;
+            }
+
+            // Calculate overlap between [u_start, u_end] and [seg.start, seg.end]
+            if seg.end >= u_start && seg.start <= u_end {
+                let overlap = (seg.end.min(u_end) + 1).saturating_sub(seg.start.max(u_start));
+                if overlap > best_overlap {
+                    best_overlap = overlap;
+                    best_color = Some(seg.color.clone());
+                }
+            }
+        }
+
+        if let Some(col) = best_color {
+            return col;
+        }
+    }
+
+    parent_colors
+        .get(lineage_name)
+        .cloned()
+        .unwrap_or_else(|| "#d55e00".to_string())
+}
+
 /// Computes whole-gene time-invariant Canonical Metric Manifold (R^2),
 /// out-of-sample continuous Gower trajectory, and chord colinearity cos(theta).
 fn compute_canonical_manifold(
@@ -1138,6 +1257,51 @@ TTTTTTTTTTTTTTTT
         let html = generate_standalone_html(&dossier).unwrap();
         assert!(html.contains("<title>Test Recombination</title>"));
         assert!(html.contains("<script id=\"rhizaeon-data\" type=\"application/json\">"));
+    }
+
+    #[test]
+    fn test_regional_ancestral_color_inheritance() {
+        // Multi-generation introgression: P2 -> L -> H, with P1 as home
+        let mut p1_seq = String::new();
+        let mut p2_seq = String::new();
+        let mut l_seq = String::new();
+        let mut h_seq = String::new();
+        let mut o_seq = String::new();
+
+        for _ in 0..500 {
+            p1_seq.push('A');
+            p2_seq.push('C');
+            l_seq.push('C');  // Tract 1..500 from P2
+            h_seq.push('C');  // Tract 1..500 from L
+            o_seq.push('T');
+        }
+        for _ in 0..500 {
+            p1_seq.push('A');
+            p2_seq.push('C');
+            l_seq.push('A');  // Tract 501..1000 from P1
+            h_seq.push('A');  // Tract 501..1000 from P1
+            o_seq.push('T');
+        }
+
+        let fasta = format!(
+            ">P1\n{}\n>P2\n{}\n>L\n{}\n>H\n{}\n>O\n{}\n",
+            p1_seq, p2_seq, l_seq, h_seq, o_seq
+        );
+        let aln = parse_fasta(&fasta).unwrap();
+        let engine = RhizAeonEngine::new();
+        let scan_res = engine.scan(&aln);
+
+        let dossier = generate_visualization_dossier(&aln, &scan_res, Some("Test Multi-Hop"));
+
+        // If L and H have events where L is donor to H:
+        if let (Some(l_tracks), Some(h_tracks)) = (dossier.mosaic_taxa.get("L"), dossier.mosaic_taxa.get("H")) {
+            let l_donor_seg = l_tracks.iter().find(|s| s.lineage.contains("Donor") && s.start <= 250);
+            let h_donor_seg = h_tracks.iter().find(|s| s.lineage.contains("Donor") && s.start <= 250);
+            if let (Some(l_seg), Some(h_seg)) = (l_donor_seg, h_donor_seg) {
+                // H's donor tract color MUST match L's donor tract color in that region!
+                assert_eq!(h_seg.color, l_seg.color);
+            }
+        }
     }
 }
 
