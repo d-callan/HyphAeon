@@ -480,12 +480,12 @@
       background: rgba(168, 85, 247, 0.06);
     }
     @keyframes pulseTract {
-      0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.8); }
-      70% { box-shadow: 0 0 0 5px rgba(239, 68, 68, 0); }
+      0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.9); }
+      70% { box-shadow: 0 0 0 7px rgba(239, 68, 68, 0); }
       100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
     }
     .selected-mosaic-tract {
-      outline: 2px solid #ef4444 !important;
+      outline: 3.5px solid #ef4444 !important;
       outline-offset: -1px;
       z-index: 10;
       animation: pulseTract 1.5s infinite;
@@ -920,7 +920,7 @@ __RHIZAEON_DATA_JSON__
           }
 
           const nodes = taxaNames.map((name, i) => ({ id: i, name, isLeaf: true }));
-          const active = nodes.map((_, i) => i);
+          let active = nodes.map((_, i) => i);
           const dist = D.map(row => [...row]);
           let nextId = n;
           const edges = [];
