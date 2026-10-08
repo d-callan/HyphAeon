@@ -2181,7 +2181,7 @@ __RHIZAEON_DATA_JSON__
         if (bp) {
           state.activeBpId = bp.breakpoint_id;
           let u1 = bp.ci_left, u2 = bp.ci_right;
-          const tracks = DATA.mosaic_tracks[bp.recombinant] || [];
+          const tracks = DATA.mosaic_taxa[bp.recombinant] || [];
           const donorSeg = tracks.find(s => s.event_id === eventId && s.lineage && s.lineage.includes('Donor'));
           if (donorSeg) {
             u1 = donorSeg.start;
@@ -2268,7 +2268,7 @@ __RHIZAEON_DATA_JSON__
         let u2 = activeBp.ci_right;
 
         // Check if there is an explicit donor mosaic segment for this event
-        const tracks = DATA.mosaic_tracks[state.focalTaxon] || [];
+        const tracks = DATA.mosaic_taxa[state.focalTaxon] || [];
         const donorSeg = tracks.find(s => activeBp.event_id && s.event_id === activeBp.event_id && s.lineage && s.lineage.includes('Donor'));
 
         if (donorSeg) {

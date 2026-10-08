@@ -95,24 +95,50 @@ pub fn generate_visualization_dossier(
     }
 
     // 3. Taxa metadata and color mapping
-    let mut taxa_meta = BTreeMap::new();
-    let mut parent_color_idx = 0;
-    let mut parent_colors: BTreeMap<String, String> = BTreeMap::new();
+    let mut lineage_order = Vec::new();
+    for ev in &scan_res.events {
+        if !lineage_order.contains(&ev.home_name) {
+            lineage_order.push(ev.home_name.clone());
+        }
+        let d_name = if ev.is_ghost_donor {
+            "Ghost (Unsampled)".to_string()
+        } else {
+            ev.donor_name.clone()
+        };
+        if !lineage_order.contains(&d_name) {
+            lineage_order.push(d_name);
+        }
+    }
+    for t in &aln.taxa {
+        if parent_taxa_set.contains(t) && !lineage_order.contains(t) {
+            lineage_order.push(t.clone());
+        }
+    }
 
+    let mut parent_colors: BTreeMap<String, String> = BTreeMap::new();
+    for (idx, name) in lineage_order.iter().enumerate() {
+        let col = if name == "Ghost (Unsampled)" {
+            "#94a3b8".to_string()
+        } else {
+            PALETTE[idx % PALETTE.len()].to_string()
+        };
+        parent_colors.insert(name.clone(), col);
+    }
+
+    let mut taxa_meta = BTreeMap::new();
     for t in &sorted_taxa {
         if rec_taxa_set.contains(t) {
+            let color = parent_colors.get(t).cloned().unwrap_or_else(|| "#a855f7".to_string());
             taxa_meta.insert(
                 t.clone(),
                 TaxonMeta {
                     label: format!("{} [Recombinant]", t),
                     taxon_type: "recombinant".to_string(),
-                    color: "#a855f7".to_string(), // Purple
+                    color,
                 },
             );
         } else if parent_taxa_set.contains(t) {
-            let color = PALETTE[parent_color_idx % PALETTE.len()].to_string();
-            parent_colors.insert(t.clone(), color.clone());
-            parent_color_idx += 1;
+            let color = parent_colors.get(t).cloned().unwrap_or_else(|| "#0072b2".to_string());
             taxa_meta.insert(
                 t.clone(),
                 TaxonMeta {
@@ -378,10 +404,15 @@ pub fn generate_visualization_dossier(
                 } else {
                     &ev.donor_name
                 };
-                let donor_col = parent_colors
+                let mut donor_col = parent_colors
                     .get(donor_display)
                     .cloned()
                     .unwrap_or_else(|| "#d55e00".to_string());
+                if donor_col == home_col {
+                    if let Some(alt) = PALETTE.iter().find(|&&c| c != home_col) {
+                        donor_col = alt.to_string();
+                    }
+                }
 
                 let is_5p_crossover = ev.is_crossover && ev.u1 <= 5 && ev.u2 < l;
 
@@ -413,7 +444,7 @@ pub fn generate_visualization_dossier(
                         color: "#fbbf24".to_string(), // Yellow
                         is_plateau: Some(true),
                         breakpoint_id: bp_id,
-                        event_id: Some(ev.event_id),
+                        event_id: None,
                     });
 
                     curr = ci_r + 1;
@@ -445,7 +476,7 @@ pub fn generate_visualization_dossier(
                         color: "#fbbf24".to_string(), // Yellow
                         is_plateau: Some(true),
                         breakpoint_id: bp_5p_id.clone(),
-                        event_id: Some(ev.event_id),
+                        event_id: None,
                     });
 
                     if ev.is_crossover {
@@ -491,7 +522,7 @@ pub fn generate_visualization_dossier(
                             color: "#fbbf24".to_string(), // Yellow
                             is_plateau: Some(true),
                             breakpoint_id: bp_3p_id,
-                            event_id: Some(ev.event_id),
+                            event_id: None,
                         });
 
                         curr = ci_r_3p + 1;
