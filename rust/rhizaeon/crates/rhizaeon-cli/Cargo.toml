@@ -15,3 +15,8 @@ rayon = "1.10"
 [[bin]]
 name = "rhizaeon"
 path = "src/main.rs"
+
+[[bin]]
+name = "export_figure1_data"
+path = "src/bin/export_figure1_data.rs"
+
