@@ -852,196 +852,6 @@ __RHIZAEON_DATA_JSON__
 
       // Setup Canvas with Retina scaling
       function setupCanvas(canvas) {
-function computeDistanceMatrix(spans, taxaList, sequences, L_TOTAL) {
-    const N = taxaList.length;
-    const D = [];
-    for (let i = 0; i < N; i++) D[i] = new Float64Array(N);
-
-    for (let i = 0; i < N; i++) {
-        const seq_i = sequences[taxaList[i]];
-        for (let j = i + 1; j < N; j++) {
-            const seq_j = sequences[taxaList[j]];
-            let diffs = 0, valid = 0;
-            for (const [s0, s1] of spans) {
-                const start = Math.max(0, s0 - 1);
-                const end = Math.min(L_TOTAL, s1);
-                for (let k = start; k < end; k++) {
-                    const c1 = seq_i[k];
-                    const c2 = seq_j[k];
-                    if (c1 !== '-' && c2 !== '-') {
-                        valid++;
-                        if (c1 !== c2) diffs++;
-                    }
-                }
-            }
-            const dist = valid > 0 ? diffs / valid : 0;
-            D[i][j] = dist;
-            D[j][i] = dist;
-        }
-    }
-    return D;
-}
-
-function neighborJoining(D, taxaNames) {
-    let n = D.length;
-    if (n === 0) return null;
-    if (n === 1) return { id: 0, name: taxaNames[0], isLeaf: true, edgeLength: 0 };
-    
-    let nodes = taxaNames.map((name, i) => ({ id: i, name, left: null, right: null, edgeLength: 0, isLeaf: true }));
-    let active = nodes.map((_, i) => i);
-    let dist = D.map(row => [...row]);
-    let nextId = n;
-
-    while (active.length > 2) {
-        let numActive = active.length;
-        let r = new Float64Array(nextId);
-        for (let i = 0; i < numActive; i++) {
-            let sum = 0;
-            for (let j = 0; j < numActive; j++) {
-                if (i !== j) sum += dist[active[i]][active[j]];
-            }
-            r[active[i]] = sum / (numActive - 2);
-        }
-
-        let minQ = Infinity;
-        let minI = -1, minJ = -1;
-        for (let i = 0; i < numActive; i++) {
-            for (let j = i + 1; j < numActive; j++) {
-                let u = active[i];
-                let v = active[j];
-                let q = dist[u][v] - r[u] - r[v];
-                if (q < minQ) {
-                    minQ = q; minI = i; minJ = j;
-                }
-            }
-        }
-
-        let u = active[minI];
-        let v = active[minJ];
-        let distUV = dist[u][v];
-
-        let distToU = distUV / 2 + (r[u] - r[v]) / 2;
-        let distToV = distUV - distToU;
-        if (distToU < 0) distToU = 0;
-        if (distToV < 0) distToV = 0;
-
-        let newNode = { id: nextId++, left: nodes[u], right: nodes[v], edgeLength: 0, isLeaf: false };
-        nodes[u].edgeLength = distToU;
-        nodes[v].edgeLength = distToV;
-        nodes.push(newNode);
-
-        dist[newNode.id] = [];
-        for (let i = 0; i < numActive; i++) {
-            if (i !== minI && i !== minJ) {
-                let w = active[i];
-                let d = (dist[u][w] + dist[v][w] - distUV) / 2;
-                if (d < 0) d = 0;
-                dist[newNode.id][w] = d;
-                dist[w][newNode.id] = d;
-            }
-        }
-        active = active.filter((_, idx) => idx !== minI && idx !== minJ);
-        active.push(newNode.id);
-    }
-
-    let root = { id: nextId++, left: nodes[active[0]], right: nodes[active[1]], edgeLength: 0, isLeaf: false };
-    let remainingDist = dist[active[0]][active[1]];
-    nodes[active[0]].edgeLength = remainingDist / 2;
-    nodes[active[1]].edgeLength = remainingDist / 2;
-    nodes.push(root);
-
-    return root;
-}
-
-function drawRectangularTree(canvas, root, taxaList, state, metaData) {
-    if (!root) return;
-    const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
-    const ctx = canvas.getContext('2d');
-    ctx.scale(dpr, dpr);
-    const width = rect.width;
-    const height = rect.height;
-    ctx.clearRect(0, 0, width, height);
-
-    // Calculate depths
-    function calcDepth(node) {
-        if (!node) return 0;
-        if (node.isLeaf) {
-            node.totalDepth = node.edgeLength || 0;
-            return node.totalDepth;
-        }
-        let dl = calcDepth(node.left);
-        let dr = calcDepth(node.right);
-        node.totalDepth = Math.max(dl, dr) + (node.edgeLength || 0);
-        return node.totalDepth;
-    }
-    let maxDepth = calcDepth(root);
-    if (maxDepth === 0) maxDepth = 1;
-
-    // Assign Y coordinates to leaves
-    let leavesCount = 0;
-    function countLeaves(node) {
-        if (!node) return;
-        if (node.isLeaf) leavesCount++;
-        countLeaves(node.left);
-        countLeaves(node.right);
-    }
-    countLeaves(root);
-
-    let yStep = (height - 40) / Math.max(1, leavesCount - 1);
-    let currentY = 20;
-
-    function assignY(node) {
-        if (node.isLeaf) {
-            node.y = currentY;
-            currentY += yStep;
-            return node.y;
-        }
-        let yl = assignY(node.left);
-        let yr = assignY(node.right);
-        node.y = (yl + yr) / 2;
-        return node.y;
-    }
-    assignY(root);
-
-    let startX = 20;
-    let endX = width - 100;
-
-    function renderNode(node, pX, pY) {
-        let x = pX + ((node.edgeLength || 0) / maxDepth) * (endX - startX);
-        
-        ctx.beginPath();
-        ctx.moveTo(pX, pY);
-        ctx.lineTo(pX, node.y);
-        ctx.lineTo(x, node.y);
-        ctx.strokeStyle = '#64748b';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-
-        if (node.isLeaf) {
-            let isFocal = (node.name === state.focalTaxon);
-            let isP1 = (node.name === state.p1Taxon);
-            let isP2 = (node.name === state.p2Taxon);
-            let meta = metaData[node.name] || { color: '#64748b' };
-            
-            ctx.beginPath();
-            ctx.arc(x, node.y, 4, 0, 2*Math.PI);
-            ctx.fillStyle = isFocal ? '#a855f7' : (isP1 ? '#d55e00' : (isP2 ? '#0072b2' : meta.color));
-            ctx.fill();
-
-            ctx.fillStyle = ctx.fillStyle;
-            ctx.font = isFocal ? 'bold 10px monospace' : '9px monospace';
-            ctx.fillText(node.name, x + 8, node.y + 3);
-        } else {
-            renderNode(node.left, x, node.y);
-            renderNode(node.right, x, node.y);
-        }
-    }
-    renderNode(root.left, startX, root.y);
-    renderNode(root.right, startX, root.y);
-}
         const rect = canvas.getBoundingClientRect();
         const dpr = window.devicePixelRatio || 1;
         canvas.width = rect.width * dpr;
@@ -1049,6 +859,230 @@ function drawRectangularTree(canvas, root, taxaList, state, metaData) {
         const ctx = canvas.getContext('2d');
         ctx.scale(dpr, dpr);
         return { ctx, width: rect.width, height: rect.height };
+      }
+
+      function computeDistanceMatrix(spans, taxaList, sequences, L_TOTAL) {
+          const N = taxaList.length;
+          const D = [];
+          for (let i = 0; i < N; i++) D[i] = new Float64Array(N);
+
+          for (let i = 0; i < N; i++) {
+              const seq_i = sequences[taxaList[i]];
+              for (let j = i + 1; j < N; j++) {
+                  const seq_j = sequences[taxaList[j]];
+                  let diffs = 0, valid = 0;
+                  for (const [s0, s1] of spans) {
+                      const start = Math.max(0, s0 - 1);
+                      const end = Math.min(L_TOTAL, s1);
+                      for (let k = start; k < end; k++) {
+                          const c1 = seq_i[k];
+                          const c2 = seq_j[k];
+                          if (c1 !== '-' && c2 !== '-') {
+                              valid++;
+                              if (c1 !== c2) diffs++;
+                          }
+                      }
+                  }
+                  const dist = valid > 0 ? diffs / valid : 0;
+                  D[i][j] = dist;
+                  D[j][i] = dist;
+              }
+          }
+          return D;
+      }
+
+      function neighborJoining(D, taxaNames) {
+          let n = D.length;
+          if (n === 0) return null;
+          if (n === 1) return { id: 0, name: taxaNames[0], isLeaf: true, edgeLength: 0 };
+          
+          let nodes = taxaNames.map((name, i) => ({ id: i, name, left: null, right: null, edgeLength: 0, isLeaf: true }));
+          let active = nodes.map((_, i) => i);
+          let dist = D.map(row => [...row]);
+          let nextId = n;
+
+          while (active.length > 2) {
+              let numActive = active.length;
+              let r = new Float64Array(nextId);
+              for (let i = 0; i < numActive; i++) {
+                  let sum = 0;
+                  for (let j = 0; j < numActive; j++) {
+                      if (i !== j) sum += dist[active[i]][active[j]];
+                  }
+                  r[active[i]] = sum / (numActive - 2);
+              }
+
+              let minQ = Infinity;
+              let minI = -1, minJ = -1;
+              for (let i = 0; i < numActive; i++) {
+                  for (let j = i + 1; j < numActive; j++) {
+                      let u = active[i];
+                      let v = active[j];
+                      let q = dist[u][v] - r[u] - r[v];
+                      if (q < minQ) {
+                          minQ = q; minI = i; minJ = j;
+                      }
+                  }
+              }
+
+              let u = active[minI];
+              let v = active[minJ];
+              let distUV = dist[u][v];
+
+              let distToU = distUV / 2 + (r[u] - r[v]) / 2;
+              let distToV = distUV - distToU;
+              if (distToU < 0) distToU = 0;
+              if (distToV < 0) distToV = 0;
+
+              let newNode = { id: nextId++, left: nodes[u], right: nodes[v], edgeLength: 0, isLeaf: false };
+              nodes[u].edgeLength = distToU;
+              nodes[v].edgeLength = distToV;
+              nodes.push(newNode);
+
+              dist[newNode.id] = [];
+              for (let i = 0; i < numActive; i++) {
+                  if (i !== minI && i !== minJ) {
+                      let w = active[i];
+                      let d = (dist[u][w] + dist[v][w] - distUV) / 2;
+                      if (d < 0) d = 0;
+                      dist[newNode.id][w] = d;
+                      dist[w][newNode.id] = d;
+                  }
+              }
+              active = active.filter((_, idx) => idx !== minI && idx !== minJ);
+              active.push(newNode.id);
+          }
+
+          let root = { id: nextId++, left: nodes[active[0]], right: nodes[active[1]], edgeLength: 0, isLeaf: false };
+          let remainingDist = dist[active[0]][active[1]];
+          nodes[active[0]].edgeLength = Math.max(0, remainingDist / 2);
+          nodes[active[1]].edgeLength = Math.max(0, remainingDist / 2);
+          nodes.push(root);
+
+          return root;
+      }
+
+      function drawRectangularTree(canvas, root, taxaList, state, metaData) {
+          if (!root) return;
+
+          // Measure names for right margin
+          const dummyCtx = canvas.getContext('2d');
+          dummyCtx.font = 'bold 10px monospace';
+          let maxNameWidth = 0;
+          taxaList.forEach(t => {
+              let w = dummyCtx.measureText(t).width;
+              if (w > maxNameWidth) maxNameWidth = w;
+          });
+
+          // Count leaves
+          let leavesCount = 0;
+          function countLeaves(node) {
+              if (!node) return;
+              if (node.isLeaf) leavesCount++;
+              countLeaves(node.left);
+              countLeaves(node.right);
+          }
+          countLeaves(root);
+
+          // Dynamic canvas height scaling
+          const targetHeight = Math.max(260, leavesCount * 18 + 50);
+          canvas.style.height = targetHeight + 'px';
+          // Find container and add overflow styles if needed
+          const wrapper = canvas.parentElement;
+          if (wrapper) {
+            wrapper.style.maxHeight = '420px';
+            wrapper.style.overflowY = 'auto';
+            wrapper.style.overflowX = 'auto';
+          }
+
+          const rect = canvas.getBoundingClientRect();
+          const dpr = window.devicePixelRatio || 1;
+          canvas.width = rect.width * dpr;
+          canvas.height = rect.height * dpr;
+          const ctx = canvas.getContext('2d');
+          ctx.scale(dpr, dpr);
+          const width = rect.width;
+          const height = rect.height;
+          ctx.clearRect(0, 0, width, height);
+
+          // Calculate depths
+          function calcDepth(node) {
+              if (!node) return 0;
+              if (node.isLeaf) {
+                  node.totalDepth = node.edgeLength || 0;
+                  return node.totalDepth;
+              }
+              let dl = calcDepth(node.left);
+              let dr = calcDepth(node.right);
+              node.totalDepth = Math.max(dl, dr) + (node.edgeLength || 0);
+              return node.totalDepth;
+          }
+          let maxDepth = calcDepth(root);
+          if (maxDepth === 0) maxDepth = 1;
+
+          let yStep = (height - 50) / Math.max(1, leavesCount - 1);
+          let currentY = 20;
+
+          function assignY(node) {
+              if (node.isLeaf) {
+                  node.y = currentY;
+                  currentY += yStep;
+                  return node.y;
+              }
+              let yl = assignY(node.left);
+              let yr = assignY(node.right);
+              node.y = (yl + yr) / 2;
+              return node.y;
+          }
+          assignY(root);
+
+          let startX = 20;
+          let endX = Math.min(width * 0.7, width - maxNameWidth - 25);
+
+          function renderNode(node, pX, pY) {
+              let x = pX + ((node.edgeLength || 0) / maxDepth) * (endX - startX);
+              
+              ctx.beginPath();
+              ctx.moveTo(pX, pY);
+              ctx.lineTo(pX, node.y);
+              ctx.lineTo(x, node.y);
+              ctx.strokeStyle = '#64748b';
+              ctx.lineWidth = 1.5;
+              ctx.stroke();
+
+              if (node.isLeaf) {
+                  let isFocal = (node.name === state.focalTaxon);
+                  let isP1 = (node.name === state.p1Taxon);
+                  let isP2 = (node.name === state.p2Taxon);
+                  let meta = metaData[node.name] || { color: '#64748b' };
+                  
+                  ctx.beginPath();
+                  ctx.arc(x, node.y, 4, 0, 2*Math.PI);
+                  ctx.fillStyle = isFocal ? '#a855f7' : (isP1 ? '#d55e00' : (isP2 ? '#0072b2' : meta.color));
+                  ctx.fill();
+
+                  ctx.fillStyle = ctx.fillStyle;
+                  ctx.font = isFocal ? 'bold 10px monospace' : '9px monospace';
+                  ctx.fillText(node.name, x + 8, node.y + 3);
+              } else {
+                  renderNode(node.left, x, node.y);
+                  renderNode(node.right, x, node.y);
+              }
+          }
+          renderNode(root.left, startX, root.y);
+          renderNode(root.right, startX, root.y);
+
+          // Scale bar
+          ctx.beginPath();
+          ctx.moveTo(startX, height - 15);
+          ctx.lineTo(startX + (0.1 / maxDepth) * (endX - startX), height - 15);
+          ctx.strokeStyle = '#000';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          
+          ctx.fillStyle = '#000';
+          ctx.font = '9px monospace';
+          ctx.fillText('0.1 subst/site', startX, height - 20);
       }
 
       // High-performance client-side signal computer (runs in < 2ms)
@@ -1964,15 +1998,16 @@ function drawRectangularTree(canvas, root, taxaList, state, metaData) {
 
         DATA.breakpoints.forEach(b => {
           const tr = document.createElement('tr');
-          const isFocal = (b.recombinant === state.focalTaxon);
+          const isFocal = b.isolates.includes(state.focalTaxon);
           if (isFocal) tr.classList.add('active-row');
 
           const flankP1 = (b.flanking_p1_site !== null) ? `nt ${b.flanking_p1_site}` : 'None';
           const flankP2 = (b.flanking_p2_site !== null) ? `nt ${b.flanking_p2_site}` : 'None';
+          const isolatesDisplay = b.isolates.join(', ');
 
           tr.innerHTML = `
-            <td><b style="color:var(--cyan)">${b.breakpoint_id}</b></td>
-            <td><span class="pill-badge" style="background:rgba(168,85,247,0.18); color:var(--purple); border:1px solid rgba(168,85,247,0.3)">${b.recombinant}</span></td>
+            <td><b style="color:var(--cyan)">#${b.event_id}</b></td>
+            <td><span class="pill-badge" style="background:rgba(168,85,247,0.18); color:var(--purple); border:1px solid rgba(168,85,247,0.3)" title="${isolatesDisplay}">${b.isolates.length} Isolates</span> <span style="font-size:9px; color:var(--text-dim)">(${isolatesDisplay.length > 20 ? isolatesDisplay.substring(0,20)+'...' : isolatesDisplay})</span></td>
             <td><b>nt ${b.breakpoint_nt.toLocaleString()}</b></td>
             <td><span style="color:var(--amber)">[${b.ci_left.toLocaleString()}, ${b.ci_right.toLocaleString()}]</span></td>
             <td><b>${b.plateau_width} nt</b></td>

@@ -59,9 +59,14 @@ pub fn generate_visualization_dossier(
     let mut parent_taxa_set = HashSet::new();
 
     for ev in &scan_res.events {
-        if !rec_taxa_set.contains(&ev.candidate_name) {
-            rec_indices.push(ev.candidate_idx);
-            rec_taxa_set.insert(ev.candidate_name.clone());
+        for isolate in &ev.isolates {
+            if !rec_taxa_set.contains(isolate) {
+                // If we need indices, find them in aln.taxa
+                if let Some(idx) = aln.taxa.iter().position(|t| t == isolate) {
+                    rec_indices.push(idx);
+                }
+                rec_taxa_set.insert(isolate.clone());
+            }
         }
         if !ev.home_name.is_empty() && ev.home_name != "Ghost" {
             parent_taxa_set.insert(ev.home_name.clone());
@@ -134,7 +139,8 @@ pub fn generate_visualization_dossier(
     let mut bp_counter = 1usize;
 
     for ev in &scan_res.events {
-        let cand_idx = ev.candidate_idx;
+        let first_isolate = &ev.isolates[0];
+        let cand_idx = aln.taxa.iter().position(|t| t == first_isolate).unwrap_or(0);
         let home_idx = ev.home_idx.unwrap_or(0);
         let donor_idx_opt = ev.donor_idx;
 
@@ -185,6 +191,8 @@ pub fn generate_visualization_dossier(
 
         breakpoints.push(VisualizationBreakpoint {
             breakpoint_id: bp_5p_id,
+            event_id: ev.event_id,
+            isolates: ev.isolates.clone(),
             recombinant: ev.candidate_name.clone(),
             parent_1: ev.home_name.clone(),
             parent_2: donor_display_name.clone(),
@@ -239,6 +247,8 @@ pub fn generate_visualization_dossier(
 
             breakpoints.push(VisualizationBreakpoint {
                 breakpoint_id: format!("BP_{} (3')", bp_counter),
+                event_id: ev.event_id,
+                isolates: ev.isolates.clone(),
                 recombinant: ev.candidate_name.clone(),
                 parent_1: donor_display_name,
                 parent_2: ev.home_name.clone(),
@@ -266,7 +276,7 @@ pub fn generate_visualization_dossier(
         let mut t_events: Vec<&crate::types::RecombinationEvent> = scan_res
             .events
             .iter()
-            .filter(|e| &e.candidate_name == t)
+            .filter(|e| e.isolates.contains(t))
             .collect();
         t_events.sort_by_key(|e| e.u1);
 
@@ -308,7 +318,7 @@ pub fn generate_visualization_dossier(
                     .cloned()
                     .unwrap_or_else(|| "#d55e00".to_string());
 
-                let bp_5p = breakpoints.iter().find(|b| &b.recombinant == t && b.breakpoint_nt == ev.u1);
+                let bp_5p = breakpoints.iter().find(|b| b.isolates.contains(t) && b.breakpoint_nt == ev.u1);
                 let bp_5p_id = bp_5p.map(|b| b.breakpoint_id.clone());
                 let ci_l_5p = bp_5p.map(|b| b.ci_left).unwrap_or(ev.u1.saturating_sub(5).max(1)).max(curr);
                 let ci_r_5p = bp_5p.map(|b| b.ci_right).unwrap_or((ev.u1 + 5).min(l)).min(ev.u2);
@@ -350,7 +360,7 @@ pub fn generate_visualization_dossier(
                     curr = l + 1;
                     break;
                 } else {
-                    let bp_3p = breakpoints.iter().find(|b| &b.recombinant == t && b.breakpoint_nt == ev.u2);
+                    let bp_3p = breakpoints.iter().find(|b| b.isolates.contains(t) && b.breakpoint_nt == ev.u2);
                     let bp_3p_id = bp_3p.map(|b| b.breakpoint_id.clone());
                     let tract_st = (ci_r_5p + 1).min(ev.u2);
                     let ci_l_3p = bp_3p.map(|b| b.ci_left).unwrap_or(ev.u2.saturating_sub(5).max(1)).max(tract_st);
@@ -439,8 +449,8 @@ pub fn generate_visualization_dossier(
     let (focal_cand_idx, focal_cand_name, focal_home_idx, focal_home_name, focal_donor_idx_opt, focal_donor_name) =
         if let Some(ev) = scan_res.events.first() {
             (
-                ev.candidate_idx,
-                ev.candidate_name.clone(),
+                aln.taxa.iter().position(|t| t == &ev.isolates[0]).unwrap_or(0),
+                ev.isolates[0].clone(),
                 ev.home_idx.unwrap_or(0),
                 ev.home_name.clone(),
                 ev.donor_idx,
@@ -642,6 +652,7 @@ pub fn generate_visualization_dossier(
         query_id: focal_cand_name,
         p1_id: focal_home_name,
         p2_id: focal_donor_name,
+        unique_events_count: scan_res.events.len(),
         recombinants_count: rec_taxa_set.len(),
         breakpoints_count: breakpoints.len(),
         informative_snps_count: scan_res.informative_sites,

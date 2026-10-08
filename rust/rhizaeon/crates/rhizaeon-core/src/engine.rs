@@ -237,20 +237,23 @@ impl RhizAeonEngine {
             }
         }
 
-        // Sort events by candidate_idx and u1
+        // Sort events by candidate name and u1
         verified_events.sort_by(|a, b| {
-            a.candidate_idx
-                .cmp(&b.candidate_idx)
+            a.isolates[0]
+                .cmp(&b.isolates[0])
                 .then(a.u1.cmp(&b.u1))
         });
 
         // Deduplicate adjacent identical calls
         verified_events.dedup_by(|a, b| {
-            a.candidate_idx == b.candidate_idx && a.u1 == b.u1 && a.u2 == b.u2
+            a.isolates[0] == b.isolates[0] && a.u1 == b.u1 && a.u2 == b.u2
         });
 
         // Adjudicate reticulation graph (DIR-RHIZ-PAFF-013.1)
-        let verified_events = due_diligence.adjudicate_reticulation_graph(verified_events, &raw_aln, &screening);
+        let mut verified_events = due_diligence.adjudicate_reticulation_graph(verified_events, &raw_aln, &screening);
+
+        // Group ancestral events
+        verified_events = group_ancestral_events(verified_events);
 
         let is_h0 = verified_events.is_empty();
 
@@ -264,6 +267,44 @@ impl RhizAeonEngine {
             run_time_ms: 0.0,
         }
     }
+}
+
+fn group_ancestral_events(mut events: Vec<crate::types::RecombinationEvent>) -> Vec<crate::types::RecombinationEvent> {
+    let mut grouped: Vec<crate::types::RecombinationEvent> = Vec::new();
+    events.sort_by_key(|e| (e.home_idx, e.donor_idx, e.u1));
+    for e in events {
+        let mut found = false;
+        for g in &mut grouped {
+            if g.home_name == e.home_name && g.donor_name == e.donor_name {
+                let overlap_start = g.u1.max(e.u1);
+                let overlap_end = g.u2.min(e.u2);
+                if overlap_end >= overlap_start {
+                    let overlap_len = overlap_end - overlap_start + 1;
+                    let min_len = (g.u2.saturating_sub(g.u1) + 1).min(e.u2.saturating_sub(e.u1) + 1);
+                    if overlap_len as f64 >= 0.5 * min_len as f64 {
+                        g.isolates.extend(e.isolates.clone());
+                        g.isolates.sort();
+                        g.isolates.dedup();
+                        g.u1 = g.u1.min(e.u1);
+                        g.u2 = g.u2.max(e.u2);
+                        g.u1_continuous = g.u1_continuous.min(e.u1_continuous);
+                        g.u2_continuous = g.u2_continuous.max(e.u2_continuous);
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if !found {
+            grouped.push(e);
+        }
+    }
+    
+    // Assign 1-based sequential event ID and sort by it
+    for (i, g) in grouped.iter_mut().enumerate() {
+        g.event_id = i + 1;
+    }
+    grouped
 }
 
 /// Deduplicates overlapping tracts across different parental channels for a single candidate taxon.

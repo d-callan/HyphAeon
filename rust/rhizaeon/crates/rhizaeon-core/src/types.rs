@@ -81,6 +81,8 @@ pub struct PhysicalTract {
 /// Verified recombination event from Pass 3
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecombinationEvent {
+    pub event_id: usize,
+    pub isolates: Vec<String>,
     pub candidate_idx: usize,
     pub candidate_name: String,
     pub home_idx: Option<usize>,
@@ -127,6 +129,7 @@ pub struct VisualizationMetadata {
     pub query_id: String,
     pub p1_id: String,
     pub p2_id: String,
+    pub unique_events_count: usize,
     pub recombinants_count: usize,
     pub breakpoints_count: usize,
     pub informative_snps_count: usize,
@@ -158,6 +161,8 @@ pub struct MacroSegment {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisualizationBreakpoint {
     pub breakpoint_id: String,
+    pub event_id: usize,
+    pub isolates: Vec<String>,
     pub recombinant: String,
     pub parent_1: String,
     pub parent_2: String,

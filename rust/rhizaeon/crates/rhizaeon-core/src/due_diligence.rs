@@ -564,6 +564,8 @@ impl SequenceDueDiligence {
         let is_verified = p_fisher <= p_crit && s_donor >= self.poisson_floor;
 
         Some(RecombinationEvent {
+            event_id: 0,
+            isolates: vec![cand_name.clone()],
             candidate_idx: cand_idx,
             candidate_name: cand_name,
             home_idx: parental.home_global_idx,
@@ -609,16 +611,16 @@ impl SequenceDueDiligence {
                 continue;
             }
             let e1 = &events[i];
-            let c1 = e1.candidate_idx;
+            let c1_name = &e1.isolates[0];
 
             for j in (i + 1)..n_events {
                 if pruned[j] {
                     continue;
                 }
                 let e2 = &events[j];
-                let c2 = e2.candidate_idx;
+                let c2_name = &e2.isolates[0];
 
-                if c1 == c2 {
+                if c1_name == c2_name {
                     continue;
                 }
 
@@ -639,15 +641,15 @@ impl SequenceDueDiligence {
                 }
 
                 // Check if e1 cites c2 (as Home or Donor)
-                let e1_cites_c2 = (e1.home_idx == Some(c2)) || (e1.donor_idx == Some(c2));
+                let e1_cites_c2 = (e1.home_name == *c2_name) || (e1.donor_name == *c2_name);
                 // Check if e2 cites c1 (as Home or Donor)
-                let e2_cites_c1 = (e2.home_idx == Some(c1)) || (e2.donor_idx == Some(c1));
+                let e2_cites_c1 = (e2.home_name == *c1_name) || (e2.donor_name == *c1_name);
 
                 if e1_cites_c2 && e2_cites_c1 {
                     // Mutual 2-cycle detected!
                     // Check external donor authenticity:
-                    let e1_has_ext_donor = e1.donor_idx.is_some() && e1.donor_idx != Some(c2);
-                    let e2_has_ext_donor = e2.donor_idx.is_some() && e2.donor_idx != Some(c1);
+                    let e1_has_ext_donor = e1.donor_idx.is_some() && e1.donor_name != *c2_name;
+                    let e2_has_ext_donor = e2.donor_idx.is_some() && e2.donor_name != *c1_name;
 
                     if e1_has_ext_donor && !e2_has_ext_donor {
                         // e1 has authentic external donor, while e2's donor is its cyclic partner
@@ -766,6 +768,8 @@ mod tests {
 
         // Event 1: R with Home H (1), Donor D (2)
         let e1 = RecombinationEvent {
+            event_id: 1,
+            isolates: vec!["R".into()],
             candidate_idx: 0,
             candidate_name: "R".into(),
             home_idx: Some(1),
@@ -791,6 +795,8 @@ mod tests {
 
         // Event 2: H with Home D (2), Donor R (0) [Reflected illusion!]
         let e2 = RecombinationEvent {
+            event_id: 2,
+            isolates: vec!["H".into()],
             candidate_idx: 1,
             candidate_name: "H".into(),
             home_idx: Some(2),
@@ -816,7 +822,7 @@ mod tests {
 
         let adjudicated = dd.adjudicate_reticulation_graph(vec![e1, e2], &aln, &screening);
         assert_eq!(adjudicated.len(), 1);
-        assert_eq!(adjudicated[0].candidate_name, "R");
+        assert_eq!(adjudicated[0].isolates[0], "R");
         assert_eq!(adjudicated[0].home_name, "H");
         assert_eq!(adjudicated[0].donor_name, "D");
     }
