@@ -417,14 +417,16 @@
       border-bottom: 2px solid #f59e0b;
     }
 
-    /* Level 5: Topological Subspaces */
+    /* Level 5: Topological Subspaces & Level 6 Trees */
     .subspaces-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: 14px;
+      width: 100%;
+      box-sizing: border-box;
     }
     @media (max-width: 820px) {
-      .subspaces-grid { grid-template-columns: 1fr; }
+      .subspaces-grid { grid-template-columns: minmax(0, 1fr); }
     }
     .subspace-box {
       background: var(--bg-base);
@@ -434,11 +436,23 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
+      min-width: 0;
+      max-width: 100%;
+      overflow: hidden;
+      box-sizing: border-box;
     }
     .subspace-canvas-wrapper {
       width: 100%;
+      max-width: 100%;
       height: 220px;
       position: relative;
+      box-sizing: border-box;
+    }
+    .subspace-canvas-wrapper canvas {
+      width: 100% !important;
+      max-width: 100% !important;
+      display: block;
+      box-sizing: border-box;
     }
     .subspace-metrics {
       background: var(--bg-surface-elevated);
@@ -1113,22 +1127,30 @@ __RHIZAEON_DATA_JSON__
           // Dynamic canvas height scaling
           const targetHeight = Math.max(260, leavesCount * 18 + 50);
           canvas.style.height = targetHeight + 'px';
+          canvas.style.width = '100%';
+
           // Find container and add overflow styles if needed
           const wrapper = canvas.parentElement;
           if (wrapper) {
             wrapper.style.maxHeight = '420px';
             wrapper.style.overflowY = 'auto';
-            wrapper.style.overflowX = 'auto';
+            wrapper.style.overflowX = 'hidden';
+            wrapper.style.width = '100%';
+            wrapper.style.boxSizing = 'border-box';
           }
 
+          const wrapperWidth = wrapper ? wrapper.clientWidth : 350;
           const rect = canvas.getBoundingClientRect();
+          const cssWidth = (rect.width > 0) ? rect.width : (wrapperWidth > 0 ? wrapperWidth : 350);
+          const cssHeight = targetHeight;
+
           const dpr = window.devicePixelRatio || 1;
-          canvas.width = rect.width * dpr;
-          canvas.height = rect.height * dpr;
+          canvas.width = Math.round(cssWidth * dpr);
+          canvas.height = Math.round(cssHeight * dpr);
           const ctx = canvas.getContext('2d');
           ctx.scale(dpr, dpr);
-          const width = rect.width;
-          const height = rect.height;
+          const width = cssWidth;
+          const height = cssHeight;
           ctx.clearRect(0, 0, width, height);
 
           // Calculate depths
