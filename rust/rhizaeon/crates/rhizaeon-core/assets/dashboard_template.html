@@ -1185,7 +1185,54 @@ __RHIZAEON_DATA_JSON__
           assignY(root);
 
           let startX = 20;
-          let endX = Math.min(width * 0.7, width - maxNameWidth - 25);
+          let roleBadgeWidth = 110;
+          let endX = Math.max(30, Math.min(width * 0.52, width - maxNameWidth - roleBadgeWidth - 30));
+
+          function drawLabeledArrow(ctx, x, y, label, textColor, bgColor, borderColor) {
+              ctx.save();
+              ctx.strokeStyle = textColor;
+              ctx.fillStyle = textColor;
+              ctx.lineWidth = 1.5;
+              
+              const arrowLen = 12;
+              const arrowStartX = x + arrowLen;
+              ctx.beginPath();
+              ctx.moveTo(arrowStartX, y);
+              ctx.lineTo(x + 2, y);
+              ctx.stroke();
+              
+              ctx.beginPath();
+              ctx.moveTo(x, y);
+              ctx.lineTo(x + 5, y - 3.5);
+              ctx.lineTo(x + 5, y + 3.5);
+              ctx.closePath();
+              ctx.fill();
+
+              ctx.font = 'bold 9px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+              const textW = ctx.measureText(label).width;
+              const pillX = arrowStartX + 3;
+              const pillH = 14;
+              const pillW = textW + 10;
+              const pillY = y - pillH / 2;
+
+              ctx.fillStyle = bgColor;
+              ctx.beginPath();
+              if (ctx.roundRect) {
+                  ctx.roundRect(pillX, pillY, pillW, pillH, 3);
+              } else {
+                  ctx.rect(pillX, pillY, pillW, pillH);
+              }
+              ctx.fill();
+              ctx.strokeStyle = borderColor;
+              ctx.lineWidth = 1;
+              ctx.stroke();
+
+              ctx.fillStyle = textColor;
+              ctx.textAlign = 'left';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(label, pillX + 5, y);
+              ctx.restore();
+          }
 
           function renderNode(node, pX, pY) {
               let x = pX + ((node.edgeLength || 0) / maxDepth) * (endX - startX);
@@ -1200,18 +1247,36 @@ __RHIZAEON_DATA_JSON__
 
               if (node.isLeaf) {
                   let isFocal = (node.name === state.focalTaxon);
-                  let isP1 = (node.name === state.p1Taxon);
-                  let isP2 = (node.name === state.p2Taxon);
+                  let isP1 = (node.name === state.p1Taxon) || (state.p1Taxon && metaData[node.name] && metaData[node.name].clade === state.p1Taxon);
+                  let isP2 = (node.name === state.p2Taxon) || (state.p2Taxon && metaData[node.name] && metaData[node.name].clade === state.p2Taxon);
                   let meta = metaData[node.name] || { color: '#64748b' };
                   
+                  let dotRadius = (isFocal || isP1 || isP2) ? 5.5 : 3.5;
                   ctx.beginPath();
-                  ctx.arc(x, node.y, 4, 0, 2*Math.PI);
+                  ctx.arc(x, node.y, dotRadius, 0, 2*Math.PI);
                   ctx.fillStyle = isFocal ? '#a855f7' : (isP1 ? '#d55e00' : (isP2 ? '#0072b2' : meta.color));
                   ctx.fill();
+                  if (isFocal || isP1 || isP2) {
+                      ctx.strokeStyle = '#ffffff';
+                      ctx.lineWidth = 1.5;
+                      ctx.stroke();
+                  }
 
-                  ctx.fillStyle = ctx.fillStyle;
-                  ctx.font = isFocal ? 'bold 10px monospace' : '9px monospace';
+                  ctx.fillStyle = isFocal ? '#a855f7' : (isP1 ? '#d55e00' : (isP2 ? '#0072b2' : (meta.color || '#334155')));
+                  ctx.font = (isFocal || isP1 || isP2) ? 'bold 10px monospace' : '9px monospace';
+                  ctx.textAlign = 'left';
+                  ctx.textBaseline = 'alphabetic';
                   ctx.fillText(node.name, x + 8, node.y + 3);
+
+                  let nameW = ctx.measureText(node.name).width;
+                  let arrowX = x + 8 + nameW + 8;
+                  if (isFocal) {
+                      drawLabeledArrow(ctx, arrowX, node.y, 'Recombinant', '#7e22ce', '#f3e8ff', '#c084fc');
+                  } else if (isP1) {
+                      drawLabeledArrow(ctx, arrowX, node.y, 'Donor', '#c2410c', '#ffedd5', '#fb923c');
+                  } else if (isP2) {
+                      drawLabeledArrow(ctx, arrowX, node.y, 'Home', '#0369a1', '#e0f2fe', '#38bdf8');
+                  }
               } else {
                   renderNode(node.left, x, node.y);
                   renderNode(node.right, x, node.y);
