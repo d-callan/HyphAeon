@@ -92,7 +92,6 @@ impl RhizAeonEngine {
         let root_seq = compute_consensus_soft_root(&aln, None);
 
         // 4. Attention & Zero-drift Force Field
-        let t0_att = std::time::Instant::now();
         let attention = PhyloAttentionEngine::new(self.dim, self.root_sink_factor);
         let (a_tensor, f_tensor, c_tensor) = attention.compute_attention_and_force_tensors(
             &aln,
@@ -101,13 +100,10 @@ impl RhizAeonEngine {
             &b_prior,
             &root_seq,
         );
-        let _d_att = t0_att.elapsed();
 
         // 5. Pass 1 Screener
-        let t0_scr = std::time::Instant::now();
         let screener = LocalFluxScreener::new();
         let screening = screener.screen(&f_tensor, &c_tensor, &aln, &landmarks);
-        let _d_scr = t0_scr.elapsed();
 
         if screening.is_non_recombinant_h0 {
             return ScanResult {
@@ -122,11 +118,6 @@ impl RhizAeonEngine {
         }
 
         // 6. Pass 2 Polishing & Pass 3 Due Diligence on candidates
-        let t0_cand = std::time::Instant::now();
-        let mut time_deconvolve = std::time::Duration::ZERO;
-        let mut time_localized = std::time::Duration::ZERO;
-        let mut time_verify = std::time::Duration::ZERO;
-
         let resolver = TrajectoryParentalResolver::new();
         let polisher = CumulativeTrajectoryPolisher::new();
         let due_diligence = SequenceDueDiligence::new(self.poisson_floor, self.alpha, 100_000);
@@ -146,7 +137,6 @@ impl RhizAeonEngine {
 
             let mut candidate_tracts = Vec::new();
             for pair in &parental_pairs {
-                let t0 = std::time::Instant::now();
                 let tracts = polisher.deconvolve_candidate(
                     cand_idx,
                     pair,
@@ -155,7 +145,6 @@ impl RhizAeonEngine {
                     n,
                     num_channels,
                 );
-                time_deconvolve += t0.elapsed();
                 candidate_tracts.extend(tracts);
             }
 
@@ -163,7 +152,6 @@ impl RhizAeonEngine {
             let deduplicated_tracts = deduplicate_candidate_tracts(candidate_tracts);
 
             for tract in deduplicated_tracts {
-                let t0 = std::time::Instant::now();
                 let local_parental = resolver.resolve_reticulation_channels_localized(
                     cand_idx,
                     tract.u1_discrete,
@@ -176,11 +164,8 @@ impl RhizAeonEngine {
                     Some(tract.home_channel),
                     Some(tract.donor_channel),
                 );
-                time_localized += t0.elapsed();
 
-                let t0_v = std::time::Instant::now();
-                let tract_opt = due_diligence.verify_tract(&tract, &local_parental, &aln, &landmarks);
-                time_verify += t0_v.elapsed();
+                let tract_opt = due_diligence.verify_tract(&tract, &local_parental, &aln, &landmarks, &screening.rate_burst_indices);
 
                 if let Some(mut event) = tract_opt {
                     if event.is_verified {
@@ -208,10 +193,7 @@ impl RhizAeonEngine {
         });
 
         // Adjudicate reticulation graph (DIR-RHIZ-PAFF-013.1)
-        let t0_adj = std::time::Instant::now();
         let verified_events = due_diligence.adjudicate_reticulation_graph(verified_events, &raw_aln, &screening);
-        let _d_adj = t0_adj.elapsed();
-        let _d_cand_total = t0_cand.elapsed();
 
         let is_h0 = verified_events.is_empty();
 

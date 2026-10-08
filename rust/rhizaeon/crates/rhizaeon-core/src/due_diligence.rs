@@ -85,6 +85,7 @@ impl SequenceDueDiligence {
         parental: &TrajectoryParentalPair,
         aln: &Alignment,
         _landmarks: &LandmarkSet,
+        rate_burst_indices: &[usize],
     ) -> Option<RecombinationEvent> {
         let cand_idx = parental.candidate_idx;
         let cand_name = aln.taxa[cand_idx].clone();
@@ -104,12 +105,21 @@ impl SequenceDueDiligence {
         }
 
         let home_global = parental.home_global_idx.unwrap_or(0);
+        // Autapomorphic rate burst lineages cannot serve as Home parental reference
+        if rate_burst_indices.contains(&home_global) {
+            return None;
+        }
+
         let cand_row = aln.row(cand_idx);
         let home_row = aln.row(home_global);
 
         let (donor_row_opt, donor_name) = if parental.is_ghost_donor {
             (None, "Ghost".to_string())
         } else if let Some(dg) = parental.donor_global_idx {
+            // Autapomorphic rate burst lineages cannot serve as Donor parental reference
+            if rate_burst_indices.contains(&dg) {
+                return None;
+            }
             (Some(aln.row(dg)), parental.donor_name.clone())
         } else {
             (None, "Ghost".to_string())
@@ -117,7 +127,10 @@ impl SequenceDueDiligence {
 
         // Site counters
         let mut s_donor = 0usize;
+        let mut s_home_tract = 0usize;
+        let mut s_donor_flank = 0usize;
         let mut s_home_flank = 0usize;
+
         let mut mismatch_tract_donor = 0usize;
         let mut mismatch_tract_home = 0usize;
         let mut valid_tract = 0usize;
@@ -141,17 +154,18 @@ impl SequenceDueDiligence {
                         valid_tract += 1;
                         if rc != rd { mismatch_tract_donor += 1; }
                         if rc != rh { mismatch_tract_home += 1; }
-                        // Informative site: candidate matches donor while home differs
-                        if rc == rd && rh != rd {
-                            s_donor += 1;
+                        // Informative site where Home and Donor differ
+                        if rh != rd {
+                            if rc == rd { s_donor += 1; }
+                            if rc == rh { s_home_tract += 1; }
                         }
                     } else {
                         valid_flank += 1;
                         if rc != rd { mismatch_flank_donor += 1; }
                         if rc != rh { mismatch_flank_home += 1; }
-                        // Flank informative site: candidate matches home while donor differs
-                        if rc == rh && rd != rh {
-                            s_home_flank += 1;
+                        if rh != rd {
+                            if rc == rd { s_donor_flank += 1; }
+                            if rc == rh { s_home_flank += 1; }
                         }
                     }
                 }
@@ -183,8 +197,10 @@ impl SequenceDueDiligence {
 
         // Private Autapomorphy Ratio Sieve (DIR-RHIZ-PAFF-012.8 Requirement 1.3)
         // Rejects lineage-specific substitution rate acceleration (Darren's heterotachy)
+        // Checks both Candidate AND Home to prevent phantom mirror events from an accelerated sister.
         if aln.num_taxa >= 3 {
-            let mut n_priv = 0usize;
+            let mut n_priv_cand = 0usize;
+            let mut n_priv_home = 0usize;
             let mut n_total_mut = 0usize;
 
             for u in s_idx..e_idx {
@@ -192,42 +208,198 @@ impl SequenceDueDiligence {
                 let rh = home_row[u];
                 if rc > 0 && rh > 0 && rc != rh {
                     n_total_mut += 1;
-                    let mut is_private = true;
+                    let mut is_cand_priv = true;
+                    let mut is_home_priv = true;
                     for t_idx in 0..aln.num_taxa {
-                        if t_idx != cand_idx && aln.row(t_idx)[u] == rc {
-                            is_private = false;
-                            break;
+                        let rt = aln.row(t_idx)[u];
+                        if t_idx != cand_idx && rt == rc {
+                            is_cand_priv = false;
+                        }
+                        if t_idx != home_global && rt == rh {
+                            is_home_priv = false;
                         }
                     }
-                    if is_private {
-                        n_priv += 1;
-                    }
+                    if is_cand_priv { n_priv_cand += 1; }
+                    if is_home_priv { n_priv_home += 1; }
                 }
             }
 
             if n_total_mut >= 4 {
-                let rho_priv = (n_priv as f64) / (n_total_mut as f64);
-                if rho_priv >= 0.50 && n_priv >= 3 {
+                let rho_priv_cand = (n_priv_cand as f64) / (n_total_mut as f64);
+                let rho_priv_home = (n_priv_home as f64) / (n_total_mut as f64);
+                if (rho_priv_cand >= 0.50 && n_priv_cand >= 3)
+                    || (aln.num_taxa >= 6 && rho_priv_home >= 0.50 && n_priv_home >= 3)
+                {
                     // Heterotachy / autapomorphic rate burst:
-                    // If >= 50% of mutations in the tract are private to the candidate alone
-                    // (not shared with the candidate donor or any other taxon), it represents
-                    // terminal branch rate variation, not recombination.
+                    // Either candidate or home lineage underwent private terminal branch rate acceleration.
                     return None;
+                }
+            }
+
+            if let Some(donor_row) = donor_row_opt {
+                if let Some(dg) = parental.donor_global_idx {
+                    let mut n_priv_donor = 0usize;
+                    let mut n_total_donor = 0usize;
+                    for u in s_idx..e_idx {
+                        let rd = donor_row[u];
+                        let rh = home_row[u];
+                        if rd > 0 && rh > 0 && rd != rh {
+                            n_total_donor += 1;
+                            let mut is_donor_priv = true;
+                            for t_idx in 0..aln.num_taxa {
+                                if t_idx != dg && aln.row(t_idx)[u] == rd {
+                                    is_donor_priv = false;
+                                    break;
+                                }
+                            }
+                            if is_donor_priv { n_priv_donor += 1; }
+                        }
+                    }
+                    if n_total_donor >= 4 {
+                        let rho_priv_donor = (n_priv_donor as f64) / (n_total_donor as f64);
+                        if rho_priv_donor >= 0.50 && n_priv_donor >= 3 {
+                            return None;
+                        }
+                    }
                 }
             }
         }
 
-        // Fisher exact test contingency table
-        let a = s_donor;
-        let b = mismatch_tract_donor.saturating_sub(s_donor);
-        let c = mismatch_flank_home.saturating_sub(s_home_flank);
-        let d = s_home_flank;
+        // Localized Autapomorphic Rate Acceleration Contrast Test on Putative Parental Lineages:
+        // In genuine recombination, Home is a stable parental lineage that did not undergo
+        // an episodic rate burst of private autapomorphic mutations specifically within this tract.
+        // If Home's private autapomorphy density in the tract jumps significantly above its flank
+        // baseline (r_priv_tract >= r_priv_flank + 0.020 with n_priv >= 4), Home is an accelerated
+        // lineage whose terminal mutations create a phantom mirror effect on innocent taxa.
+        // This check requires N >= 6 to ensure the tree has sufficient background taxa beyond the quartet.
+        if aln.num_taxa >= 6 {
+            let mut n_priv_home_tract = 0usize;
+            let mut valid_home_tract = 0usize;
+            for u in s_idx..e_idx {
+                let rh = home_row[u];
+                if rh > 0 {
+                    valid_home_tract += 1;
+                    let mut is_priv = true;
+                    for t_idx in 0..aln.num_taxa {
+                        if t_idx != home_global && aln.row(t_idx)[u] == rh {
+                            is_priv = false;
+                            break;
+                        }
+                    }
+                    if is_priv {
+                        n_priv_home_tract += 1;
+                    }
+                }
+            }
+
+            let mut n_priv_home_flank = 0usize;
+            let mut valid_home_flank = 0usize;
+            for u in 0..l {
+                if u < s_idx || u >= e_idx {
+                    let rh = home_row[u];
+                    if rh > 0 {
+                        valid_home_flank += 1;
+                        let mut is_priv = true;
+                        for t_idx in 0..aln.num_taxa {
+                            if t_idx != home_global && aln.row(t_idx)[u] == rh {
+                                is_priv = false;
+                                break;
+                            }
+                        }
+                        if is_priv {
+                            n_priv_home_flank += 1;
+                        }
+                    }
+                }
+            }
+
+            if valid_home_tract >= 20 && valid_home_flank >= 20 {
+                let r_priv_tract = (n_priv_home_tract as f64) / (valid_home_tract as f64);
+                let r_priv_flank = (n_priv_home_flank as f64) / (valid_home_flank as f64);
+                if (r_priv_tract >= r_priv_flank + 0.020) && n_priv_home_tract >= 4 {
+                    return None;
+                }
+            }
+
+            // Same localized autapomorphy test for Donor (if sampled)
+            if let Some(donor_row) = donor_row_opt {
+                if let Some(dg) = parental.donor_global_idx {
+                    let mut n_priv_donor_tract = 0usize;
+                    let mut valid_donor_tract = 0usize;
+                    for u in s_idx..e_idx {
+                        let rd = donor_row[u];
+                        if rd > 0 {
+                            valid_donor_tract += 1;
+                            let mut is_priv = true;
+                            for t_idx in 0..aln.num_taxa {
+                                if t_idx != dg && aln.row(t_idx)[u] == rd {
+                                    is_priv = false;
+                                    break;
+                                }
+                            }
+                            if is_priv {
+                                n_priv_donor_tract += 1;
+                            }
+                        }
+                    }
+
+                    let mut n_priv_donor_flank = 0usize;
+                    let mut valid_donor_flank = 0usize;
+                    for u in 0..l {
+                        if u < s_idx || u >= e_idx {
+                            let rd = donor_row[u];
+                            if rd > 0 {
+                                valid_donor_flank += 1;
+                                let mut is_priv = true;
+                                for t_idx in 0..aln.num_taxa {
+                                    if t_idx != dg && aln.row(t_idx)[u] == rd {
+                                        is_priv = false;
+                                        break;
+                                    }
+                                }
+                                if is_priv {
+                                    n_priv_donor_flank += 1;
+                                }
+                            }
+                        }
+                    }
+
+                    if valid_donor_tract >= 20 && valid_donor_flank >= 20 {
+                        let r_priv_tract = (n_priv_donor_tract as f64) / (valid_donor_tract as f64);
+                        let r_priv_flank = (n_priv_donor_flank as f64) / (valid_donor_flank as f64);
+                        if (r_priv_tract >= r_priv_flank + 0.020) && n_priv_donor_tract >= 4 {
+                            return None;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Canonical Fisher exact test contingency table
+        let (a, b, c, d) = if donor_row_opt.is_some() {
+            (s_donor, s_home_tract, s_donor_flank, s_home_flank)
+        } else {
+            (
+                mismatch_tract_home,
+                valid_tract.saturating_sub(mismatch_tract_home),
+                mismatch_flank_home,
+                valid_flank.saturating_sub(mismatch_flank_home),
+            )
+        };
+
+        // Mosaic Odds Ratio check:
+        // In recombination, the odds of matching Donor vs Home in the tract must exceed the flank
+        if donor_row_opt.is_some() {
+            if b * c >= a * d {
+                return None;
+            }
+        }
 
         let p_fisher = self.fisher_exact_2x2(a, b, c, d);
 
-        // Bonferroni critical threshold over all candidate-donor pairs in alignment
-        let num_pairs = ((aln.num_taxa * (aln.num_taxa - 1) / 2).max(1)) as f64;
-        let p_crit = self.alpha / num_pairs;
+        // Bonferroni critical threshold over candidate triplets in alignment
+        let num_triplets = (((aln.num_taxa * (aln.num_taxa - 1) / 2) * aln.num_taxa.saturating_sub(2).max(1)).max(1)) as f64;
+        let p_crit = self.alpha / num_triplets;
 
         let d_tract_donor = if valid_tract > 0 { (mismatch_tract_donor as f64) / (valid_tract as f64) } else { 0.0 };
         let d_tract_home = if valid_tract > 0 { (mismatch_tract_home as f64) / (valid_tract as f64) } else { 0.0 };
@@ -241,6 +413,11 @@ impl SequenceDueDiligence {
             let delta_net_recoil = delta_donor_recoil + delta_home_recoil;
 
             if delta_donor_recoil <= 0.0 {
+                return None;
+            }
+
+            // In genuine mosaicism, candidate departs from home parent in tract
+            if delta_home_recoil < -0.015 {
                 return None;
             }
 

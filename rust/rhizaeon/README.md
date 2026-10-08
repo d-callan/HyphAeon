@@ -12,6 +12,17 @@ By avoiding the combinatorial $O(N^3)$ bottleneck of triplet methods (such as 3S
 
 ---
 
+## 🌐 Try RhizAeon Online (WebAssembly Web App)
+
+Run RhizAeon directly in your web browser with zero installation:  
+👉 **[https://veg.github.io/rhizaeon-code/](https://veg.github.io/rhizaeon-code/)**
+
+- **100% Client-Side Privacy:** WebAssembly executes locally on your CPU; your sequence data never touches a remote server.
+- **One-Click Empirical Benchmarks:** Preloaded with Potato Virus Y (Darren Martin benchmark), HIV-1 CRF02_AG, and Human mtDNA clonal controls.
+- **Interactive Dossiers:** Instant, in-browser rendering of continuous force-field trajectories, Manhattan changepoints, and mosaic breakpoint tables.
+
+---
+
 ## Key Highlights
 
 - **Linear-Time Scaling ($O(NK)$ vs. $O(N^3)$):** Evaluates alignments against $K \le 32$ Buneman metric landmarks. Scans 128 full-length genomes ($12\text{ kb}$) in **1.16 seconds**, compared to ~9.2 minutes for 3SEQ (**~500x speedup**).

@@ -70,6 +70,7 @@ impl LocalFluxScreener {
     /// Computes Spectral Participation Ratio (PR) of contemporary channels for a candidate taxon.
     /// Measures effective dimensional complexity of contemporary flux to distinguish
     /// multidirectional heterotachy bursts (high PR) from low-rank reticulation dipoles (PR ~ 1).
+    #[allow(dead_code)]
     fn compute_participation_ratio(
         &self,
         c_tensor: &[f64],
@@ -243,21 +244,8 @@ impl LocalFluxScreener {
             let z_r = (logit_r[i] - med_logit) / scale_logit;
 
             if z_r > z_alpha_r && gamma_root[i] <= self.spatial_coherence_threshold {
-                let is_burst = if r_root[i] > self.root_ratio_threshold {
-                    true
-                } else {
-                    let mut home_ch = None;
-                    if let Some(pos) = landmarks.indices.iter().position(|&idx| idx == i) {
-                        home_ch = Some(pos + 1);
-                    }
-                    let pr = self.compute_participation_ratio(c_tensor, i, l, n, num_channels, home_ch, inv_l);
-                    pr > 1.50
-                };
-
-                if is_burst {
-                    is_rate_burst[i] = true;
-                    rate_burst_indices.push(i);
-                }
+                is_rate_burst[i] = true;
+                rate_burst_indices.push(i);
             } else if (z_r > z_alpha_r || r_dim[i] > self.root_ratio_threshold)
                 && gamma_root[i] > self.spatial_coherence_threshold
             {
@@ -349,14 +337,12 @@ impl LocalFluxScreener {
 
         // Pervasive Recombination Admission Sieve (DIR-RHIZ-PAFF-013.3 Requirement 2)
         // In cohorts with pervasive recombination (e.g. viral swarms, potyviruses, CRFs),
-        // the cohort-wide variance is orders of magnitude above the clonal floor (mean_v >= 10.0).
+        // the cohort-wide variance is orders of magnitude above the clonal floor (mean_v >= 50.0).
         // In this regime, median-based outlier thresholds suffer from breakdown point masking.
         // We admit all non-burst taxa whose local variance or pulse exceeds the clonal floor.
         if !pool_indices.is_empty() {
             let mean_v_cohort: f64 = pool_v.iter().sum::<f64>() / (pool_v.len().max(1) as f64);
-            let max_v = pool_v.iter().cloned().fold(0.0f64, f64::max);
-            let disp_ratio = max_v / med_v.max(1e-6);
-            if mean_v_cohort >= 10.0 || (disp_ratio <= 4.0 && med_v >= 5.0) {
+            if mean_v_cohort >= 50.0 || med_v >= 50.0 {
                 for &i in &pool_indices {
                     if !is_rate_burst[i] && (v_cont[i] >= 10.0 || cont_pulse[i] >= 15.0) {
                         candidate_mask[i] = true;
