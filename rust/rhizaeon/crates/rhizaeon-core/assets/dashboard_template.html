@@ -1577,7 +1577,7 @@ __RHIZAEON_DATA_JSON__
 
       function initMdsDropdown() {
         selectMdsBp.innerHTML = '';
-        const myBps = DATA.breakpoints.filter(b => b.recombinant === state.focalTaxon);
+        const myBps = DATA.breakpoints.filter(b => b.recombinant === state.focalTaxon || (b.isolates && b.isolates.includes(state.focalTaxon)));
         if (myBps.length > 0) {
           myBps.forEach(b => {
             const opt = document.createElement('option');
@@ -1609,7 +1609,7 @@ __RHIZAEON_DATA_JSON__
       // Top Jump Buttons for Focal Taxon
       function updateTopJumpButtons() {
         topJumpContainer.innerHTML = '';
-        const myBps = DATA.breakpoints.filter(b => b.recombinant === state.focalTaxon);
+        const myBps = DATA.breakpoints.filter(b => b.recombinant === state.focalTaxon || (b.isolates && b.isolates.includes(state.focalTaxon)));
         myBps.slice(0, 4).forEach(b => {
           const btn = document.createElement('button');
           btn.className = 'btn btn-outline';
@@ -1700,7 +1700,7 @@ __RHIZAEON_DATA_JSON__
 
         // Draw Breakpoint markers & Plateaus
         DATA.breakpoints.forEach(bp => {
-          const isFocal = (bp.recombinant === state.focalTaxon);
+          const isFocal = (bp.recombinant === state.focalTaxon || (bp.isolates && bp.isolates.includes(state.focalTaxon)));
           const xL = (bp.ci_left / L_TOTAL) * width;
           const xR = (bp.ci_right / L_TOTAL) * width;
           ctx.fillStyle = isFocal ? '#f59e0b' : 'rgba(245, 158, 11, 0.4)';
@@ -1783,8 +1783,9 @@ __RHIZAEON_DATA_JSON__
               segDiv.onclick = (e) => {
                 e.stopPropagation();
                 const bp = DATA.breakpoints.find(b => (seg.breakpoint_id && b.breakpoint_id === seg.breakpoint_id) || (seg.event_id && b.event_id === seg.event_id));
+                const targetRec = (bp && bp.isolates && bp.isolates.includes(t)) ? t : (bp ? bp.recombinant : t);
                 if (bp) {
-                  inspectEvent(bp.breakpoint_id, bp.recombinant, bp.parent_1, bp.parent_2, bp.ci_left, bp.ci_right, bp.event_id || seg.event_id);
+                  inspectEvent(bp.breakpoint_id, targetRec, bp.parent_1, bp.parent_2, bp.ci_left, bp.ci_right, bp.event_id || seg.event_id);
                 } else if (seg.event_id) {
                   window.inspectEventById(seg.event_id);
                 }
@@ -1849,7 +1850,7 @@ __RHIZAEON_DATA_JSON__
         const t2 = setupCanvas(canvasLL);
         t2.ctx.clearRect(0, 0, t2.width, t2.height);
 
-        const myBps = DATA.breakpoints.filter(bp => bp.recombinant === state.focalTaxon);
+        const myBps = DATA.breakpoints.filter(bp => bp.recombinant === state.focalTaxon || (bp.isolates && bp.isolates.includes(state.focalTaxon)));
         const llTitle = document.getElementById('ll-track-title');
         if (llTitle) {
           llTitle.textContent = myBps.length > 0 
@@ -2003,7 +2004,7 @@ __RHIZAEON_DATA_JSON__
         hudTraj.innerHTML = `<span style="color:${yVal > 0.02 ? '#d55e00' : (yVal < -0.02 ? '#0072b2' : 'var(--cyan)')}">${yVal > 0 ? '+' : ''}${yVal.toFixed(3)} (${affinity})</span>`;
 
         // Plateau lookup
-        const inBp = DATA.breakpoints.find(b => b.recombinant === state.focalTaxon && nt >= b.ci_left && nt <= b.ci_right);
+        const inBp = DATA.breakpoints.find(b => (b.recombinant === state.focalTaxon || (b.isolates && b.isolates.includes(state.focalTaxon))) && nt >= b.ci_left && nt <= b.ci_right);
         if (inBp) {
           hudPlateau.innerHTML = `<span style="color:var(--amber)">Inside ${inBp.breakpoint_id} [${inBp.ci_left}–${inBp.ci_right}] (&Delta;=${inBp.plateau_width} nt void)</span>`;
           hudLL.innerHTML = `<span style="color:var(--emerald)">+${inBp.log_likelihood_gain.toFixed(2)} &Delta; ln L</span>`;
@@ -2040,7 +2041,7 @@ __RHIZAEON_DATA_JSON__
       function renderBaseBrowser() {
         const span = state.zoomEnd - state.zoomStart + 1;
         if (span > 180) {
-          const myBps = DATA.breakpoints.filter(b => b.recombinant === state.focalTaxon);
+          const myBps = DATA.breakpoints.filter(b => b.recombinant === state.focalTaxon || (b.isolates && b.isolates.includes(state.focalTaxon)));
           let jumpHtml = '';
           myBps.forEach(b => {
             jumpHtml += `<button class="btn btn-outline" onclick="window.jumpTo(${b.ci_left - 30}, ${b.ci_right + 30})" style="font-size:11px; padding:3px 9px;">Inspect ${b.breakpoint_id} (nt ${b.breakpoint_nt})</button>`;
@@ -2162,7 +2163,7 @@ __RHIZAEON_DATA_JSON__
         // Determine partition boundaries based on active breakpoint
         let splitNt = Math.floor(L_TOTAL / 2);
         let bpLabel = 'Center Split (50/50)';
-        const myBps = DATA.breakpoints.filter(b => b.recombinant === state.focalTaxon);
+        const myBps = DATA.breakpoints.filter(b => b.recombinant === state.focalTaxon || (b.isolates && b.isolates.includes(state.focalTaxon)));
         
         if (myBps.length > 0) {
           const activeBp = myBps.find(b => b.breakpoint_id === state.activeBpId) || myBps[0];
@@ -2530,7 +2531,10 @@ __RHIZAEON_DATA_JSON__
       window.setFocalTaxon = setFocalTaxon;
 
       function renderTrees() {
-        const myBps = DATA.breakpoints.filter(b => b.recombinant === state.focalTaxon);
+        let myBps = DATA.breakpoints.filter(b => b.recombinant === state.focalTaxon || (b.isolates && b.isolates.includes(state.focalTaxon)));
+        if (myBps.length === 0 && state.activeEventId) {
+            myBps = DATA.breakpoints.filter(b => b.event_id === state.activeEventId);
+        }
         if (myBps.length === 0) {
             // Just draw one whole tree
             const D = computeDistanceMatrix([[1, L_TOTAL]], DATA.taxa, DATA.sequences, L_TOTAL);
@@ -2551,7 +2555,9 @@ __RHIZAEON_DATA_JSON__
         let u2 = activeBp.ci_right;
 
         // Check if there is an explicit donor mosaic segment for this event
-        const tracks = DATA.mosaic_taxa[state.focalTaxon] || [];
+        const tracks = (DATA.mosaic_taxa[state.focalTaxon] && DATA.mosaic_taxa[state.focalTaxon].length > 0)
+            ? DATA.mosaic_taxa[state.focalTaxon]
+            : (DATA.mosaic_taxa[activeBp.recombinant] || []);
         const donorSeg = tracks.find(s => activeBp.event_id && s.event_id === activeBp.event_id && s.lineage && s.lineage.includes('Donor'));
 
         if (donorSeg) {

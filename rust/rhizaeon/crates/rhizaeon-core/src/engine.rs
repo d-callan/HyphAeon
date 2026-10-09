@@ -252,6 +252,9 @@ impl RhizAeonEngine {
         // Adjudicate reticulation graph (DIR-RHIZ-PAFF-013.1)
         let mut verified_events = due_diligence.adjudicate_reticulation_graph(verified_events, &raw_aln, &screening);
 
+        // Resolve transitive donor & home chains for co-recombinant isolates
+        resolve_donor_chains(&mut verified_events, &raw_aln);
+
         // Group ancestral events
         verified_events = group_ancestral_events(verified_events);
 
@@ -265,6 +268,207 @@ impl RhizAeonEngine {
             screening,
             events: verified_events,
             run_time_ms: 0.0,
+        }
+    }
+}
+
+/// Resolves transitive donor chains and co-recombinant lineages across overlapping tracts.
+/// When sequence A is detected with donor B, but B is itself a co-recombinant with donor C
+/// sharing the same Home lineage over an overlapping tract, A inherits donor C from B.
+/// Similarly, if sequence A cites B as Home, but B is a co-recombinant sharing the same donor
+/// over an overlapping tract with Home C, A inherits Home C from B.
+fn resolve_donor_chains(events: &mut [crate::types::RecombinationEvent], aln: &crate::types::Alignment) {
+    if events.len() <= 1 {
+        return;
+    }
+
+    let max_passes = events.len().min(10);
+    for _ in 0..max_passes {
+        let mut changed = false;
+
+        for i in 0..events.len() {
+            let e1_home = events[i].home_name.clone();
+            let e1_donor = events[i].donor_name.clone();
+            let e1_cand = events[i].candidate_name.clone();
+            let e1_u1 = events[i].u1;
+            let e1_u2 = events[i].u2;
+
+            // 1. Resolve Donor Chain: e1 -> e2 (e1 cited e2 as Donor)
+            if !e1_donor.is_empty() && e1_donor != "Ghost" {
+                let mut resolved_donor_idx = None;
+                let mut resolved_donor_name = None;
+                let mut resolved_is_ghost = false;
+
+                for (j, e2) in events.iter().enumerate() {
+                    if i == j {
+                        continue;
+                    }
+
+                    let e2_is_donor_isolate = e2.candidate_name == e1_donor || e2.isolates.contains(&e1_donor);
+                    if !e2_is_donor_isolate {
+                        continue;
+                    }
+
+                    // Check tract overlap: >= 50% of the minimum length
+                    let ov_start = e1_u1.max(e2.u1);
+                    let ov_end = e1_u2.min(e2.u2);
+                    if ov_end < ov_start {
+                        continue;
+                    }
+                    let ov_len = ov_end - ov_start + 1;
+                    let min_len = (e1_u2.saturating_sub(e1_u1) + 1).min(e2.u2.saturating_sub(e2.u1) + 1);
+                    if (ov_len as f64) < 0.5 * (min_len as f64) {
+                        continue;
+                    }
+
+                    // Compatible Home lineage
+                    if e1_home != e2.home_name {
+                        continue;
+                    }
+
+                    // e2's donor must not be e1 (prevent cyclic attribution)
+                    if e2.donor_name.is_empty() || e2.donor_name == e1_cand || events[i].isolates.contains(&e2.donor_name) {
+                        continue;
+                    }
+
+                    resolved_donor_name = Some(e2.donor_name.clone());
+                    resolved_donor_idx = e2.donor_idx;
+                    resolved_is_ghost = e2.is_ghost_donor;
+                    break;
+                }
+
+                if let Some(new_donor) = resolved_donor_name {
+                    if new_donor != events[i].donor_name {
+                        events[i].donor_name = new_donor;
+                        events[i].donor_idx = resolved_donor_idx;
+                        events[i].is_ghost_donor = resolved_is_ghost;
+
+                        if let Some(dg) = resolved_donor_idx {
+                            if dg < aln.num_taxa && events[i].candidate_idx < aln.num_taxa {
+                                let cand_row = aln.row(events[i].candidate_idx);
+                                let donor_row = aln.row(dg);
+                                let s_idx = events[i].u1.saturating_sub(1);
+                                let e_idx = events[i].u2.min(aln.length);
+
+                                let mut d_tr = 0usize;
+                                let mut v_tr = 0usize;
+                                let mut d_fl = 0usize;
+                                let mut v_fl = 0usize;
+
+                                for u in 0..aln.length {
+                                    let rc = cand_row[u];
+                                    let rd = donor_row[u];
+                                    if rc > 0 && rd > 0 {
+                                        if u >= s_idx && u < e_idx {
+                                            v_tr += 1;
+                                            if rc != rd { d_tr += 1; }
+                                        } else {
+                                            v_fl += 1;
+                                            if rc != rd { d_fl += 1; }
+                                        }
+                                    }
+                                }
+                                if v_tr > 0 {
+                                    events[i].d_tract_donor = (d_tr as f64) / (v_tr as f64);
+                                }
+                                if v_fl > 0 {
+                                    events[i].d_flank_donor = (d_fl as f64) / (v_fl as f64);
+                                }
+                            }
+                        }
+                        changed = true;
+                    }
+                }
+            }
+
+            // 2. Resolve Home Chain: e1 -> e2 (e1 cited e2 as Home)
+            if !e1_home.is_empty() {
+                let mut resolved_home_idx = None;
+                let mut resolved_home_name = None;
+
+                for (j, e2) in events.iter().enumerate() {
+                    if i == j {
+                        continue;
+                    }
+
+                    let e2_is_home_isolate = e2.candidate_name == e1_home || e2.isolates.contains(&e1_home);
+                    if !e2_is_home_isolate {
+                        continue;
+                    }
+
+                    // Check tract overlap
+                    let ov_start = e1_u1.max(e2.u1);
+                    let ov_end = e1_u2.min(e2.u2);
+                    if ov_end < ov_start {
+                        continue;
+                    }
+                    let ov_len = ov_end - ov_start + 1;
+                    let min_len = (e1_u2.saturating_sub(e1_u1) + 1).min(e2.u2.saturating_sub(e2.u1) + 1);
+                    if (ov_len as f64) < 0.5 * (min_len as f64) {
+                        continue;
+                    }
+
+                    // Compatible Donor lineage
+                    if events[i].donor_name != e2.donor_name {
+                        continue;
+                    }
+
+                    // e2's home must not be e1
+                    if e2.home_name.is_empty() || e2.home_name == e1_cand || events[i].isolates.contains(&e2.home_name) {
+                        continue;
+                    }
+
+                    resolved_home_name = Some(e2.home_name.clone());
+                    resolved_home_idx = e2.home_idx;
+                    break;
+                }
+
+                if let Some(new_home) = resolved_home_name {
+                    if new_home != events[i].home_name {
+                        events[i].home_name = new_home;
+                        events[i].home_idx = resolved_home_idx;
+
+                        if let Some(hg) = resolved_home_idx {
+                            if hg < aln.num_taxa && events[i].candidate_idx < aln.num_taxa {
+                                let cand_row = aln.row(events[i].candidate_idx);
+                                let home_row = aln.row(hg);
+                                let s_idx = events[i].u1.saturating_sub(1);
+                                let e_idx = events[i].u2.min(aln.length);
+
+                                let mut d_tr = 0usize;
+                                let mut v_tr = 0usize;
+                                let mut d_fl = 0usize;
+                                let mut v_fl = 0usize;
+
+                                for u in 0..aln.length {
+                                    let rc = cand_row[u];
+                                    let rh = home_row[u];
+                                    if rc > 0 && rh > 0 {
+                                        if u >= s_idx && u < e_idx {
+                                            v_tr += 1;
+                                            if rc != rh { d_tr += 1; }
+                                        } else {
+                                            v_fl += 1;
+                                            if rc != rh { d_fl += 1; }
+                                        }
+                                    }
+                                }
+                                if v_tr > 0 {
+                                    events[i].d_tract_home = (d_tr as f64) / (v_tr as f64);
+                                }
+                                if v_fl > 0 {
+                                    events[i].d_flank_home = (d_fl as f64) / (v_fl as f64);
+                                }
+                            }
+                        }
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        if !changed {
+            break;
         }
     }
 }
@@ -289,6 +493,14 @@ fn group_ancestral_events(mut events: Vec<crate::types::RecombinationEvent>) -> 
                         g.u2 = g.u2.max(e.u2);
                         g.u1_continuous = g.u1_continuous.min(e.u1_continuous);
                         g.u2_continuous = g.u2_continuous.max(e.u2_continuous);
+                        g.tract_length = if g.u2 >= g.u1 { g.u2 - g.u1 + 1 } else { 0 };
+                        if e.p_fisher < g.p_fisher {
+                            g.p_fisher = e.p_fisher;
+                        }
+                        if e.z_phys > g.z_phys {
+                            g.z_phys = e.z_phys;
+                        }
+                        g.s_informative = g.s_informative.max(e.s_informative);
                         found = true;
                         break;
                     }
@@ -480,6 +692,84 @@ mod tests {
         let donors: Vec<_> = r_events.iter().map(|e| e.donor_name.as_str()).collect();
         assert!(donors.contains(&"P2"), "Expected P2 to be identified as donor");
         assert!(donors.contains(&"P3"), "Expected P3 to be identified as donor");
+    }
+
+    #[test]
+    fn test_resolve_donor_chains_and_grouping() {
+        let taxa = vec!["H".into(), "L".into(), "X".into(), "I".into()];
+        let l = 1000;
+        let data = vec![1u8; 4 * l];
+        let aln = Alignment::new(taxa, l, data);
+
+        let e1 = crate::types::RecombinationEvent {
+            event_id: 1,
+            isolates: vec!["H".into()],
+            candidate_idx: 0,
+            candidate_name: "H".into(),
+            home_idx: Some(3),
+            home_name: "I".into(),
+            donor_idx: Some(1),
+            donor_name: "L".into(),
+            is_ghost_donor: false,
+            is_crossover: false,
+            u1: 1,
+            u2: 500,
+            u1_continuous: 1.0,
+            u2_continuous: 500.0,
+            tract_length: 500,
+            s_informative: 50,
+            p_fisher: 1e-10,
+            z_phys: 8.0,
+            d_flank_home: 0.05,
+            d_flank_donor: 0.30,
+            d_tract_home: 0.30,
+            d_tract_donor: 0.02,
+            is_verified: true,
+        };
+
+        let e2 = crate::types::RecombinationEvent {
+            event_id: 2,
+            isolates: vec!["L".into()],
+            candidate_idx: 1,
+            candidate_name: "L".into(),
+            home_idx: Some(3),
+            home_name: "I".into(),
+            donor_idx: Some(2),
+            donor_name: "X".into(),
+            is_ghost_donor: false,
+            is_crossover: false,
+            u1: 1,
+            u2: 500,
+            u1_continuous: 1.0,
+            u2_continuous: 500.0,
+            tract_length: 500,
+            s_informative: 60,
+            p_fisher: 1e-15,
+            z_phys: 9.0,
+            d_flank_home: 0.04,
+            d_flank_donor: 0.35,
+            d_tract_home: 0.35,
+            d_tract_donor: 0.01,
+            is_verified: true,
+        };
+
+        let mut events = vec![e1, e2];
+        resolve_donor_chains(&mut events, &aln);
+
+        // Both should now cite donor X
+        assert_eq!(events[0].donor_name, "X");
+        assert_eq!(events[1].donor_name, "X");
+
+        // Grouping should merge H and L into a single ancestral event
+        let grouped = group_ancestral_events(events);
+        assert_eq!(grouped.len(), 1, "Expected H and L to merge into a single co-recombinant event");
+        assert_eq!(grouped[0].isolates, vec!["H", "L"]);
+        assert_eq!(grouped[0].home_name, "I");
+        assert_eq!(grouped[0].donor_name, "X");
+        assert_eq!(grouped[0].u1, 1);
+        assert_eq!(grouped[0].u2, 500);
+        assert_eq!(grouped[0].p_fisher, 1e-15, "Strongest p-value should be preserved");
+        assert_eq!(grouped[0].z_phys, 9.0, "Highest z-score should be preserved");
     }
 }
 
