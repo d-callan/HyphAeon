@@ -18,7 +18,6 @@
 [![Live Demo](https://img.shields.io/badge/Live_Demo-GitHub_Pages-2ea44f?style=flat-square)](https://veg.github.io/trace-5.0/)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg?style=flat-square)](https://www.rust-lang.org/)
 [![WASM](https://img.shields.io/badge/wasm-ready-blue.svg?style=flat-square)](https://webassembly.org/)
-[![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg?style=flat-square)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
 
 > **A unified, multi-scale statistical framework for molecular epidemiology that replaces arbitrary distance cutoffs with coalescent Bayes Factors, spectral evolutionary velocity deconvolution, and macro-epidemic quadratic scaling dynamics.**
@@ -32,7 +31,7 @@
 
 ## 1. Scientific & Methodological Framework
 
-Legacy molecular surveillance relies on decoupled, rectangular heuristics---such as demanding pairwise genetic distance $d \le 1.5\%$ alongside sampling within an arbitrary trailing calendar window---while full Bayesian phylodynamics remains computationally intractable for longitudinal municipal registries. This decoupling triggers catastrophic failure: it severs genuine transmission chains delayed by clinical diagnosis lags while clustering unevolved repeat accessions and laboratory cross-contaminations across calendar decades.
+Legacy molecular surveillance relies on decoupled, rectangular heuristics---such as demanding pairwise genetic distance $d \le 1.5\%$ alongside sampling within an arbitrary trailing calendar window---while full Bayesian phylodynamics remains computationally intractable for longitudinal municipal registries. This decoupling triggers catastrophic failure: it severs genuine transmission chains delayed by clinical sampling lags while clustering unevolved repeat accessions and laboratory cross-contaminations across calendar decades.
 
 **TRACE-5.0** resolves these blind spots across three physically coupled dimensions:
 
@@ -62,21 +61,44 @@ Legacy molecular surveillance relies on decoupled, rectangular heuristics---such
 
 ---
 
-## 2. Implementations: Dual Python & Pure-Rust Architecture
+## 2. Architecture: Pure Rust & WebAssembly Engine
 
-TRACE-5.0 is implemented in two complementary, fully validated engines:
-1. **Python Engine (`trace50`)**: Pure Python/NumPy/SciPy module and CLI for data science and analysis pipelines.
-2. **Rust & WebAssembly Engine (`trace50-rust`)**: High-performance, zero-C-dependency Rust kernel (`trace50-core`), standalone native CLI binary (`trace50`), and compiled WebAssembly module (`trace50-wasm`) for browser and Observable dashboards.
+TRACE-5.0 is implemented in a pure, modern Rust workspace with zero C dependencies, providing maximum execution throughput alongside universal cross-platform deployment:
+
+```
+trace-5.0/
+├── Cargo.toml                     # Workspace root manifest
+├── crates/
+│   ├── trace50-core/              # Algorithmic kernel (zero C-dependencies, pure Rust, WASM-safe)
+│   │   ├── src/
+│   │   │   ├── math.rs            # Lanczos ln_gamma, incomplete upper gamma gammaincc, Poisson CDF, Jacobi eigensolver
+│   │   │   ├── tn93.rs            # Bitmask IUPAC ambiguous Tamura-Nei 93 pairwise distance & FASTA parser
+│   │   │   ├── danno.rs           # Closed-form Kingman coalescent Bayes Factor & Benjamini-Hochberg FDR
+│   │   │   ├── info_danno.rs      # Forensic allele-frequency weighting & DRM downweighting
+│   │   │   ├── autoclock.rs       # STEVE recursive graph Laplacian spectral deconvolution & Fieller t_MRCA
+│   │   │   ├── chin.rs            # Macro-epidemic quadratic scaling law inversion & Borel branching decay
+│   │   │   ├── network.rs         # Connected components, giant component tracking & Borel cluster decay
+│   │   │   ├── visualization.rs   # Comprehensive Visualization Dossier JSON schema
+│   │   │   └── pipeline.rs        # End-to-end execution orchestrator
+│   │   └── tests/
+│   │       └── test_pipeline.rs   # Automated integration tests
+│   ├── trace50-cli/               # Native multi-platform CLI binary (`trace50`)
+│   │   └── src/main.rs            # Command-line interface with rich scorecard reporting
+│   └── trace50-wasm/              # WebAssembly package for browsers, Node.js, and Observable Framework
+│       ├── src/lib.rs             # wasm-bindgen bindings and JS Object serialization
+│       ├── pkg/                   # Compiled WASM distribution (350 KB)
+│       └── test_wasm.mjs          # Node.js automated verification suite
+```
 
 ---
 
-## 3. Quickstart: Rust Standalone CLI
+## 3. Quickstart: Native Standalone CLI
 
 ### Installation & Build
 ```bash
 # Clone repository
 git clone https://github.com/veg/trace-5.0.git
-cd trace-5.0/trace50-rust
+cd trace-5.0
 
 # Build optimized release binary
 cargo build --release --bin trace50
@@ -145,12 +167,13 @@ The TRACE-5.0 web dashboard provides zero-install, 100% client-side molecular su
 
 ### Compile WASM Target
 ```bash
-cd trace50-rust/crates/trace50-wasm
+cd crates/trace50-wasm
 wasm-pack build --target web --out-dir pkg
 ```
 
 ### Verification in Node.js
 ```bash
+cd crates/trace50-wasm
 node test_wasm.mjs
 ```
 
@@ -177,51 +200,14 @@ const config = {
 };
 
 const dossier = run_trace50_object(fastaContent, config);
-console.log("Supported edges:", dossier.kpi.supported_transmission_edges || dossier.kpi.certified_transmission_edges);
+console.log("Supported edges:", dossier.kpi.supported_transmission_edges);
 console.log("Giant component reduction:", dossier.kpi.giant_component_reduction_pct, "%");
 console.log("Estimated active reservoir N_act:", dossier.kpi.inferred_active_transmitting_pool);
 ```
 
 ---
 
-## 5. Quickstart: Python Package
-
-### Installation
-```bash
-pip install -e .
-```
-
-### Python API Usage
-```python
-from trace50.tn93 import parse_fasta, encode_alignment, compute_tn93_distance_matrix
-from trace50.bayes_factor import DannoEstimator
-from trace50.chin import ChinEstimator
-
-# 1. Load and encode alignment
-records = parse_fasta("examples/sample_alignment.fasta")
-headers, M_int, M_bits = encode_alignment(records)
-D = compute_tn93_distance_matrix(M_bits)
-
-# 2. DANNO Bayesian edge inference & FDR control
-dates = [2015.1, 2015.2, 2015.3, 2016.1, 2017.0, 2017.4]
-danno = DannoEstimator(seq_len=M_bits.shape[1], mu=2e-3, tau_bar=1.0, omega=2.0)
-supported_dyads = danno.screen_dyads(
-    indices=list(range(len(headers))),
-    dates=dates,
-    D_matrix=D,
-    max_delta_t=2.5,
-    fdr_threshold=0.10
-)
-
-# 3. Macro-scale population inversion
-chin = ChinEstimator(R0_default=1.5)
-active_pool = chin.estimate_active_population(len(headers), len(supported_dyads))
-print(f"Active transmitting pool N_act: {active_pool['N_act']:.1f}")
-```
-
----
-
-## 6. Visualization Dossier JSON Schema
+## 5. Visualization Dossier JSON Schema
 
 Both the native CLI and WASM engines output a standardized, self-contained JSON dossier (`trace50_visualization_dossier.json`):
 
@@ -239,7 +225,7 @@ Both the native CLI and WASM engines output a standardized, self-contained JSON 
 
 ---
 
-## 7. Empirical Benchmarks on Real-World Cohorts
+## 6. Empirical Benchmarks on Real-World Cohorts
 
 | Surveillance Cohort | Sequences ($N$) | Comparisons | Legacy Giant Component ($d \le 1.5\%$) | DANNO Supported Network | Clock Violations Purged |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -250,24 +236,24 @@ Both the native CLI and WASM engines output a standardized, self-contained JSON 
 
 ---
 
-## 8. Automated Test Suite
+## 7. Automated Test Suite
 
-Run the full verification suites across Python, Rust, and WebAssembly:
+Run the full verification suites across Rust and WebAssembly:
 
 ```bash
-# Python test suite (33 unit tests)
-pytest tests/
-
 # Rust test suite (core + CLI + integration tests)
-cd trace50-rust && cargo test --all
+cargo test --all
 
 # WebAssembly Node.js verification test suite
-cd trace50-rust/crates/trace50-wasm && node test_wasm.mjs
+cd crates/trace50-wasm && node test_wasm.mjs
+
+# Example CLI pipeline execution
+./examples/run_cli_example.sh
 ```
 
 ---
 
-## 9. Citation
+## 8. Citation
 
 If you use TRACE-5.0, DANNO, STEVE / AutoClock, or CHIN in your research or surveillance operations, please cite:
 
@@ -292,6 +278,6 @@ If you use TRACE-5.0, DANNO, STEVE / AutoClock, or CHIN in your research or surv
 
 ---
 
-## 10. License
+## 9. License
 
 MIT License. Developed by the Temple University Institute for Genomics and Evolutionary Medicine (iGEM) and the Viral Evolution Group (VEG).
