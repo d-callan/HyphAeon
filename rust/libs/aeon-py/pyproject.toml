@@ -1,0 +1,12 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "aeon-py"
+version = "0.1.0"
+description = "PyO3 bindings for the HyphAeon Rust statistical/algorithmic kernels (aeon-manifold)."
+requires-python = ">=3.10"
+
+[tool.maturin]
+bindings = "pyo3"

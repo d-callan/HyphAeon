@@ -1,0 +1,12 @@
+[package]
+name = "aeon-py"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "aeon_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+aeon-manifold = { workspace = true }
+pyo3 = { workspace = true }
