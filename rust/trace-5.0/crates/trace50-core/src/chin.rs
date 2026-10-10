@@ -411,4 +411,35 @@ mod tests {
         assert_eq!(res2.fraction_quantized, 0.0);
         assert!(!res2.is_severely_quantized);
     }
+
+    #[test]
+    fn test_percentile_endpoints_and_median() {
+        let sorted = [10.0, 20.0, 30.0, 40.0, 50.0];
+        assert_eq!(percentile(&sorted, 0.0), 10.0);
+        assert_eq!(percentile(&sorted, 100.0), 50.0);
+        assert_eq!(percentile(&sorted, 50.0), 30.0);
+    }
+
+    #[test]
+    fn test_percentile_linear_interpolation() {
+        // rank = pct/100 * (n-1): pct=25 -> rank=1.0 -> sorted[1]=20
+        let sorted = [10.0, 20.0, 30.0, 40.0, 50.0];
+        assert_eq!(percentile(&sorted, 25.0), 20.0);
+        // pct=12.5 -> rank=0.5 -> midpoint of 10,20 = 15
+        assert_eq!(percentile(&sorted, 12.5), 15.0);
+        // Method is numpy's "linear" interpolation on rank pct/100*(n-1):
+        let even = [1.0, 2.0, 3.0, 4.0];
+        // rank = .5*3 = 1.5 -> 2.0*0.5 + 3.0*0.5 = 2.5
+        assert_eq!(percentile(&even, 50.0), 2.5);
+        let odd = [1.0, 2.0, 3.0, 4.0, 6.0];
+        // rank = .5*4 = 2.0 -> sorted[2] = 3.0 exactly
+        assert_eq!(percentile(&odd, 50.0), 3.0);
+    }
+
+    #[test]
+    fn test_percentile_degenerate_inputs() {
+        assert!(percentile(&[], 50.0).is_nan());
+        assert_eq!(percentile(&[7.0], 50.0), 7.0);
+        assert_eq!(percentile(&[7.0], 0.0), 7.0);
+    }
 }

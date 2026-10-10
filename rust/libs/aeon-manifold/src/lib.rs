@@ -498,6 +498,93 @@ mod tests {
     }
 
     #[test]
+    fn test_norm_ppf_scipy_goldens() {
+        // Reference values: scipy.stats.norm.ppf (1.17.1)
+        // Acklam's max error is ~1e-9; use 1e-8 so the test is a regression
+        // net rather than a false-precision oracle.
+        let cases: &[(f64, f64)] = &[
+            (0.5, 0.0),
+            (0.025, -1.9599639845400545),
+            (0.975, 1.959963984540054),
+            (0.01, -2.3263478740408408),
+            (0.99, 2.3263478740408408),
+            (0.001, -3.090232306167813),
+            (0.999, 3.090232306167813),
+            (0.1, -1.2815515655446004),
+            (0.9, 1.2815515655446004),
+        ];
+        for &(p, expected) in cases {
+            assert!(
+                (norm_ppf(p) - expected).abs() < 1e-8,
+                "norm_ppf({p}) = {} expected {expected}",
+                norm_ppf(p)
+            );
+        }
+    }
+
+    #[test]
+    fn test_norm_ppf_extremes() {
+        // Acklam approximation degrades in far tails; check against scipy
+        // goldens with relaxed tolerance.
+        assert!((norm_ppf(1e-10) - -6.361340902404056).abs() < 1e-4);
+        assert!((norm_ppf(1.0 - 1e-10) - 6.361340889697422).abs() < 1e-4);
+        // Contract: exact 0/1 return infinities (callers that clamp handle this)
+        assert_eq!(norm_ppf(0.0), f64::NEG_INFINITY);
+        assert_eq!(norm_ppf(1.0), f64::INFINITY);
+    }
+
+    #[test]
+    fn test_student_t_ppf_scipy_goldens() {
+        // Cornish-Fisher expansion: accurate for moderate df, approximates
+        // norm_ppf for df >= 100. scipy.stats.t.ppf references.
+        let cases: &[(f64, f64, f64, f64)] = &[
+            // (p, df, expected, tolerance)
+            (0.025, 5.0, -2.5705818356363155, 5e-3),
+            (0.975, 5.0, 2.5705818356363146, 5e-3),
+            (0.025, 30.0, -2.042272456301238, 1e-4),
+            (0.975, 30.0, 2.0422724563012378, 1e-4),
+            (0.5, 2.0, 0.0, 1e-12),
+            // df >= 100: implementation returns norm_ppf exactly (documented);
+            // tolerance tracks Acklam's own ~1.6e-9 error, not the true t value
+            (0.025, 100.0, -1.9599639845400545, 1e-8),
+        ];
+        for &(p, df, expected, tol) in cases {
+            let got = student_t_ppf(p, df);
+            assert!(
+                (got - expected).abs() < tol,
+                "student_t_ppf({p}, {df}) = {got} expected {expected} (tol {tol})"
+            );
+        }
+        assert!(student_t_ppf(0.5, 0.0).is_nan());
+        assert!(student_t_ppf(0.5, -1.0).is_nan());
+    }
+
+    #[test]
+    fn test_linregress_scipy_golden() {
+        // scipy.stats.linregress([1,2,3,4,5], [2.1,3.9,6.2,7.8,10.1])
+        let x = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let y = [2.1, 3.9, 6.2, 7.8, 10.1];
+        let r = linregress(&x, &y).unwrap();
+        assert!((r.slope - 1.99).abs() < 1e-12);
+        assert!((r.intercept - 0.05000000000000071).abs() < 1e-12);
+        assert!((r.r_value - 0.9986517555689656).abs() < 1e-12);
+        assert!((r.std_err - 0.059721576223897795).abs() < 1e-12);
+        // Note: p_value uses normal approx (not t-dist like scipy); check
+        // it is small rather than matching scipy's 5.94e-05 exactly.
+        assert!(r.p_value < 1e-6);
+    }
+
+    #[test]
+    fn test_linregress_degenerate() {
+        assert!(linregress(&[1.0], &[1.0]).is_none());
+        assert!(linregress(&[1.0, 2.0], &[1.0]).is_none());
+        // Constant x: returns zero-slope sentinel, not None
+        let r = linregress(&[2.0, 2.0, 2.0], &[1.0, 2.0, 3.0]).unwrap();
+        assert_eq!(r.slope, 0.0);
+        assert_eq!(r.intercept, 2.0);
+    }
+
+    #[test]
     fn test_jacobi_eigh_normalized_laplacian() {
         // Path graph P3 (degrees [1,2,1]): normalized Laplacian has
         // eigenvalues {0, 1, 2}. The Fiedler vector (2nd smallest, i.e.

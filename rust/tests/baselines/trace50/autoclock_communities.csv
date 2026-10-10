@@ -1,0 +1,2 @@
+community_id,size,n_eff,clock_velocity_mu,se_mu,r_squared,tmrca,ci_tmrca_low,ci_tmrca_high,fieller_status,is_active,operational_tier
+1,2,2.00,0.000000,0.000000,0.0000,2001.00,2001.00,2001.00,TOO_SMALL,false,"Contemporaneous Acute Dyad"

@@ -185,3 +185,100 @@ pub fn extract_informative_snp_alignment(aln: &Alignment) -> (Alignment, Vec<usi
 
     (Alignment::new(aln.taxa.clone(), m, new_matrix), snp_map)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_char_canonical_bases() {
+        assert_eq!(encode_char(b'A'), 1);
+        assert_eq!(encode_char(b'C'), 2);
+        assert_eq!(encode_char(b'G'), 3);
+        assert_eq!(encode_char(b'T'), 4);
+        assert_eq!(encode_char(b'U'), 4); // RNA folds to T
+    }
+
+    #[test]
+    fn test_encode_char_case_insensitive() {
+        assert_eq!(encode_char(b'a'), 1);
+        assert_eq!(encode_char(b'c'), 2);
+        assert_eq!(encode_char(b'g'), 3);
+        assert_eq!(encode_char(b't'), 4);
+        assert_eq!(encode_char(b'u'), 4);
+    }
+
+    #[test]
+    fn test_encode_char_ambiguity_collapses_to_zero() {
+        // Every IUPAC ambiguity code, gap, and unknown byte maps to 0.
+        // This is rhizaeon's contract: ambiguity is NOT preserved.
+        for &b in b"RYSWKMBDHVNryswkmbdhvn-.Xx?*".iter() {
+            assert_eq!(encode_char(b), 0, "byte {} should encode to 0", b as char);
+        }
+    }
+
+    #[test]
+    fn test_parse_fasta_basic() {
+        let aln = parse_fasta(">a\nACGT\n>b\nTGCA\n").unwrap();
+        assert_eq!(aln.num_taxa, 2);
+        assert_eq!(aln.length, 4);
+        assert_eq!(aln.taxa, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(aln.get(0, 0), 1); // A
+        assert_eq!(aln.get(1, 3), 1); // last base of TGCA = A
+    }
+
+    #[test]
+    fn test_parse_fasta_multiline_sequence() {
+        let aln = parse_fasta(">a\nAC\nGT\n>b\nTG\nCA\n").unwrap();
+        assert_eq!(aln.length, 4);
+        assert_eq!(aln.get(0, 2), 3); // 'G' is third base of a's joined seq
+    }
+
+    #[test]
+    fn test_parse_fasta_header_first_token() {
+        // Canonical taxon name is the first whitespace-delimited token.
+        let aln = parse_fasta(">seq1 some description here\nACGT\n").unwrap();
+        assert_eq!(aln.taxa[0], "seq1");
+    }
+
+    #[test]
+    fn test_parse_fasta_ragged_is_an_error() {
+        // rhizaeon's contract: ragged alignments are REJECTED (not padded).
+        let err = parse_fasta(">a\nACGT\n>b\nACG\n").unwrap_err();
+        assert!(err.contains("length"), "expected length error, got: {err}");
+    }
+
+    #[test]
+    fn test_parse_fasta_empty_is_an_error() {
+        assert!(parse_fasta("").is_err());
+        assert!(parse_fasta("   \n\n").is_err());
+    }
+
+    #[test]
+    fn test_parse_fasta_ambiguity_encodes_zero() {
+        let aln = parse_fasta(">a\nACGN\n>b\nACG-\n").unwrap();
+        assert_eq!(aln.get(0, 3), 0); // N
+        assert_eq!(aln.get(1, 3), 0); // gap
+    }
+
+    #[test]
+    fn test_parse_fasta_blank_lines_skipped() {
+        let aln = parse_fasta(">a\nAC\n\nGT\n>b\n\nTGCA\n").unwrap();
+        assert_eq!(aln.num_taxa, 2);
+        assert_eq!(aln.length, 4);
+    }
+
+    #[test]
+    fn test_extract_informative_snp_alignment_map() {
+        // Alignment columns: AACC / AACC / BATG / BATG (B collapses to 0).
+        // site0: A A A A -> not informative
+        // site1: C C 0 0 -> only C has >=2 -> not informative
+        // site2: C C T T -> C:2 and T:2 -> informative
+        // site3: C C G G -> informative
+        let aln = parse_fasta(">t1\nAACC\n>t2\nAACC\n>t3\nBATG\n>t4\nBATG\n").unwrap();
+        let (sub, map) = extract_informative_snp_alignment(&aln);
+        assert_eq!(map, vec![2, 3]);
+        assert_eq!(sub.length, 2);
+        assert_eq!(sub.num_taxa, 4);
+    }
+}

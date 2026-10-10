@@ -431,3 +431,59 @@ fn median(vals: &[f64]) -> f64 {
 pub fn normal_ppf(p: f64) -> f64 {
     aeon_manifold::norm_ppf(p.clamp(1e-15, 1.0 - 1e-15))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_median_odd() {
+        assert_eq!(median(&[3.0, 1.0, 2.0]), 2.0);
+    }
+
+    #[test]
+    fn test_median_even() {
+        assert_eq!(median(&[4.0, 1.0, 3.0, 2.0]), 2.5);
+    }
+
+    #[test]
+    fn test_median_empty_returns_zero() {
+        assert_eq!(median(&[]), 0.0);
+    }
+
+    #[test]
+    fn test_median_single() {
+        assert_eq!(median(&[42.0]), 42.0);
+    }
+
+    #[test]
+    fn test_normal_ppf_known_values() {
+        // scipy.stats.norm.ppf references
+        // Acklam approximation error is ~1.6e-9; 1e-8 matches aeon-manifold
+        // golden tolerances so this is a regression net, not a precision oracle.
+        assert!((normal_ppf(0.5) - 0.0).abs() < 1e-8);
+        assert!((normal_ppf(0.975) - 1.9599639845400545).abs() < 1e-8);
+        assert!((normal_ppf(0.025) - -1.9599639845400545).abs() < 1e-8);
+        assert!((normal_ppf(0.001) - -3.090232306167813).abs() < 1e-7);
+    }
+
+    #[test]
+    fn test_normal_ppf_symmetric() {
+        let a = normal_ppf(0.05);
+        let b = normal_ppf(0.95);
+        assert!((a + b).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_normal_ppf_clamps_at_boundaries() {
+        // Historical contract: never returns +-infinity. p<=0 and p>=1 are
+        // clamped to [1e-15, 1-1e-15] before delegating to aeon-manifold.
+        let lo = normal_ppf(0.0);
+        let hi = normal_ppf(1.0);
+        assert!(lo.is_finite() && hi.is_finite());
+        assert!(lo < -7.0 && hi > 7.0);
+        // Out-of-range inputs match the clamped boundary quantiles.
+        assert_eq!(normal_ppf(-1.0), normal_ppf(0.0));
+        assert_eq!(normal_ppf(2.0), normal_ppf(1.0));
+    }
+}
