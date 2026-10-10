@@ -6,10 +6,10 @@ authors = ["Sergei L. Kosakovsky Pond", "Antigravity AI Engine"]
 description = "High-performance algorithmic kernel for TRACE-5.0: Dynamic Molecular Surveillance of Viral Transmission Networks"
 
 [dependencies]
-aeon-manifold = { path = "../../../libs/aeon-manifold", version = "0.1.0" }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-rayon = { version = "1.10", optional = true }
+aeon-manifold.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rayon = { workspace = true, optional = true }
 
 [features]
 default = []
