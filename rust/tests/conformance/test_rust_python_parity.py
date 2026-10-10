@@ -110,12 +110,13 @@ def test_tn93_matrix_parity(fasta, tmp_path):
         )
 
 
-def test_tn93_saturation_divergence_pinned(tmp_path):
-    """Pin the documented saturation-ceiling divergence on pair_test.
+def test_tn93_saturation_unified(tmp_path):
+    """W9: both engines now return the canonical Rust finite estimate.
 
-    The Python `tn93` package caps unresolvable distances at its 1.0 ceiling;
-    the Rust closed-form estimator returns a finite d=0.7535 for the same
-    MASE pair. This is a contract difference, not an error — pin both sides.
+    Pre-W9 the Python `tn93` package capped unresolvable distances at its
+    1.0 ceiling while the Rust closed-form estimator returned d=0.7535 for
+    this MASE pair. With Python delegating to aeon_py, the divergence is
+    gone — both sides must agree on the finite estimator.
     """
     from aeon_core.dataset import compute_tn93_distance_matrix
 
@@ -125,9 +126,11 @@ def test_tn93_saturation_divergence_pinned(tmp_path):
     n = rust["n"]
     rust_mat = np.array(rust["distance_matrix_flat"]).reshape(n, n)
 
-    assert py_mat[0, 1] == 1.0, "python tn93 no longer saturates at 1.0"
     assert abs(rust_mat[0, 1] - 0.753507) < 1e-5, (
         f"rust saturated-pair estimate drifted: {rust_mat[0, 1]}"
+    )
+    assert abs(float(py_mat[0, 1]) - rust_mat[0, 1]) < 1e-6, (
+        f"python no longer unified with rust kernel: {py_mat[0, 1]}"
     )
 
 

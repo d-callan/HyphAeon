@@ -77,6 +77,30 @@ fn fasta_normalize_lengths(
     ))
 }
 
+/// Flat row-major `N x N` TN93 distance matrix from raw ASCII sequences.
+/// Sequences may be ragged (pairs truncate to the shorter length, matching
+/// the kernel contract). Non-IUPAC bytes encode as mask 0 and are skipped.
+#[pyfunction]
+fn tn93_distance_matrix(seqs: Vec<Vec<u8>>) -> Vec<f64> {
+    let enc: Vec<Vec<u8>> = seqs
+        .iter()
+        .map(|s| s.iter().map(|&c| aeon_manifold::char_to_iupac_mask(c)).collect())
+        .collect();
+    aeon_manifold::tn93::distance_matrix(&enc)
+}
+
+/// Flat row-major `N x M` TN93 cross-distance matrix: each sequence in
+/// `seqs_a` (rows) against each in `seqs_b` (columns, e.g. landmarks).
+#[pyfunction]
+fn tn93_cross_distance_matrix(seqs_a: Vec<Vec<u8>>, seqs_b: Vec<Vec<u8>>) -> Vec<f64> {
+    let encode = |v: &[Vec<u8>]| -> Vec<Vec<u8>> {
+        v.iter()
+            .map(|s| s.iter().map(|&c| aeon_manifold::char_to_iupac_mask(c)).collect())
+            .collect()
+    };
+    aeon_manifold::tn93::cross_distance_matrix(&encode(&seqs_a), &encode(&seqs_b))
+}
+
 #[pymodule]
 fn aeon_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(percentile, m)?)?;
@@ -86,5 +110,7 @@ fn aeon_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(iupac_base_probabilities, m)?)?;
     m.add_function(wrap_pyfunction!(fasta_tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(fasta_normalize_lengths, m)?)?;
+    m.add_function(wrap_pyfunction!(tn93_distance_matrix, m)?)?;
+    m.add_function(wrap_pyfunction!(tn93_cross_distance_matrix, m)?)?;
     Ok(())
 }

@@ -717,7 +717,21 @@ def compute_tn93_distance_matrix(
     tn93_bin = shutil.which("tn93")
     used_binary = False
 
-    if tn93_bin:
+    # Canonical engine: Rust TN93 kernel exposed via the aeon_py bindings.
+    # Preferred over the external tn93 binary so all deployments share one
+    # implementation. '*' encodes as mask 0 on this path (site skipped), which
+    # is equivalent to the binary-path '*' -> '-' sanitize.
+    try:
+        import aeon_py
+        flat = aeon_py.tn93_distance_matrix(
+            [seq_dict[t].encode("utf-8") for t in taxa]
+        )
+        dist_mat = np.asarray(flat, dtype=np.float32).reshape(n, n)
+        used_binary = True
+    except ImportError:
+        pass
+
+    if tn93_bin and not used_binary:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_fa = os.path.join(tmpdir, "subset.fa")
             out_csv = os.path.join(tmpdir, "distances.csv")
@@ -762,31 +776,11 @@ def compute_tn93_distance_matrix(
                 used_binary = True
 
     if not used_binary:
-        try:
-            from tn93.tn93 import TN93
-            tn = TN93()
-            for i in range(n):
-                for j in range(i + 1, n):
-                    counts = tn.get_counts(seq_dict[taxa[i]], seq_dict[taxa[j]], "resolve")
-                    nuc_freq = tn.get_nucleotide_frequency(counts)
-                    try:
-                        d = tn.calculate_distance(counts, nuc_freq)
-                    except (ValueError, OverflowError):
-                        # TN93 can throw math domain errors on very short or
-                        # saturated sequences (e.g. log of a negative number);
-                        # treat as a maximally distant pair.
-                        d = 1.0
-                    if d is None or d == "-" or d < 0 or np.isnan(d):
-                        d = 1.0
-                    d = float(d)
-                    dist_mat[i, j] = d
-                    dist_mat[j, i] = d
-        except ImportError:
-            raise ImportError(
-                "The 'tn93' tool or python package is required to skip the tree and compute TN93 distances. "
-                "Please install it via 'pip install tn93' or 'pip install hyphaeon-core[tn93]' "
-                "(or install the tn93 binary from https://github.com/veg/tn93)."
-            )
+        raise ImportError(
+            "TN93 distances require the 'aeon_py' extension module "
+            "(maturin build of rust/libs/aeon-py) or the tn93 binary "
+            "(https://github.com/veg/tn93)."
+        )
 
     # Impute missing off-diagonal distances (vectorized).
     # Identical sequences (distance == 0.0) are preserved.
@@ -822,7 +816,20 @@ def compute_tn93_cross_distance_matrix(
     tn93_bin = shutil.which("tn93")
     used_binary = False
 
-    if tn93_bin:
+    # Canonical engine: Rust TN93 kernel via aeon_py (see
+    # compute_tn93_distance_matrix for the precedence rationale).
+    try:
+        import aeon_py
+        flat = aeon_py.tn93_cross_distance_matrix(
+            [seq_dict[t].encode("utf-8") for t in taxa_all],
+            [seq_dict[t].encode("utf-8") for t in taxa_landmarks],
+        )
+        dist_mat = np.asarray(flat, dtype=np.float32).reshape(n, m)
+        used_binary = True
+    except ImportError:
+        pass
+
+    if tn93_bin and not used_binary:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_all = os.path.join(tmpdir, "all.fa")
             tmp_lm = os.path.join(tmpdir, "landmarks.fa")
@@ -868,30 +875,11 @@ def compute_tn93_cross_distance_matrix(
                 used_binary = True
 
     if not used_binary:
-        try:
-            from tn93.tn93 import TN93
-            tn = TN93()
-            for j, lm in enumerate(taxa_landmarks):
-                seq_lm = seq_dict[lm]
-                for i, t in enumerate(taxa_all):
-                    if t == lm:
-                        dist_mat[i, j] = 0.0
-                        continue
-                    counts = tn.get_counts(seq_dict[t], seq_lm, "resolve")
-                    nuc_freq = tn.get_nucleotide_frequency(counts)
-                    try:
-                        d = tn.calculate_distance(counts, nuc_freq)
-                    except (ValueError, OverflowError):
-                        d = 1.0
-                    if d is None or d == "-" or d < 0 or np.isnan(d):
-                        d = 1.0
-                    dist_mat[i, j] = float(d)
-        except ImportError:
-            raise ImportError(
-                "The 'tn93' tool or python package is required to compute TN93 distances. "
-                "Please install it via 'pip install tn93' or 'pip install hyphaeon-core[tn93]' "
-                "(or install the tn93 binary from https://github.com/veg/tn93)."
-            )
+        raise ImportError(
+            "TN93 distances require the 'aeon_py' extension module "
+            "(maturin build of rust/libs/aeon-py) or the tn93 binary "
+            "(https://github.com/veg/tn93)."
+        )
 
     # Fill self-distances
     for j, lm in enumerate(taxa_landmarks):

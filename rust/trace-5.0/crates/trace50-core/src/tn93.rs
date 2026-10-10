@@ -10,102 +10,7 @@ pub use aeon_manifold::encoding::{
     PURINE_MASK, PYRIMIDINE_MASK,
 };
 pub use aeon_manifold::temporal::parse_date_from_header;
-
-/// Computes analytical Tamura-Nei 93 (TN93) pairwise genetic distance.
-/// Resolves ambiguities to minimize distance (matching characters share bits).
-pub fn compute_pairwise_tn93(seq_a_bits: &[u8], seq_b_bits: &[u8]) -> f64 {
-    let n = seq_a_bits.len().min(seq_b_bits.len());
-    if n == 0 {
-        return 0.0;
-    }
-
-    let mut l_valid = 0usize;
-    let mut p1_count = 0usize;
-    let mut p2_count = 0usize;
-    let mut q_count = 0usize;
-
-    let mut cnt_a = 0usize;
-    let mut cnt_c = 0usize;
-    let mut cnt_g = 0usize;
-    let mut cnt_t = 0usize;
-
-    for i in 0..n {
-        let a = seq_a_bits[i];
-        let b = seq_b_bits[i];
-
-        if a > 0 && b > 0 {
-            l_valid += 1;
-
-            let a_or_b = a | b;
-            if (a_or_b & 0b0001) > 0 {
-                cnt_a += 1;
-            }
-            if (a_or_b & 0b0010) > 0 {
-                cnt_c += 1;
-            }
-            if (a_or_b & 0b0100) > 0 {
-                cnt_g += 1;
-            }
-            if (a_or_b & 0b1000) > 0 {
-                cnt_t += 1;
-            }
-
-            // If bits overlap, zero divergence at this site
-            if (a & b) == 0 {
-                let p1 = ((a & PURINE_MASK) > 0) && ((b & PURINE_MASK) > 0);
-                let p2 = ((a & PYRIMIDINE_MASK) > 0) && ((b & PYRIMIDINE_MASK) > 0);
-
-                if p1 {
-                    p1_count += 1;
-                } else if p2 {
-                    p2_count += 1;
-                } else {
-                    q_count += 1;
-                }
-            }
-        }
-    }
-
-    if l_valid == 0 {
-        return 0.0;
-    }
-
-    let p1 = (p1_count as f64) / (l_valid as f64);
-    let p2 = (p2_count as f64) / (l_valid as f64);
-    let q = (q_count as f64) / (l_valid as f64);
-    let p_ham = p1 + p2 + q;
-
-    if p_ham <= 0.0 {
-        return 0.0;
-    }
-
-    let tot = (cnt_a + cnt_c + cnt_g + cnt_t).max(1) as f64;
-    let f_a = ((cnt_a as f64) / tot).max(1e-4);
-    let f_c = ((cnt_c as f64) / tot).max(1e-4);
-    let f_g = ((cnt_g as f64) / tot).max(1e-4);
-    let f_t = ((cnt_t as f64) / tot).max(1e-4);
-
-    let f_r = f_a + f_g;
-    let f_y = f_c + f_t;
-
-    let k1 = 2.0 * f_a * f_g / f_r;
-    let k2 = 2.0 * f_c * f_t / f_y;
-    let k3 = 2.0 * (f_r * f_y - (f_a * f_g * f_y / f_r) - (f_c * f_t * f_r / f_y));
-
-    let arg1 = 1.0 - (f_r / (2.0 * f_a * f_g)) * p1 - (q / (2.0 * f_r));
-    let arg2 = 1.0 - (f_y / (2.0 * f_c * f_t)) * p2 - (q / (2.0 * f_y));
-    let arg3 = 1.0 - (q / (2.0 * f_r * f_y));
-
-    if arg1 <= 1e-6 || arg2 <= 1e-6 || arg3 <= 1e-6 {
-        return p_ham;
-    }
-
-    let d = -k1 * arg1.ln() - k2 * arg2.ln() - k3 * arg3.ln();
-    if !d.is_finite() || d < 0.0 {
-        return p_ham;
-    }
-    d
-}
+pub use aeon_manifold::tn93::compute_pairwise_tn93;
 
 /// Computes observed fractional substitution count K and genetic distance d
 /// between two nucleotide sequences incorporating IUPAC ambiguities.
@@ -237,25 +142,6 @@ impl Alignment {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_tn93_identical() {
-        let s1 = b"ACGTACGT";
-        let bits1: Vec<u8> = s1.iter().map(|&c| char_to_iupac_mask(c)).collect();
-        let dist = compute_pairwise_tn93(&bits1, &bits1);
-        assert_eq!(dist, 0.0);
-    }
-
-    #[test]
-    fn test_tn93_transition() {
-        let s1 = b"ACGTACGTACGTACGTACGTACGT";
-        let s2 = b"GCGTACGTACGTACGTACGTACGT"; // 1 transition in 24 bp
-        let bits1: Vec<u8> = s1.iter().map(|&c| char_to_iupac_mask(c)).collect();
-        let bits2: Vec<u8> = s2.iter().map(|&c| char_to_iupac_mask(c)).collect();
-        let dist = compute_pairwise_tn93(&bits1, &bits2);
-        println!("TN93 dist for 1/24 transition: {}", dist);
-        assert!(dist > 0.0 && dist < 0.5);
-    }
 
     #[test]
     fn test_fractional_substitutions_ambiguity() {
