@@ -867,9 +867,9 @@ def cmd_disease(args):
     canon_seq = None
     if getattr(args, "canonical_seq", None):
         if os.path.exists(args.canonical_seq):
-            from Bio import SeqIO
-            rec = next(SeqIO.parse(args.canonical_seq, "fasta"))
-            canon_seq = str(rec.seq)
+            from aeon_core.dataset import parse_alignment_sequences
+            recs = parse_alignment_sequences(args.canonical_seq)
+            canon_seq = next(iter(recs.values()))
         else:
             canon_seq = args.canonical_seq.strip()
 

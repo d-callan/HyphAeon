@@ -26,9 +26,10 @@ import json
 from typing import Dict, List, Tuple, Optional, Any, Union
 
 import numpy as np
-from Bio import Phylo, SeqIO
+from Bio import Phylo
 from scipy.optimize import minimize_scalar, minimize
 
+from aeon_core.dataset import parse_alignment_sequences
 from aeon_core.temporal import parse_date_to_decimal
 
 # ==============================================================================
@@ -124,8 +125,9 @@ def extract_dates_from_fasta(fasta_path: str) -> Dict[str, float]:
     Checks delimiter tokens (pipe '|', underscore '_', slash '/').
     """
     dates = {}
-    for record in SeqIO.parse(fasta_path, "fasta"):
-        full_id = record.id.strip().strip("'\"")
+    # Canonical parser yields first-token record ids (same as SeqIO record.id)
+    for full_id in parse_alignment_sequences(str(fasta_path)):
+        full_id = full_id.strip().strip("'\"")
         # Try pipe delimiter
         parts = full_id.split("|")
         d_val = parse_calendar_date(parts[-1])

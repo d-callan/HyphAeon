@@ -410,9 +410,9 @@ def predict_disease_pathogenicity(
     if canonical_human_seq is None:
         canonical_human_seq = msa_hg_aa_seq.replace('-', '').replace('?', '')
     elif isinstance(canonical_human_seq, str) and os.path.exists(canonical_human_seq):
-        from Bio import SeqIO
-        rec = next(SeqIO.parse(canonical_human_seq, "fasta"))
-        canonical_human_seq = str(rec.seq).upper()
+        from aeon_core.dataset import parse_alignment_sequences
+        recs = parse_alignment_sequences(canonical_human_seq)
+        canonical_human_seq = next(iter(recs.values())).upper()
     else:
         canonical_human_seq = str(canonical_human_seq).strip().upper()
         
