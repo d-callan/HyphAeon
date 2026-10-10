@@ -12,8 +12,8 @@
 //! - Min-max robust Bayes Factor evaluation across clock rate and intra-host coalescent depth domains.
 //! - Benjamini-Hochberg False Discovery Rate (FDR) control for acute transmission edge inference.
 
-use serde::{Deserialize, Serialize};
 use crate::math::{gammaincc, ln_gamma, poisson_cdf};
+use serde::{Deserialize, Serialize};
 
 /// Candidate transmission dyad with Bayesian transmission odds and FDR calibration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,8 +112,12 @@ impl DannoEstimator {
             let mut min_t = f64::INFINITY;
             let mut max_t = f64::NEG_INFINITY;
             for &t in &valid_dates {
-                if t < min_t { min_t = t; }
-                if t > max_t { max_t = t; }
+                if t < min_t {
+                    min_t = t;
+                }
+                if t > max_t {
+                    max_t = t;
+                }
             }
             let span = max_t - min_t;
             if span > 0.5 {
@@ -144,7 +148,8 @@ impl DannoEstimator {
                 };
 
                 let mean_d = bg_d.iter().sum::<f64>() / (bg_d.len() as f64);
-                let var_d = bg_d.iter().map(|&d| (d - mean_d).powi(2)).sum::<f64>() / (bg_d.len() as f64);
+                let var_d =
+                    bg_d.iter().map(|&d| (d - mean_d).powi(2)).sum::<f64>() / (bg_d.len() as f64);
                 self.fit_background(mean_d, var_d.max(1e-6));
             }
         }
@@ -230,9 +235,7 @@ impl DannoEstimator {
 
         // 2. Continuous Negative Binomial background genetic likelihood
         let p_scipy = 1.0 - self.p_bg;
-        let log_p_k = ln_gamma(k + self.r_bg)
-            - ln_gamma(self.r_bg)
-            - ln_gamma(k + 1.0)
+        let log_p_k = ln_gamma(k + self.r_bg) - ln_gamma(self.r_bg) - ln_gamma(k + 1.0)
             + self.r_bg * p_scipy.ln()
             + k * (1.0 - p_scipy).ln();
 
@@ -290,7 +293,13 @@ impl DannoEstimator {
                 return 0.0;
             }
 
-            let lik_t = self.compute_transmission_likelihood(k, delta_t, Some(mu_val), Some(tau_val), Some(omega_val));
+            let lik_t = self.compute_transmission_likelihood(
+                k,
+                delta_t,
+                Some(mu_val),
+                Some(tau_val),
+                Some(omega_val),
+            );
             let lik_bg = self.compute_background_likelihood(k, delta_t);
             let bf = if lik_bg > 0.0 { lik_t / lik_bg } else { 0.0 };
             if bf < min_bf {
@@ -343,7 +352,13 @@ impl DannoEstimator {
 
                         let bf = if is_adequate {
                             if use_robust {
-                                self.compute_robust_bayes_factor(d_val, dt, (1.5e-3, 3.5e-3), (0.05, 3.0), None)
+                                self.compute_robust_bayes_factor(
+                                    d_val,
+                                    dt,
+                                    (1.5e-3, 3.5e-3),
+                                    (0.05, 3.0),
+                                    None,
+                                )
                             } else {
                                 self.compute_bayes_factor(d_val, dt)
                             }
@@ -382,7 +397,11 @@ impl DannoEstimator {
         }
 
         // Bayesian False Discovery Rate control: sort by PEP ascending
-        candidates.sort_by(|a, b| a.pep.partial_cmp(&b.pep).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.sort_by(|a, b| {
+            a.pep
+                .partial_cmp(&b.pep)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let m_tot = candidates.len();
         let mut cum_pep = 0.0;

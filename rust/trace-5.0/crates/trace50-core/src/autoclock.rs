@@ -7,8 +7,8 @@
 //! - Bartlett effective sample size (N_eff) phylogenetic covariance penalty.
 //! - Fieller's theorem exact confidence set inversion for evolutionary clock velocity and t_MRCA.
 
+use crate::math::{linregress, student_t_ppf, symmetric_jacobi_eigh};
 use serde::{Deserialize, Serialize};
-use crate::math::{jacobi_eigensystem, linregress, student_t_ppf};
 
 /// Evolutionary and epidemiological parameters of a resolved transmission community.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,7 +50,10 @@ pub fn compute_fieller_mrca(
     let g = ((t_crit * se_mu) / mu).powi(2);
 
     if g >= 1.0 {
-        return ([f64::NEG_INFINITY, f64::INFINITY], "RATE_UNIDENTIFIABLE_G_GE_1".to_string());
+        return (
+            [f64::NEG_INFINITY, f64::INFINITY],
+            "RATE_UNIDENTIFIABLE_G_GE_1".to_string(),
+        );
     }
 
     let denom = 1.0 - g;
@@ -58,7 +61,10 @@ pub fn compute_fieller_mrca(
     let discriminant = center * center - denom * ((d0 * d0 - (t_crit * se_d0).powi(2)) / (mu * mu));
 
     if discriminant < 0.0 {
-        return ([f64::NEG_INFINITY, f64::INFINITY], "COMPLEX_ROOTS".to_string());
+        return (
+            [f64::NEG_INFINITY, f64::INFINITY],
+            "COMPLEX_ROOTS".to_string(),
+        );
     }
 
     let delta = discriminant.sqrt();
@@ -126,7 +132,11 @@ pub fn fit_clock_community(
 
     let min_date = sub_dates.iter().copied().fold(f64::INFINITY, f64::min);
     let max_date = sub_dates.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    let span = if max_date >= min_date { max_date - min_date } else { 0.0 };
+    let span = if max_date >= min_date {
+        max_date - min_date
+    } else {
+        0.0
+    };
 
     if n < 3 {
         return SteveCommunity {
@@ -166,25 +176,27 @@ pub fn fit_clock_community(
 
     let lr = match linregress(&sub_dates, &root_dists) {
         Some(res) => res,
-        None => return SteveCommunity {
-            community_id: 0,
-            path: "".to_string(),
-            members: sub_idx.to_vec(),
-            size: n,
-            n_eff: n as f64,
-            mu: 0.0,
-            se_mu: 0.0,
-            ci_mu: [0.0, 0.0],
-            r_squared: 0.0,
-            tmrca: min_date,
-            ci_mrca: [min_date, min_date],
-            fieller_status: "REGRESSION_FAILED".to_string(),
-            mean_pairwise_dist: mean_d,
-            time_span_years: span,
-            is_active_outbreak: false,
-            operational_tier: "Indeterminate".to_string(),
-            stop_reason: "reg_failure".to_string(),
-        },
+        None => {
+            return SteveCommunity {
+                community_id: 0,
+                path: "".to_string(),
+                members: sub_idx.to_vec(),
+                size: n,
+                n_eff: n as f64,
+                mu: 0.0,
+                se_mu: 0.0,
+                ci_mu: [0.0, 0.0],
+                r_squared: 0.0,
+                tmrca: min_date,
+                ci_mrca: [min_date, min_date],
+                fieller_status: "REGRESSION_FAILED".to_string(),
+                mean_pairwise_dist: mean_d,
+                time_span_years: span,
+                is_active_outbreak: false,
+                operational_tier: "Indeterminate".to_string(),
+                stop_reason: "reg_failure".to_string(),
+            }
+        }
     };
 
     let n_eff = compute_bartlett_neff(&d_sub, n, 100.0);
@@ -194,23 +206,25 @@ pub fn fit_clock_community(
     let d_mean = root_dists.iter().sum::<f64>() / (n as f64);
 
     let s_tt = sub_dates.iter().map(|&t| (t - t_mean).powi(2)).sum::<f64>();
-    let rss = (root_dists.iter().map(|&d| (d - d_mean).powi(2)).sum::<f64>() - lr.slope * lr.slope * s_tt).max(0.0);
+    let rss = (root_dists
+        .iter()
+        .map(|&d| (d - d_mean).powi(2))
+        .sum::<f64>()
+        - lr.slope * lr.slope * s_tt)
+        .max(0.0);
     let sig2 = rss / df_eff;
-    let se_mu = if s_tt > 1e-12 { (sig2 / s_tt).sqrt() } else { 0.0 };
+    let se_mu = if s_tt > 1e-12 {
+        (sig2 / s_tt).sqrt()
+    } else {
+        0.0
+    };
     let se_d0 = (sig2 / n_eff).sqrt();
 
     let t_crit = student_t_ppf(1.0 - alpha / 2.0, df_eff);
     let ci_mu = [lr.slope - t_crit * se_mu, lr.slope + t_crit * se_mu];
 
-    let (ci_mrca, fieller_status) = compute_fieller_mrca(
-        lr.slope,
-        d_mean,
-        se_mu,
-        se_d0,
-        t_mean,
-        df_eff,
-        alpha,
-    );
+    let (ci_mrca, fieller_status) =
+        compute_fieller_mrca(lr.slope, d_mean, se_mu, se_d0, t_mean, df_eff, alpha);
 
     let tmrca = if lr.slope.abs() > 1e-12 {
         t_mean - d_mean / lr.slope
@@ -218,11 +232,10 @@ pub fn fit_clock_community(
         min_date
     };
 
-    let is_recent = tmrca >= (max_date - 6.0) || (ci_mrca[1].is_finite() && ci_mrca[1] >= (max_date - 4.0));
-    let is_active = lr.slope >= 1.0e-3
-        && fieller_status == "OK"
-        && lr.r_squared >= 0.15
-        && is_recent;
+    let is_recent =
+        tmrca >= (max_date - 6.0) || (ci_mrca[1].is_finite() && ci_mrca[1] >= (max_date - 4.0));
+    let is_active =
+        lr.slope >= 1.0e-3 && fieller_status == "OK" && lr.r_squared >= 0.15 && is_recent;
 
     let operational_tier = if is_active {
         "Active Outbreak Chain".to_string()
@@ -313,7 +326,8 @@ pub fn optimize_fiedler_modularity(
             }
         }
 
-        let q = (1.0 / two_m) * ((a00 - (k0_deg * k0_deg) / two_m) + (a11 - (k1_deg * k1_deg) / two_m));
+        let q =
+            (1.0 / two_m) * ((a00 - (k0_deg * k0_deg) / two_m) + (a11 - (k1_deg * k1_deg) / two_m));
         if q > best_q {
             best_q = q;
             best_k = k;
@@ -416,16 +430,19 @@ pub fn recursive_autoclock_deconvolution(
         }
     }
 
-    let (evals, evecs) = jacobi_eigensystem(&l_sym, n, 200, 1e-10);
-    if evals.len() < 2 {
+    // aeon_manifold::symmetric_jacobi_eigh returns eigenvalues in DESCENDING
+    // order, so the Fiedler pair (2nd-smallest eigenvalue) is column n - 2.
+    let eigh = symmetric_jacobi_eigh(&l_sym, n);
+    if eigh.eigenvalues.len() < 2 {
         fit.stop_reason = "trivial_spectrum".to_string();
         return vec![fit];
     }
 
-    // Fiedler vector is the 2nd column of evecs (corresponding to evals[1])
+    // Fiedler vector is the column of evecs matching the 2nd-smallest eigenvalue
+    let fiedler_col = eigh.eigenvalues.len() - 2;
     let mut fiedler = vec![0.0; n];
     for i in 0..n {
-        fiedler[i] = evecs[i * n + 1];
+        fiedler[i] = eigh.eigenvectors[i * n + fiedler_col];
     }
 
     let (c0, c1, _best_q, delta_q) = optimize_fiedler_modularity(&w, &fiedler, n, min_size);
@@ -456,10 +473,26 @@ pub fn recursive_autoclock_deconvolution(
     let right_sub: Vec<usize> = c1.iter().map(|&i| sub_idx[i]).collect();
 
     let mut left_leaves = recursive_autoclock_deconvolution(
-        &left_sub, dates, d_matrix, n_total, min_size, max_depth, depth + 1, &format!("{}.0", path), conductance_cut,
+        &left_sub,
+        dates,
+        d_matrix,
+        n_total,
+        min_size,
+        max_depth,
+        depth + 1,
+        &format!("{}.0", path),
+        conductance_cut,
     );
     let right_leaves = recursive_autoclock_deconvolution(
-        &right_sub, dates, d_matrix, n_total, min_size, max_depth, depth + 1, &format!("{}.1", path), conductance_cut,
+        &right_sub,
+        dates,
+        d_matrix,
+        n_total,
+        min_size,
+        max_depth,
+        depth + 1,
+        &format!("{}.1", path),
+        conductance_cut,
     );
 
     left_leaves.extend(right_leaves);

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const PURINE_MASK: u8 = 0b0101;     // A (1) or G (4)
+pub const PURINE_MASK: u8 = 0b0101; // A (1) or G (4)
 pub const PYRIMIDINE_MASK: u8 = 0b1010; // C (2) or T (8)
 
 /// Converts an ASCII character to a 4-bit IUPAC bitmask.
@@ -90,10 +90,18 @@ pub fn compute_pairwise_tn93(seq_a_bits: &[u8], seq_b_bits: &[u8]) -> f64 {
             l_valid += 1;
 
             let a_or_b = a | b;
-            if (a_or_b & 0b0001) > 0 { cnt_a += 1; }
-            if (a_or_b & 0b0010) > 0 { cnt_c += 1; }
-            if (a_or_b & 0b0100) > 0 { cnt_g += 1; }
-            if (a_or_b & 0b1000) > 0 { cnt_t += 1; }
+            if (a_or_b & 0b0001) > 0 {
+                cnt_a += 1;
+            }
+            if (a_or_b & 0b0010) > 0 {
+                cnt_c += 1;
+            }
+            if (a_or_b & 0b0100) > 0 {
+                cnt_g += 1;
+            }
+            if (a_or_b & 0b1000) > 0 {
+                cnt_t += 1;
+            }
 
             // If bits overlap, zero divergence at this site
             if (a & b) == 0 {
@@ -220,7 +228,11 @@ impl Alignment {
                     raw_seqs.push(current_seq);
                     current_seq = Vec::new();
                 }
-                let h = trimmed[1..].split_whitespace().next().unwrap_or("").to_string();
+                let h = trimmed[1..]
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
                 current_header = Some(h);
             } else {
                 current_seq.extend_from_slice(trimmed.to_ascii_uppercase().as_bytes());

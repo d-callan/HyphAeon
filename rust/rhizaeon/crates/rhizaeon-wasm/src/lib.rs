@@ -1,5 +1,5 @@
-use wasm_bindgen::prelude::*;
 use rhizaeon_core::{parse_fasta, RhizAeonEngine};
+use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 pub fn init_panic_hook() {
@@ -61,7 +61,9 @@ pub fn scan_fasta_json(
 #[wasm_bindgen]
 pub fn count_informative_sites(fasta_str: &str) -> Result<usize, JsValue> {
     let aln = parse_fasta(fasta_str).map_err(|e| JsValue::from_str(&e))?;
-    Ok(rhizaeon_core::fasta::count_parsimony_informative_sites(&aln))
+    Ok(rhizaeon_core::fasta::count_parsimony_informative_sites(
+        &aln,
+    ))
 }
 
 /// Scans a FASTA string and returns a rich visualization dossier as a JS Object payload

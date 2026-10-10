@@ -109,9 +109,19 @@ pub fn extract_clusters(
             }
 
             // Calculate mean internal distance and time span
-            let min_date = members.iter().map(|&m| dates[m]).fold(f64::INFINITY, f64::min);
-            let max_date = members.iter().map(|&m| dates[m]).fold(f64::NEG_INFINITY, f64::max);
-            let time_span = if max_date >= min_date { max_date - min_date } else { 0.0 };
+            let min_date = members
+                .iter()
+                .map(|&m| dates[m])
+                .fold(f64::INFINITY, f64::min);
+            let max_date = members
+                .iter()
+                .map(|&m| dates[m])
+                .fold(f64::NEG_INFINITY, f64::max);
+            let time_span = if max_date >= min_date {
+                max_date - min_date
+            } else {
+                0.0
+            };
 
             clusters.push(Cluster {
                 cluster_id,

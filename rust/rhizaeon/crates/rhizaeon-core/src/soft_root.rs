@@ -2,10 +2,7 @@ use crate::types::Alignment;
 
 /// Computes the column-frequency consensus ancestral soft root sequence in O(N * L) time.
 /// Returns a Vec<u8> of length L where root[u] is the consensus nucleotide (1..4) or 0 if all gap.
-pub fn compute_consensus_soft_root(
-    aln: &Alignment,
-    clonal_indices: Option<&[usize]>,
-) -> Vec<u8> {
+pub fn compute_consensus_soft_root(aln: &Alignment, clonal_indices: Option<&[usize]>) -> Vec<u8> {
     let mut root_seq = vec![0u8; aln.length];
 
     for u in 0..aln.length {

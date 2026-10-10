@@ -71,6 +71,9 @@ Thumbs.db
 *.swp
 *.swo
 
+# Rust workspace
+rust/target/
+
 # Output results directory
 results/
 tmp/

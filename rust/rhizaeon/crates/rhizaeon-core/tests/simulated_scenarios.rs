@@ -34,9 +34,15 @@ fn test_synthetic_crossover() {
     let engine = RhizAeonEngine::new().with_landmarks(16);
     let result = engine.scan(&aln);
 
-    assert!(!result.events.is_empty(), "Should detect synthetic crossover");
+    assert!(
+        !result.events.is_empty(),
+        "Should detect synthetic crossover"
+    );
     let ev = &result.events[0];
-    assert_eq!(ev.candidate_name, "R", "R must be identified as recombinant");
+    assert_eq!(
+        ev.candidate_name, "R",
+        "R must be identified as recombinant"
+    );
     assert!(ev.p_fisher < 1e-5, "Significant p-value required");
 }
 
@@ -73,7 +79,10 @@ fn test_synthetic_heterotachy_null() {
     let engine = RhizAeonEngine::new().with_landmarks(16);
     let result = engine.scan(&aln);
 
-    assert!(result.events.is_empty(), "Private heterotachy burst must NOT trigger false positive recombination");
+    assert!(
+        result.events.is_empty(),
+        "Private heterotachy burst must NOT trigger false positive recombination"
+    );
 }
 
 #[test]
@@ -83,7 +92,10 @@ fn test_strictly_clonal_monomorphic_null() {
     let engine = RhizAeonEngine::new().with_landmarks(16);
     let result = engine.scan(&aln);
 
-    assert!(result.events.is_empty(), "Monomorphic sequences must yield 0 events");
+    assert!(
+        result.events.is_empty(),
+        "Monomorphic sequences must yield 0 events"
+    );
     assert_eq!(result.informative_sites, 0);
 }
 
@@ -128,7 +140,10 @@ fn test_bacterial_snp_compression_scenario() {
 
     // Verify extraction
     let (snp_aln, snp_map) = extract_informative_snp_alignment(&aln);
-    assert_eq!(snp_aln.length, 600, "Expected 600 informative SNPs out of 60,000 bp");
+    assert_eq!(
+        snp_aln.length, 600,
+        "Expected 600 informative SNPs out of 60,000 bp"
+    );
     assert_eq!(snp_map.len(), 600);
     assert_eq!(snp_map[0], 0);
     assert_eq!(snp_map[1], 100);
@@ -137,16 +152,37 @@ fn test_bacterial_snp_compression_scenario() {
     let engine = RhizAeonEngine::new().with_landmarks(16);
     let result = engine.scan(&aln);
 
-    assert_eq!(result.length, 60_000, "Output length must preserve full chromosomal length");
-    assert!(!result.events.is_empty(), "Recombination event must be detected in compressed SNP mode");
+    assert_eq!(
+        result.length, 60_000,
+        "Output length must preserve full chromosomal length"
+    );
+    assert!(
+        !result.events.is_empty(),
+        "Recombination event must be detected in compressed SNP mode"
+    );
     println!("Detected events: {:?}", result.events);
     let ev = &result.events[0];
     assert_eq!(ev.candidate_name, "R");
-    assert!(ev.donor_name.starts_with("P2"), "Donor should be from P2 clade, got {}", ev.donor_name);
+    assert!(
+        ev.donor_name.starts_with("P2"),
+        "Donor should be from P2 clade, got {}",
+        ev.donor_name
+    );
     // Check that coordinates are restored to physical chromosomal space
-    assert!(ev.u1 >= 19_500 && ev.u1 <= 20_500, "Start breakpoint should map near 20,000 bp, got {}", ev.u1);
-    assert!(ev.u2 >= 39_500 && ev.u2 <= 40_500, "End breakpoint should map near 40,000 bp, got {}", ev.u2);
-    assert!(ev.tract_length >= 19_000 && ev.tract_length <= 21_000, "Tract length should be ~20,000 bp, got {}", ev.tract_length);
+    assert!(
+        ev.u1 >= 19_500 && ev.u1 <= 20_500,
+        "Start breakpoint should map near 20,000 bp, got {}",
+        ev.u1
+    );
+    assert!(
+        ev.u2 >= 39_500 && ev.u2 <= 40_500,
+        "End breakpoint should map near 40,000 bp, got {}",
+        ev.u2
+    );
+    assert!(
+        ev.tract_length >= 19_000 && ev.tract_length <= 21_000,
+        "Tract length should be ~20,000 bp, got {}",
+        ev.tract_length
+    );
     assert!(ev.p_fisher < 1e-20, "Significant p-value required");
 }
-

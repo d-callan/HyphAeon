@@ -64,7 +64,8 @@ TGCATGCATGCATGCATGCATGCATGCATGCT
     config.min_cluster_size = 2;
     config.static_distance_threshold = 0.05;
 
-    let dossier = run_trace50(&alignment, &config).expect("Pipeline execution with InfoDANNO failed");
+    let dossier =
+        run_trace50(&alignment, &config).expect("Pipeline execution with InfoDANNO failed");
     assert_eq!(dossier.metadata.num_sequences, 5);
     assert_eq!(dossier.nodes.len(), 5);
 }

@@ -11,7 +11,9 @@ use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(name = "export_figure1_data")]
-#[command(about = "Exports authentic Force-Field & Canonical Manifold trajectory data for Figure 1")]
+#[command(
+    about = "Exports authentic Force-Field & Canonical Manifold trajectory data for Figure 1"
+)]
 struct Args {
     #[arg(
         short,
@@ -318,7 +320,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         global_coords.insert(
             t.clone(),
-            vec![(z1 * 10000.0).round() / 10000.0, (z2 * 10000.0).round() / 10000.0],
+            vec![
+                (z1 * 10000.0).round() / 10000.0,
+                (z2 * 10000.0).round() / 10000.0,
+            ],
         );
     }
 
@@ -334,7 +339,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cur_u += step;
     }
     let num_pts = u_points.len();
-    println!("  Computing trajectories across {} window points...", num_pts);
+    println!(
+        "  Computing trajectories across {} window points...",
+        num_pts
+    );
 
     let mut trajectories_z1: BTreeMap<String, Vec<f64>> = BTreeMap::new();
     let mut trajectories_z2: BTreeMap<String, Vec<f64>> = BTreeMap::new();
@@ -428,13 +436,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!(
         "  Subtype B Clonal Corridor: Mean = +{:.3}, Flutter sigma = {:.3}",
-        b_overall_mean,
-        b_mean_flutter
+        b_overall_mean, b_mean_flutter
     );
     println!(
         "  Subtype C Clonal Corridor: Mean = {:.3}, Flutter sigma = {:.3}",
-        c_overall_mean,
-        c_mean_flutter
+        c_overall_mean, c_mean_flutter
     );
 
     let reference_corridors = ReferenceCorridorData {

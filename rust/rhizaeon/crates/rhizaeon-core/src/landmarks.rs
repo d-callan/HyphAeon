@@ -79,7 +79,10 @@ pub fn select_landmarks(alignment: &Alignment, target_k: usize) -> LandmarkSet {
         }
     }
 
-    let landmark_taxa: Vec<String> = selected_indices.iter().map(|&i| alignment.taxa[i].clone()).collect();
+    let landmark_taxa: Vec<String> = selected_indices
+        .iter()
+        .map(|&i| alignment.taxa[i].clone())
+        .collect();
 
     // 2. Compute Classical MDS on the K landmarks to get 2D polar tree coordinates
     // Pairwise distance matrix D_k
@@ -123,8 +126,20 @@ pub fn select_landmarks(alignment: &Alignment, target_k: usize) -> LandmarkSet {
     let eigh = symmetric_jacobi_eigh(&b, k);
 
     // Embed into 2D: coord[p] = [ V[p, 0] * sqrt(max(lambda_0, 0)), V[p, 1] * sqrt(max(lambda_1, 0)) ]
-    let lam0 = eigh.eigenvalues.get(0).copied().unwrap_or(0.0).max(1e-9).sqrt();
-    let lam1 = eigh.eigenvalues.get(1).copied().unwrap_or(0.0).max(1e-9).sqrt();
+    let lam0 = eigh
+        .eigenvalues
+        .get(0)
+        .copied()
+        .unwrap_or(0.0)
+        .max(1e-9)
+        .sqrt();
+    let lam1 = eigh
+        .eigenvalues
+        .get(1)
+        .copied()
+        .unwrap_or(0.0)
+        .max(1e-9)
+        .sqrt();
 
     // Root is at index 0 with coords [0.0, 0.0]
     // Landmarks are at indices 1..=K with polar coords: [t (radius), theta (angle)]

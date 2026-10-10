@@ -31,7 +31,11 @@ pub fn parse_fasta(fasta_str: &str) -> Result<Alignment, String> {
             }
             let header = trimmed[1..].trim().to_string();
             // Take first token up to whitespace as canonical taxon name
-            let name = header.split_whitespace().next().unwrap_or("taxon").to_string();
+            let name = header
+                .split_whitespace()
+                .next()
+                .unwrap_or("taxon")
+                .to_string();
             taxa.push(name);
         } else {
             for b in trimmed.bytes() {
@@ -54,7 +58,10 @@ pub fn parse_fasta(fasta_str: &str) -> Result<Alignment, String> {
         if seq.len() != length {
             return Err(format!(
                 "Sequence {} ('{}') has length {} but expected {}",
-                i, taxa[i], seq.len(), length
+                i,
+                taxa[i],
+                seq.len(),
+                length
             ));
         }
     }
@@ -176,9 +183,5 @@ pub fn extract_informative_snp_alignment(aln: &Alignment) -> (Alignment, Vec<usi
         }
     }
 
-    (
-        Alignment::new(aln.taxa.clone(), m, new_matrix),
-        snp_map,
-    )
+    (Alignment::new(aln.taxa.clone(), m, new_matrix), snp_map)
 }
-

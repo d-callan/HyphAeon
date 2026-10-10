@@ -56,8 +56,10 @@ impl SequenceDueDiligence {
         let c2 = b + d;
 
         let log_denom = self.log_factorial(n);
-        let log_margins = self.log_factorial(r1) + self.log_factorial(r2)
-            + self.log_factorial(c1) + self.log_factorial(c2);
+        let log_margins = self.log_factorial(r1)
+            + self.log_factorial(r2)
+            + self.log_factorial(c1)
+            + self.log_factorial(c2);
 
         let max_k = r1.min(c1);
         let mut p_sum = 0.0;
@@ -68,8 +70,10 @@ impl SequenceDueDiligence {
             let cell_c = c1 - k;
             let cell_d = r2 - cell_c;
 
-            let log_cells = self.log_factorial(k) + self.log_factorial(cell_b)
-                + self.log_factorial(cell_c) + self.log_factorial(cell_d);
+            let log_cells = self.log_factorial(k)
+                + self.log_factorial(cell_b)
+                + self.log_factorial(cell_c)
+                + self.log_factorial(cell_d);
 
             let log_prob = log_margins - log_denom - log_cells;
             p_sum += log_prob.exp();
@@ -152,20 +156,36 @@ impl SequenceDueDiligence {
                 if rc > 0 && rh > 0 && rd > 0 {
                     if in_tract {
                         valid_tract += 1;
-                        if rc != rd { mismatch_tract_donor += 1; }
-                        if rc != rh { mismatch_tract_home += 1; }
+                        if rc != rd {
+                            mismatch_tract_donor += 1;
+                        }
+                        if rc != rh {
+                            mismatch_tract_home += 1;
+                        }
                         // Informative site where Home and Donor differ
                         if rh != rd {
-                            if rc == rd { s_donor += 1; }
-                            if rc == rh { s_home_tract += 1; }
+                            if rc == rd {
+                                s_donor += 1;
+                            }
+                            if rc == rh {
+                                s_home_tract += 1;
+                            }
                         }
                     } else {
                         valid_flank += 1;
-                        if rc != rd { mismatch_flank_donor += 1; }
-                        if rc != rh { mismatch_flank_home += 1; }
+                        if rc != rd {
+                            mismatch_flank_donor += 1;
+                        }
+                        if rc != rh {
+                            mismatch_flank_home += 1;
+                        }
                         if rh != rd {
-                            if rc == rd { s_donor_flank += 1; }
-                            if rc == rh { s_home_flank += 1; }
+                            if rc == rd {
+                                s_donor_flank += 1;
+                            }
+                            if rc == rh {
+                                s_home_flank += 1;
+                            }
                         }
                     }
                 }
@@ -219,8 +239,12 @@ impl SequenceDueDiligence {
                             is_home_priv = false;
                         }
                     }
-                    if is_cand_priv { n_priv_cand += 1; }
-                    if is_home_priv { n_priv_home += 1; }
+                    if is_cand_priv {
+                        n_priv_cand += 1;
+                    }
+                    if is_home_priv {
+                        n_priv_home += 1;
+                    }
                 }
             }
 
@@ -252,7 +276,9 @@ impl SequenceDueDiligence {
                                     break;
                                 }
                             }
-                            if is_donor_priv { n_priv_donor += 1; }
+                            if is_donor_priv {
+                                n_priv_donor += 1;
+                            }
                         }
                     }
                     if n_total_donor >= 4 {
@@ -398,13 +424,31 @@ impl SequenceDueDiligence {
         let p_fisher = self.fisher_exact_2x2(a, b, c, d);
 
         // Bonferroni critical threshold over candidate triplets in alignment
-        let num_triplets = (((aln.num_taxa * (aln.num_taxa - 1) / 2) * aln.num_taxa.saturating_sub(2).max(1)).max(1)) as f64;
+        let num_triplets = (((aln.num_taxa * (aln.num_taxa - 1) / 2)
+            * aln.num_taxa.saturating_sub(2).max(1))
+        .max(1)) as f64;
         let p_crit = self.alpha / num_triplets;
 
-        let d_tract_donor = if valid_tract > 0 { (mismatch_tract_donor as f64) / (valid_tract as f64) } else { 0.0 };
-        let d_tract_home = if valid_tract > 0 { (mismatch_tract_home as f64) / (valid_tract as f64) } else { 0.0 };
-        let d_flank_donor = if valid_flank > 0 { (mismatch_flank_donor as f64) / (valid_flank as f64) } else { 0.0 };
-        let d_flank_home = if valid_flank > 0 { (mismatch_flank_home as f64) / (valid_flank as f64) } else { 0.0 };
+        let d_tract_donor = if valid_tract > 0 {
+            (mismatch_tract_donor as f64) / (valid_tract as f64)
+        } else {
+            0.0
+        };
+        let d_tract_home = if valid_tract > 0 {
+            (mismatch_tract_home as f64) / (valid_tract as f64)
+        } else {
+            0.0
+        };
+        let d_flank_donor = if valid_flank > 0 {
+            (mismatch_flank_donor as f64) / (valid_flank as f64)
+        } else {
+            0.0
+        };
+        let d_flank_home = if valid_flank > 0 {
+            (mismatch_flank_home as f64) / (valid_flank as f64)
+        } else {
+            0.0
+        };
 
         // Relative recoil check (when donor is sampled)
         if !parental.is_ghost_donor {
@@ -445,8 +489,10 @@ impl SequenceDueDiligence {
 
                 for o_idx in 0..aln.num_taxa {
                     if o_idx != cand_idx && o_idx != home_global && o_idx != donor_global {
-                        let d_oh = crate::landmarks::compute_pairwise_distance(aln, o_idx, home_global);
-                        let d_od = crate::landmarks::compute_pairwise_distance(aln, o_idx, donor_global);
+                        let d_oh =
+                            crate::landmarks::compute_pairwise_distance(aln, o_idx, home_global);
+                        let d_od =
+                            crate::landmarks::compute_pairwise_distance(aln, o_idx, donor_global);
                         let sum_d = d_oh + d_od;
                         if sum_d > max_out_div {
                             max_out_div = sum_d;
@@ -478,16 +524,32 @@ impl SequenceDueDiligence {
                         if ro > 0 && rh > 0 && rd > 0 && rc > 0 {
                             if u >= s_idx && u < e_idx {
                                 v_tr_o += 1;
-                                if ro != rh { d_tr_oh += 1; }
-                                if ro != rd { d_tr_od += 1; }
-                                if rc != ro { d_tr_ro += 1; }
-                                if rh != rd { d_tr_hd += 1; }
+                                if ro != rh {
+                                    d_tr_oh += 1;
+                                }
+                                if ro != rd {
+                                    d_tr_od += 1;
+                                }
+                                if rc != ro {
+                                    d_tr_ro += 1;
+                                }
+                                if rh != rd {
+                                    d_tr_hd += 1;
+                                }
                             } else {
                                 v_fl_o += 1;
-                                if ro != rh { d_fl_oh += 1; }
-                                if ro != rd { d_fl_od += 1; }
-                                if rc != ro { d_fl_ro += 1; }
-                                if rh != rd { d_fl_hd += 1; }
+                                if ro != rh {
+                                    d_fl_oh += 1;
+                                }
+                                if ro != rd {
+                                    d_fl_od += 1;
+                                }
+                                if rc != ro {
+                                    d_fl_ro += 1;
+                                }
+                                if rh != rd {
+                                    d_fl_hd += 1;
+                                }
                             }
                         }
                     }
@@ -515,8 +577,20 @@ impl SequenceDueDiligence {
                         let s2_fl = d_flank_donor + fl_oh;
                         let s3_fl = fl_ro + fl_hd;
 
-                        let topo_tr = if s1_tr <= s2_tr && s1_tr <= s3_tr { 0 } else if s2_tr <= s3_tr { 1 } else { 2 };
-                        let topo_fl = if s1_fl <= s2_fl && s1_fl <= s3_fl { 0 } else if s2_fl <= s3_fl { 1 } else { 2 };
+                        let topo_tr = if s1_tr <= s2_tr && s1_tr <= s3_tr {
+                            0
+                        } else if s2_tr <= s3_tr {
+                            1
+                        } else {
+                            2
+                        };
+                        let topo_fl = if s1_fl <= s2_fl && s1_fl <= s3_fl {
+                            0
+                        } else if s2_fl <= s3_fl {
+                            1
+                        } else {
+                            2
+                        };
 
                         if topo_tr == topo_fl {
                             return None;
@@ -559,7 +633,6 @@ impl SequenceDueDiligence {
                 return None;
             }
         }
-
 
         let is_verified = p_fisher <= p_crit && s_donor >= self.poisson_floor;
 
@@ -628,11 +701,18 @@ impl SequenceDueDiligence {
                 // either overlapping tracts (for cassettes/conversions) or complementary partitions (for crossovers).
                 let ov_start = e1.u1.max(e2.u1);
                 let ov_end = e1.u2.min(e2.u2);
-                let overlap = if ov_end >= ov_start { ov_end - ov_start + 1 } else { 0 };
-                let min_len = (e1.u2.saturating_sub(e1.u1) + 1).min(e2.u2.saturating_sub(e2.u1) + 1);
+                let overlap = if ov_end >= ov_start {
+                    ov_end - ov_start + 1
+                } else {
+                    0
+                };
+                let min_len =
+                    (e1.u2.saturating_sub(e1.u1) + 1).min(e2.u2.saturating_sub(e2.u1) + 1);
 
                 let is_overlapping = (overlap as f64) >= 0.25 * (min_len as f64);
-                let is_complementary_crossover = (e1.is_crossover || e1.u1 <= 5 || e1.u2 >= _aln.length.saturating_sub(5))
+                let is_complementary_crossover = (e1.is_crossover
+                    || e1.u1 <= 5
+                    || e1.u2 >= _aln.length.saturating_sub(5))
                     && (e2.is_crossover || e2.u1 <= 5 || e2.u2 >= _aln.length.saturating_sub(5))
                     && (e1.u2.abs_diff(e2.u1) <= 10 || e2.u2.abs_diff(e1.u1) <= 10);
 
@@ -663,55 +743,55 @@ impl SequenceDueDiligence {
                         // A true recombinant child undergoes a large home disruption (d_tract_home >> d_flank_home),
                         // moving away from its home clade into the donor clade during the tract.
                         // A stationary clonal parent never leaves its home clade (d_tract_home ~ d_flank_home).
-                    let delta_h1 = (e1.d_tract_home - e1.d_flank_home).max(0.0);
-                    let delta_h2 = (e2.d_tract_home - e2.d_flank_home).max(0.0);
-                    let delta_d1 = (e1.d_flank_donor - e1.d_tract_donor).max(0.0);
-                    let delta_d2 = (e2.d_flank_donor - e2.d_tract_donor).max(0.0);
-                    let trans1 = delta_h1 + delta_d1;
-                    let trans2 = delta_h2 + delta_d2;
+                        let delta_h1 = (e1.d_tract_home - e1.d_flank_home).max(0.0);
+                        let delta_h2 = (e2.d_tract_home - e2.d_flank_home).max(0.0);
+                        let delta_d1 = (e1.d_flank_donor - e1.d_tract_donor).max(0.0);
+                        let delta_d2 = (e2.d_flank_donor - e2.d_tract_donor).max(0.0);
+                        let trans1 = delta_h1 + delta_d1;
+                        let trans2 = delta_h2 + delta_d2;
 
-                    if (trans1 - trans2).abs() > 0.02 {
-                        if trans1 > trans2 {
-                            pruned[j] = true;
-                        } else {
-                            pruned[i] = true;
-                            break;
-                        }
-                    } else if (delta_h1 - delta_h2).abs() > 0.02 {
-                        if delta_h1 > delta_h2 {
-                            pruned[j] = true;
-                        } else {
-                            pruned[i] = true;
-                            break;
-                        }
-                    } else {
-                        // Tie-break by mosaic reconstruction residual, z_phys, and informative sites
-                        let res1 = e1.d_tract_donor + e1.d_flank_home;
-                        let res2 = e2.d_tract_donor + e2.d_flank_home;
-                        if (res1 - res2).abs() > 1e-4 {
-                            if res1 < res2 {
+                        if (trans1 - trans2).abs() > 0.02 {
+                            if trans1 > trans2 {
                                 pruned[j] = true;
                             } else {
                                 pruned[i] = true;
                                 break;
                             }
-                        } else if e1.z_phys != e2.z_phys {
-                            if e1.z_phys > e2.z_phys {
+                        } else if (delta_h1 - delta_h2).abs() > 0.02 {
+                            if delta_h1 > delta_h2 {
                                 pruned[j] = true;
                             } else {
                                 pruned[i] = true;
                                 break;
                             }
-                        } else if e1.s_informative >= e2.s_informative {
-                            pruned[j] = true;
                         } else {
-                            pruned[i] = true;
-                            break;
+                            // Tie-break by mosaic reconstruction residual, z_phys, and informative sites
+                            let res1 = e1.d_tract_donor + e1.d_flank_home;
+                            let res2 = e2.d_tract_donor + e2.d_flank_home;
+                            if (res1 - res2).abs() > 1e-4 {
+                                if res1 < res2 {
+                                    pruned[j] = true;
+                                } else {
+                                    pruned[i] = true;
+                                    break;
+                                }
+                            } else if e1.z_phys != e2.z_phys {
+                                if e1.z_phys > e2.z_phys {
+                                    pruned[j] = true;
+                                } else {
+                                    pruned[i] = true;
+                                    break;
+                                }
+                            } else if e1.s_informative >= e2.s_informative {
+                                pruned[j] = true;
+                            } else {
+                                pruned[i] = true;
+                                break;
+                            }
                         }
                     }
                 }
             }
-        }
         }
 
         events
@@ -827,4 +907,3 @@ mod tests {
         assert_eq!(adjudicated[0].donor_name, "D");
     }
 }
-

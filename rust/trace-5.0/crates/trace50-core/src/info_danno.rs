@@ -3,10 +3,10 @@
 //! Extends DANNO with site-specific background mutation frequency weighting and convergent
 //! drug-resistance mutation (DRM) homoplasy downweighting (Tzou, Kosakovsky Pond et al. 2020).
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use crate::danno::DannoEstimator;
 use crate::tn93::Alignment;
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 /// Site-specific empirical allele frequency table across alignment columns.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,7 +27,11 @@ impl AlleleFrequencyTable {
         let mut consensus = vec![-1i8; l];
 
         if n == 0 || l == 0 {
-            return Self { seq_len: l, frequencies, consensus };
+            return Self {
+                seq_len: l,
+                frequencies,
+                consensus,
+            };
         }
 
         for col in 0..l {

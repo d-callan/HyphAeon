@@ -1,0 +1,58 @@
+name: Rust workspace
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "rust/**"
+      - ".github/workflows/rust.yml"
+  pull_request:
+    paths:
+      - "rust/**"
+      - ".github/workflows/rust.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test + build (host target)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+      - name: cargo test --workspace
+        run: cargo test --workspace
+      - name: cargo build --release (CLI binaries)
+        run: cargo build --release -p rhizaeon-cli -p trace50-cli
+
+  wasm:
+    name: wasm-pack build --target web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: "0.15.0"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: build rhizaeon-wasm
+        working-directory: rust/rhizaeon/crates/rhizaeon-wasm
+        run: wasm-pack build --target web
+      - name: build trace50-wasm
+        working-directory: rust/trace-5.0/crates/trace50-wasm
+        run: wasm-pack build --target web

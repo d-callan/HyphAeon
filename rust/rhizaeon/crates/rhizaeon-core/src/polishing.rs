@@ -54,7 +54,9 @@ impl CumulativeTrajectoryPolisher {
         let total_c = run_sum;
 
         let mean_sub = total_c / (n as f64);
-        let sigma_local = ((sum_sq_sub / (n as f64)) - mean_sub * mean_sub).max(1e-12).sqrt();
+        let sigma_local = ((sum_sq_sub / (n as f64)) - mean_sub * mean_sub)
+            .max(1e-12)
+            .sqrt();
         let sigma_eff = sigma_local.min(sigma_x);
 
         let mut b_sub = Vec::with_capacity(n);
@@ -89,7 +91,8 @@ impl CumulativeTrajectoryPolisher {
         let u_star = s + local_apex; // 1-indexed changepoint
 
         let mut left_cps = self.recursive_binary_segmentation(x, s, u_star, eff_alpha, sigma_x);
-        let mut right_cps = self.recursive_binary_segmentation(x, u_star + 1, e, eff_alpha, sigma_x);
+        let mut right_cps =
+            self.recursive_binary_segmentation(x, u_star + 1, e, eff_alpha, sigma_x);
 
         let mut result = Vec::new();
         result.append(&mut left_cps);
@@ -117,7 +120,8 @@ impl CumulativeTrajectoryPolisher {
 
             // Spatial extreme-value family-wise correction: L/tau independent spatial blocks
             let n_blocks = ((l as f64) / (tau as f64)).max(1.0);
-            let eff_alpha_tau = (self.alpha / (2.0 * (num_taxa as f64) * (m_scales as f64) * n_blocks)).max(1e-15);
+            let eff_alpha_tau =
+                (self.alpha / (2.0 * (num_taxa as f64) * (m_scales as f64) * n_blocks)).max(1e-15);
             let z_crit_tau = normal_ppf(1.0 - eff_alpha_tau);
 
             let se_tau = sigma_x * (tau as f64).sqrt();
@@ -200,8 +204,12 @@ impl CumulativeTrajectoryPolisher {
 
         for u in 0..l {
             let bridge_val = y[u] - ((u + 1) as f64 / (l as f64)) * y_end;
-            if bridge_val < min_b { min_b = bridge_val; }
-            if bridge_val > max_b { max_b = bridge_val; }
+            if bridge_val < min_b {
+                min_b = bridge_val;
+            }
+            if bridge_val > max_b {
+                max_b = bridge_val;
+            }
             b.push(bridge_val);
         }
 
@@ -209,7 +217,9 @@ impl CumulativeTrajectoryPolisher {
         let eff_alpha = (self.alpha / (2.0 * (n as f64))).max(1e-15);
         let z_crit = (-0.5 * (eff_alpha / 2.0).max(1e-15).ln()).sqrt();
 
-        let floor_adaptive = self.poisson_floor.max(z_crit * sigma_x * (self.min_tract_length as f64).sqrt());
+        let floor_adaptive = self
+            .poisson_floor
+            .max(z_crit * sigma_x * (self.min_tract_length as f64).sqrt());
         let dyadic_hits = self.dyadic_matched_filter(&x, &cum_x, l, n, sigma_x);
 
         if delta_c_max < floor_adaptive && dyadic_hits.is_empty() {
@@ -312,9 +322,18 @@ impl CumulativeTrajectoryPolisher {
 
             let is_crossover = (s_disc == 1) || (e_disc == l);
 
-            let max_b_seg = b[(s_disc - 1)..e_disc].iter().cloned().fold(0.0f64, |acc, v| acc.max(v.abs()));
-            let b_peak = b[(s_disc - 1)..e_disc].iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            let b_trough = b[(s_disc - 1)..e_disc].iter().cloned().fold(f64::INFINITY, f64::min);
+            let max_b_seg = b[(s_disc - 1)..e_disc]
+                .iter()
+                .cloned()
+                .fold(0.0f64, |acc, v| acc.max(v.abs()));
+            let b_peak = b[(s_disc - 1)..e_disc]
+                .iter()
+                .cloned()
+                .fold(f64::NEG_INFINITY, f64::max);
+            let b_trough = b[(s_disc - 1)..e_disc]
+                .iter()
+                .cloned()
+                .fold(f64::INFINITY, f64::min);
             let delta_c_seg = (b_peak - b_trough).max(0.0);
 
             let (z_phys, z_eff_crit, floor_req) = if is_crossover {
@@ -323,17 +342,23 @@ impl CumulativeTrajectoryPolisher {
             } else {
                 let w_span = (tract_len as f64).max(self.min_tract_length as f64);
                 let delta_c_tract: f64 = x[(s_disc - 1)..e_disc].iter().sum();
-                let z = (max_b_seg / (sigma_x * w_span.sqrt())).max(delta_c_tract / (sigma_x * w_span.sqrt()));
+                let z = (max_b_seg / (sigma_x * w_span.sqrt()))
+                    .max(delta_c_tract / (sigma_x * w_span.sqrt()));
 
                 let m_scales = self.dyadic_scales.len().max(1);
-                let eff_alpha_dyadic = (self.alpha / (2.0 * (n as f64) * (m_scales as f64))).max(1e-15);
+                let eff_alpha_dyadic =
+                    (self.alpha / (2.0 * (n as f64) * (m_scales as f64))).max(1e-15);
                 let z_cr = normal_ppf(1.0 - eff_alpha_dyadic);
                 (z, z_cr, self.poisson_floor)
             };
 
             // Newtonian Velocity Reversal Symmetry Breaking (DIR-RHIZ-PAFF-012.0)
             let (v_l, v_r) = if is_crossover {
-                let u_turn = if s_disc == 1 && e_disc < l { e_disc } else { s_disc };
+                let u_turn = if s_disc == 1 && e_disc < l {
+                    e_disc
+                } else {
+                    s_disc
+                };
                 let turn_idx = u_turn.clamp(1, l);
                 let off_turn = (turn_idx - 1) * n * num_channels + candidate_idx * num_channels;
                 let off_end = (l - 1) * n * num_channels + candidate_idx * num_channels;
@@ -364,7 +389,11 @@ impl CumulativeTrajectoryPolisher {
                 let mut vl = Vec::with_capacity(num_channels.saturating_sub(1));
                 let mut vr = Vec::with_capacity(num_channels.saturating_sub(1));
                 for ch in 1..num_channels {
-                    let c_s = if s_disc > 1 { c_tensor[off_s + ch] } else { 0.0 };
+                    let c_s = if s_disc > 1 {
+                        c_tensor[off_s + ch]
+                    } else {
+                        0.0
+                    };
                     let c_e = c_tensor[off_e + ch];
                     let c_end = c_tensor[off_end + ch];
 
@@ -420,4 +449,3 @@ impl CumulativeTrajectoryPolisher {
         tracts
     }
 }
-

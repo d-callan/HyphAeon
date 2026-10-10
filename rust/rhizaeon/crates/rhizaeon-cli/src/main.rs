@@ -77,7 +77,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let aln = parse_fasta(&fasta_content)?;
     let parse_dur = parse_start.elapsed();
 
-    println!("  Alignment loaded: {} taxa, {} bp (parsed in {:.2?})", aln.num_taxa, aln.length, parse_dur);
+    println!(
+        "  Alignment loaded: {} taxa, {} bp (parsed in {:.2?})",
+        aln.num_taxa, aln.length, parse_dur
+    );
 
     let mut engine = RhizAeonEngine::new()
         .with_landmarks(args.landmarks)
@@ -95,25 +98,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scan_dur = scan_start.elapsed();
     result.run_time_ms = scan_dur.as_secs_f64() * 1000.0;
 
-    println!("  Scan completed in {:.2?} ({:.1} ms)", scan_dur, result.run_time_ms);
+    println!(
+        "  Scan completed in {:.2?} ({:.1} ms)",
+        scan_dur, result.run_time_ms
+    );
     println!("  Informative sites: {}", result.informative_sites);
-    println!("  Candidate taxa screened: {}", result.screening.candidate_recombinant_indices.len());
+    println!(
+        "  Candidate taxa screened: {}",
+        result.screening.candidate_recombinant_indices.len()
+    );
     println!("  Verified events found:   {}", result.events.len());
     println!("--------------------------------------------------------------------------------");
 
     if result.events.is_empty() {
         println!("  STATUS: Certified Non-Recombinant (H0 Null)");
     } else {
-        println!("  STATUS: Verified Recombination Events (|E| = {})", result.events.len());
+        println!(
+            "  STATUS: Verified Recombination Events (|E| = {})",
+            result.events.len()
+        );
         println!();
-        println!("{:<20} {:<15} {:<15} {:<12} {:<10} {:<12} {:<10}",
-                 "Recombinant", "Home Parent", "Donor Parent", "Tract (bp)", "Length", "p-Fisher", "Z-Score");
+        println!(
+            "{:<20} {:<15} {:<15} {:<12} {:<10} {:<12} {:<10}",
+            "Recombinant",
+            "Home Parent",
+            "Donor Parent",
+            "Tract (bp)",
+            "Length",
+            "p-Fisher",
+            "Z-Score"
+        );
         println!("{}", "-".repeat(95));
         for ev in &result.events {
             let tract_str = format!("{}-{}", ev.u1, ev.u2);
-            let donor_str = if ev.is_ghost_donor { "Ghost (Unsampled)" } else { &ev.donor_name };
-            println!("{:<20} {:<15} {:<15} {:<12} {:<10} {:<12.2e} {:<10.2}",
-                     ev.candidate_name, ev.home_name, donor_str, tract_str, ev.tract_length, ev.p_fisher, ev.z_phys);
+            let donor_str = if ev.is_ghost_donor {
+                "Ghost (Unsampled)"
+            } else {
+                &ev.donor_name
+            };
+            println!(
+                "{:<20} {:<15} {:<15} {:<12} {:<10} {:<12.2e} {:<10.2}",
+                ev.candidate_name,
+                ev.home_name,
+                donor_str,
+                tract_str,
+                ev.tract_length,
+                ev.p_fisher,
+                ev.z_phys
+            );
         }
     }
     println!("================================================================================");

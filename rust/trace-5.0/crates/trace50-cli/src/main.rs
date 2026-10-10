@@ -100,15 +100,27 @@ fn parse_date_string(date_str: &str) -> Option<f64> {
     }
 
     // Split by common date separators: '-', '/', '.', ' '
-    let parts: Vec<&str> = s.split(|c| c == '-' || c == '/' || c == '.' || c == ' ').filter(|p| !p.is_empty()).collect();
+    let parts: Vec<&str> = s
+        .split(|c| c == '-' || c == '/' || c == '.' || c == ' ')
+        .filter(|p| !p.is_empty())
+        .collect();
     if parts.is_empty() {
         return None;
     }
 
     let months = [
-        ("jan", 1.0), ("feb", 2.0), ("mar", 3.0), ("apr", 4.0),
-        ("may", 5.0), ("jun", 6.0), ("jul", 7.0), ("aug", 8.0),
-        ("sep", 9.0), ("oct", 10.0), ("nov", 11.0), ("dec", 12.0)
+        ("jan", 1.0),
+        ("feb", 2.0),
+        ("mar", 3.0),
+        ("apr", 4.0),
+        ("may", 5.0),
+        ("jun", 6.0),
+        ("jul", 7.0),
+        ("aug", 8.0),
+        ("sep", 9.0),
+        ("oct", 10.0),
+        ("nov", 11.0),
+        ("dec", 12.0),
     ];
 
     let mut year = None;
@@ -149,7 +161,11 @@ fn parse_date_string(date_str: &str) -> Option<f64> {
     None
 }
 
-fn parse_metadata_dates(meta_path: &Path, id_col: &str, date_col: &str) -> Result<std::collections::HashMap<String, f64>, String> {
+fn parse_metadata_dates(
+    meta_path: &Path,
+    id_col: &str,
+    date_col: &str,
+) -> Result<std::collections::HashMap<String, f64>, String> {
     let file = File::open(meta_path).map_err(|e| format!("Failed to open metadata file: {}", e))?;
     let reader = BufReader::new(file);
     let mut lines = reader.lines();
@@ -167,10 +183,18 @@ fn parse_metadata_dates(meta_path: &Path, id_col: &str, date_col: &str) -> Resul
         .map(|s| s.trim().trim_matches('"').to_string())
         .collect();
 
-    let id_idx = headers.iter().position(|h| h == id_col)
-        .ok_or_else(|| format!("ID column '{}' not found in metadata headers: {:?}", id_col, headers))?;
-    let date_idx = headers.iter().position(|h| h == date_col)
-        .ok_or_else(|| format!("Date column '{}' not found in metadata headers: {:?}", date_col, headers))?;
+    let id_idx = headers.iter().position(|h| h == id_col).ok_or_else(|| {
+        format!(
+            "ID column '{}' not found in metadata headers: {:?}",
+            id_col, headers
+        )
+    })?;
+    let date_idx = headers.iter().position(|h| h == date_col).ok_or_else(|| {
+        format!(
+            "Date column '{}' not found in metadata headers: {:?}",
+            date_col, headers
+        )
+    })?;
 
     let mut map = std::collections::HashMap::new();
 
@@ -180,7 +204,10 @@ fn parse_metadata_dates(meta_path: &Path, id_col: &str, date_col: &str) -> Resul
             continue;
         }
 
-        let fields: Vec<&str> = line.split(delimiter).map(|s| s.trim().trim_matches('"')).collect();
+        let fields: Vec<&str> = line
+            .split(delimiter)
+            .map(|s| s.trim().trim_matches('"'))
+            .collect();
         if fields.len() > id_idx && fields.len() > date_idx {
             let id = fields[id_idx].to_string();
             let date_str = fields[date_idx];
@@ -234,7 +261,10 @@ fn main() {
                 for (i, h) in alignment.headers.iter().enumerate() {
                     let clean_id = h.trim();
                     let first_word = clean_id.split_whitespace().next().unwrap_or("");
-                    let token = first_word.split(|c| c == '|' || c == '_' || c == '.').next().unwrap_or("");
+                    let token = first_word
+                        .split(|c| c == '|' || c == '_' || c == '.')
+                        .next()
+                        .unwrap_or("");
 
                     if let Some(&d) = date_map.get(clean_id) {
                         alignment.dates[i] = d;
@@ -247,10 +277,17 @@ fn main() {
                         matched += 1;
                     }
                 }
-                println!("[*] Temporal calibration: matched {}/{} sequences to collection dates.", matched, alignment.num_sequences());
+                println!(
+                    "[*] Temporal calibration: matched {}/{} sequences to collection dates.",
+                    matched,
+                    alignment.num_sequences()
+                );
             }
             Err(e) => {
-                eprintln!("[!] Warning: metadata parsing failed: {}. Continuing with header dates.", e);
+                eprintln!(
+                    "[!] Warning: metadata parsing failed: {}. Continuing with header dates.",
+                    e
+                );
             }
         }
     }
@@ -288,8 +325,13 @@ fn main() {
     }
 
     // 1. Write full visualization JSON dossier
-    let json_path = args.out_json.unwrap_or_else(|| args.out_dir.join("trace50_visualization_dossier.json"));
-    println!("[+] Serializing full visualization dossier to: {}", json_path.display());
+    let json_path = args
+        .out_json
+        .unwrap_or_else(|| args.out_dir.join("trace50_visualization_dossier.json"));
+    println!(
+        "[+] Serializing full visualization dossier to: {}",
+        json_path.display()
+    );
     match serde_json::to_string_pretty(&dossier) {
         Ok(json_str) => {
             if let Err(e) = fs::write(&json_path, json_str) {
@@ -309,8 +351,18 @@ fn main() {
         writeln!(
             dyads_file,
             "{},{},{:.5},{:.3},{:.2},{:.2},{:.6},{:.6},{:.5},{}",
-            e.source, e.target, e.distance, e.delta_t_years, e.k_substitutions, e.bayes_factor, e.pep, e.q_value, e.p_adequacy, e.status
-        ).unwrap();
+            e.source,
+            e.target,
+            e.distance,
+            e.delta_t_years,
+            e.k_substitutions,
+            e.bayes_factor,
+            e.pep,
+            e.q_value,
+            e.p_adequacy,
+            e.status
+        )
+        .unwrap();
     }
 
     let communities_csv = args.out_dir.join("autoclock_communities.csv");
@@ -320,8 +372,20 @@ fn main() {
         writeln!(
             comm_file,
             "{},{},{:.2},{:.6},{:.6},{:.4},{:.2},{:.2},{:.2},{},{},\"{}\"",
-            c.community_id, c.size, c.n_eff, c.mu, c.se_mu, c.r_squared, c.tmrca, c.ci_mrca[0], c.ci_mrca[1], c.fieller_status, c.is_active_outbreak, c.operational_tier
-        ).unwrap();
+            c.community_id,
+            c.size,
+            c.n_eff,
+            c.mu,
+            c.se_mu,
+            c.r_squared,
+            c.tmrca,
+            c.ci_mrca[0],
+            c.ci_mrca[1],
+            c.fieller_status,
+            c.is_active_outbreak,
+            c.operational_tier
+        )
+        .unwrap();
     }
 
     let nodes_csv = args.out_dir.join("patient_surveillance_assignments.csv");
@@ -331,41 +395,104 @@ fn main() {
         writeln!(
             nodes_file,
             "{},{:.2},{},{},{},{},{},\"{}\"",
-            n.id, n.date, n.degree_static, n.degree_supported, n.cluster_id_static, n.cluster_id_supported, n.community_id, n.operational_tier
-        ).unwrap();
+            n.id,
+            n.date,
+            n.degree_static,
+            n.degree_supported,
+            n.cluster_id_static,
+            n.cluster_id_supported,
+            n.community_id,
+            n.operational_tier
+        )
+        .unwrap();
     }
 
     // Print summary KPIs
     println!("\n================================================================================");
     println!(" OPERATIONAL SURVEILLANCE SCORECARD (KPIs)");
     println!("================================================================================");
-    println!(" Total Sequences Evaluated:            {}", dossier.kpi.total_sequences);
-    println!(" Total Pairwise Comparisons:           {}", dossier.kpi.total_pairwise_comparisons);
-    println!(" Candidate Dyads Screened:             {}", dossier.kpi.candidate_pairs_screened);
-    println!(" Clock Violations Purged (Wo Fat):     {}", dossier.kpi.physical_clock_violations_purged);
-    println!(" Supported Transmission Edges:         {} (FDR q <= {})", dossier.kpi.supported_transmission_edges, config.fdr_threshold);
+    println!(
+        " Total Sequences Evaluated:            {}",
+        dossier.kpi.total_sequences
+    );
+    println!(
+        " Total Pairwise Comparisons:           {}",
+        dossier.kpi.total_pairwise_comparisons
+    );
+    println!(
+        " Candidate Dyads Screened:             {}",
+        dossier.kpi.candidate_pairs_screened
+    );
+    println!(
+        " Clock Violations Purged (Wo Fat):     {}",
+        dossier.kpi.physical_clock_violations_purged
+    );
+    println!(
+        " Supported Transmission Edges:         {} (FDR q <= {})",
+        dossier.kpi.supported_transmission_edges, config.fdr_threshold
+    );
     println!("--------------------------------------------------------------------------------");
-    println!(" Static Distance Benchmark (d <= {:.1}%):", config.static_distance_threshold * 100.0);
-    println!("   - Total Clusters:                   {}", dossier.kpi.static_network.total_clusters);
-    println!("   - Clustered Individuals:            {}", dossier.kpi.static_network.clustered_individuals);
-    println!("   - Giant Component Size:             {} patients", dossier.kpi.static_network.max_cluster_size);
+    println!(
+        " Static Distance Benchmark (d <= {:.1}%):",
+        config.static_distance_threshold * 100.0
+    );
+    println!(
+        "   - Total Clusters:                   {}",
+        dossier.kpi.static_network.total_clusters
+    );
+    println!(
+        "   - Clustered Individuals:            {}",
+        dossier.kpi.static_network.clustered_individuals
+    );
+    println!(
+        "   - Giant Component Size:             {} patients",
+        dossier.kpi.static_network.max_cluster_size
+    );
     println!(" DANNO Calibrated Transmission Network:");
-    println!("   - Total Clusters:                   {}", dossier.kpi.danno_network.total_clusters);
-    println!("   - Clustered Individuals:            {}", dossier.kpi.danno_network.clustered_individuals);
-    println!("   - Giant Component Size:             {} patients", dossier.kpi.danno_network.max_cluster_size);
-    println!("   - Giant Component Reduction:        {:.1}%", dossier.kpi.giant_component_reduction_pct);
+    println!(
+        "   - Total Clusters:                   {}",
+        dossier.kpi.danno_network.total_clusters
+    );
+    println!(
+        "   - Clustered Individuals:            {}",
+        dossier.kpi.danno_network.clustered_individuals
+    );
+    println!(
+        "   - Giant Component Size:             {} patients",
+        dossier.kpi.danno_network.max_cluster_size
+    );
+    println!(
+        "   - Giant Component Reduction:        {:.1}%",
+        dossier.kpi.giant_component_reduction_pct
+    );
     println!("--------------------------------------------------------------------------------");
     println!(" CHIN Macro-Scale Epidemiological Scaling:");
-    println!("   - Active Transmitting Pool (N_act): {:.0} [CI: {:.0} - {:.0}]",
+    println!(
+        "   - Active Transmitting Pool (N_act): {:.0} [CI: {:.0} - {:.0}]",
         dossier.kpi.inferred_active_transmitting_pool,
         dossier.kpi.inferred_active_pool_ci[0],
         dossier.kpi.inferred_active_pool_ci[1]
     );
-    println!("   - Surveillance Sampling Fraction:   {:.2}%", dossier.kpi.inferred_surveillance_sampling_fraction_pct);
-    println!("   - Borel Branching Decay (R^2):      {:.4}", dossier.macro_scaling.borel_decay.r_squared);
+    println!(
+        "   - Surveillance Sampling Fraction:   {:.2}%",
+        dossier.kpi.inferred_surveillance_sampling_fraction_pct
+    );
+    println!(
+        "   - Borel Branching Decay (R^2):      {:.4}",
+        dossier.macro_scaling.borel_decay.r_squared
+    );
     println!("--------------------------------------------------------------------------------");
-    println!(" Resolved STEVE Communities:           {}", dossier.communities.len());
-    println!(" Execution Time:                       {:.3} seconds", dossier.metadata.execution_time_seconds);
-    println!(" Output Dossier:                       {}", json_path.display());
+    println!(
+        " Resolved STEVE Communities:           {}",
+        dossier.communities.len()
+    );
+    println!(
+        " Execution Time:                       {:.3} seconds",
+        dossier.metadata.execution_time_seconds
+    );
+    println!(
+        " Output Dossier:                       {}",
+        json_path.display()
+    );
     println!("================================================================================\n");
 }

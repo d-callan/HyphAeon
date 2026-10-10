@@ -77,13 +77,24 @@ where
     let l = alignment.seq_len;
 
     if n < 2 {
-        return Err("TRACE-5.0 requires at least 2 sequences to evaluate transmission networks".to_string());
+        return Err(
+            "TRACE-5.0 requires at least 2 sequences to evaluate transmission networks".to_string(),
+        );
     }
 
-    on_progress("STAGE_ALIGNMENT", 0.05, &format!("Ingested {} sequences ({} sites)", n, l));
+    on_progress(
+        "STAGE_ALIGNMENT",
+        0.05,
+        &format!("Ingested {} sequences ({} sites)", n, l),
+    );
 
     // 1. Process dates: impute median for any NaN
-    let mut valid_dates: Vec<f64> = alignment.dates.iter().copied().filter(|d| d.is_finite()).collect();
+    let mut valid_dates: Vec<f64> = alignment
+        .dates
+        .iter()
+        .copied()
+        .filter(|d| d.is_finite())
+        .collect();
     let med_date = if !valid_dates.is_empty() {
         valid_dates.sort_by(|a, b| a.partial_cmp(b).unwrap());
         valid_dates[valid_dates.len() / 2]
@@ -98,21 +109,44 @@ where
         if !d.is_finite() {
             *d = med_date;
         }
-        if *d < date_min { date_min = *d; }
-        if *d > date_max { date_max = *d; }
+        if *d < date_min {
+            date_min = *d;
+        }
+        if *d > date_max {
+            date_max = *d;
+        }
     }
-    let time_span_years = if date_max >= date_min { date_max - date_min } else { 0.0 };
+    let time_span_years = if date_max >= date_min {
+        date_max - date_min
+    } else {
+        0.0
+    };
 
     // 2. Compute pairwise TN93 distance matrix with progress
     let total_pairs = n * (n.saturating_sub(1)) / 2;
-    on_progress("STAGE_TN93", 0.08, &format!("Computing {} pairwise TN93 distances...", total_pairs));
+    on_progress(
+        "STAGE_TN93",
+        0.08,
+        &format!("Computing {} pairwise TN93 distances...", total_pairs),
+    );
     let d_matrix = alignment.compute_distance_matrix_with_progress(|done, total, frac| {
         let p = 0.08 + 0.67 * frac;
-        on_progress("STAGE_TN93", p, &format!("{}/{} comparisons ({:.1}%)", done, total, frac * 100.0));
+        on_progress(
+            "STAGE_TN93",
+            p,
+            &format!("{}/{} comparisons ({:.1}%)", done, total, frac * 100.0),
+        );
     });
 
     // 3. Static Network Benchmark (e.g. d <= 1.5%)
-    on_progress("STAGE_STATIC", 0.76, &format!("Benchmarking legacy static distance network (d <= {})...", config.static_distance_threshold));
+    on_progress(
+        "STAGE_STATIC",
+        0.76,
+        &format!(
+            "Benchmarking legacy static distance network (d <= {})...",
+            config.static_distance_threshold
+        ),
+    );
     let mut static_edges = Vec::new();
     let mut degree_static = vec![0usize; n];
 
@@ -132,7 +166,14 @@ where
     let static_clustered_count = static_cluster_assign.iter().filter(|&&c| c > 0).count();
 
     // 4. DANNO Bayesian Network Inference
-    on_progress("STAGE_DANNO", 0.80, &format!("Evaluating DANNO coalescent Bayes factors & clock adequacy (FDR q <= {})...", config.fdr_threshold));
+    on_progress(
+        "STAGE_DANNO",
+        0.80,
+        &format!(
+            "Evaluating DANNO coalescent Bayes factors & clock adequacy (FDR q <= {})...",
+            config.fdr_threshold
+        ),
+    );
     let mut danno = DannoEstimator::new(
         l,
         config.mu,
@@ -173,7 +214,11 @@ where
         }
 
         // Re-sort and recompute Benjamini-Hochberg FDR
-        dyads.sort_by(|a, b| a.pep.partial_cmp(&b.pep).unwrap_or(std::cmp::Ordering::Equal));
+        dyads.sort_by(|a, b| {
+            a.pep
+                .partial_cmp(&b.pep)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         let mut cum_pep = 0.0;
         for (rank, cand) in dyads.iter_mut().enumerate() {
             cum_pep += cand.pep;
@@ -240,8 +285,16 @@ where
             let dt = (dates[i] - dates[j]).abs();
             let k = (dist * (l as f64)).max(0.0);
             let (p_adeq, is_adequate) = danno.check_clock_adequacy(k, dt, None);
-            let bf = if is_adequate { danno.compute_bayes_factor(dist, dt) } else { 0.0 };
-            let pep = if bf > 0.0 { 1.0 / (1.0 + config.prior_odds * bf) } else { 1.0 };
+            let bf = if is_adequate {
+                danno.compute_bayes_factor(dist, dt)
+            } else {
+                0.0
+            };
+            let pep = if bf > 0.0 {
+                1.0 / (1.0 + config.prior_odds * bf)
+            } else {
+                1.0
+            };
             let status = if !is_adequate {
                 clock_violations_count += 1;
                 "clock_violation".to_string()
@@ -279,13 +332,18 @@ where
     let supported_clustered_count = supported_cluster_assign.iter().filter(|&&c| c > 0).count();
 
     let reduction_pct = if static_giant_size > 0 {
-        ((static_giant_size as f64 - supported_giant_size as f64) / (static_giant_size as f64)) * 100.0
+        ((static_giant_size as f64 - supported_giant_size as f64) / (static_giant_size as f64))
+            * 100.0
     } else {
         0.0
     };
 
     // 5. STEVE / AutoClock Spectral Deconvolution
-    on_progress("STAGE_STEVE", 0.88, "Deconstructing spectral transmission communities via Cheeger cuts...");
+    on_progress(
+        "STAGE_STEVE",
+        0.88,
+        "Deconstructing spectral transmission communities via Cheeger cuts...",
+    );
     let mut communities = recursive_autoclock_deconvolution(
         &all_indices,
         &dates,
@@ -311,14 +369,27 @@ where
     }
 
     // 6. CHIN Macro-Epidemic Parameter Estimation
-    on_progress("STAGE_CHIN", 0.94, "Inverting macro-scale transmission pool & sampling fraction...");
+    on_progress(
+        "STAGE_CHIN",
+        0.94,
+        "Inverting macro-scale transmission pool & sampling fraction...",
+    );
     let chin = ChinEstimator::new(config.r0);
     let e_supported = supported_edges.len();
     let theta = chin.estimate_composite_parameter(n, e_supported);
     let rho = chin.estimate_sampling_fraction(n, e_supported, Some(config.r0));
     let active_pop = chin.estimate_active_population(n, e_supported, Some(config.r0), 0.95);
     let bayesian_mcmc = if n > 0 && e_supported > 0 {
-        chin.run_joint_bayesian_monte_carlo(n, e_supported, 10_000, (1.2, 2.0), (0.1, 0.5), (0.0, 0.40), 42).ok()
+        chin.run_joint_bayesian_monte_carlo(
+            n,
+            e_supported,
+            10_000,
+            (1.2, 2.0),
+            (0.1, 0.5),
+            (0.0, 0.40),
+            42,
+        )
+        .ok()
     } else {
         None
     };
@@ -333,7 +404,10 @@ where
     }
     let mut borel_bins: Vec<DossierBorelBin> = size_counts
         .into_iter()
-        .map(|(cluster_size, count)| DossierBorelBin { cluster_size, count })
+        .map(|(cluster_size, count)| DossierBorelBin {
+            cluster_size,
+            count,
+        })
         .collect();
     borel_bins.sort_by_key(|b| b.cluster_size);
 
@@ -342,7 +416,10 @@ where
     let mut nodes = Vec::with_capacity(n);
     for i in 0..n {
         let comm_id = community_assignment[i];
-        let tier = community_tier_map.get(&comm_id).cloned().unwrap_or_else(|| "Unassigned".to_string());
+        let tier = community_tier_map
+            .get(&comm_id)
+            .cloned()
+            .unwrap_or_else(|| "Unassigned".to_string());
 
         nodes.push(DossierNode {
             id: alignment.headers[i].clone(),
@@ -365,7 +442,11 @@ where
         .map(|c| DossierCluster {
             cluster_id: c.cluster_id,
             size: c.size,
-            members: c.members.into_iter().map(|idx| alignment.headers[idx].clone()).collect(),
+            members: c
+                .members
+                .into_iter()
+                .map(|idx| alignment.headers[idx].clone())
+                .collect(),
             time_span_years: c.time_span_years,
         })
         .collect();
@@ -457,7 +538,8 @@ where
     let alignment = Alignment::from_fasta_str(fasta_content)?;
     let config: Trace50Config = if let Some(cfg_str) = config_json {
         if !cfg_str.trim().is_empty() {
-            serde_json::from_str(cfg_str).map_err(|e| format!("Failed to parse config JSON: {}", e))?
+            serde_json::from_str(cfg_str)
+                .map_err(|e| format!("Failed to parse config JSON: {}", e))?
         } else {
             Trace50Config::default()
         }
@@ -473,9 +555,6 @@ where
 /// Convenience function: Ingests FASTA content and optional JSON configuration string,
 /// returning the complete, serialized JSON visualization dossier string.
 #[inline]
-pub fn run_trace50_json(
-    fasta_content: &str,
-    config_json: Option<&str>,
-) -> Result<String, String> {
+pub fn run_trace50_json(fasta_content: &str, config_json: Option<&str>) -> Result<String, String> {
     run_trace50_json_with_progress(fasta_content, config_json, |_, _, _| {})
 }

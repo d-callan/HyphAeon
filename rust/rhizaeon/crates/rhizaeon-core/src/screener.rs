@@ -26,7 +26,14 @@ impl LocalFluxScreener {
     }
 
     /// Evaluates spatial coherence of the Root flux stream
-    fn compute_spatial_coherence(&self, f_tensor: &[f64], i: usize, l: usize, n: usize, num_channels: usize) -> f64 {
+    fn compute_spatial_coherence(
+        &self,
+        f_tensor: &[f64],
+        i: usize,
+        l: usize,
+        n: usize,
+        num_channels: usize,
+    ) -> f64 {
         let mut total_abs = 0.0f64;
         let w = self.coherence_window.min(l);
         if w == 0 {
@@ -185,8 +192,12 @@ impl LocalFluxScreener {
                     let c = c_tensor[base_idx + ch];
                     sum_c[ch] += c;
                     sum_sq_c[ch] += c * c;
-                    if c < min_c[ch] { min_c[ch] = c; }
-                    if c > max_c[ch] { max_c[ch] = c; }
+                    if c < min_c[ch] {
+                        min_c[ch] = c;
+                    }
+                    if c > max_c[ch] {
+                        max_c[ch] = c;
+                    }
                 }
             }
 
@@ -230,7 +241,12 @@ impl LocalFluxScreener {
         }
 
         let med_logit = median(&logit_r);
-        let mad_logit = median(&logit_r.iter().map(|&x| (x - med_logit).abs()).collect::<Vec<_>>());
+        let mad_logit = median(
+            &logit_r
+                .iter()
+                .map(|&x| (x - med_logit).abs())
+                .collect::<Vec<_>>(),
+        );
         let scale_logit = (1.4826 * mad_logit).max(1.0 / (l as f64).sqrt());
 
         let z_alpha_r = 1.645f64; // norm.ppf(0.95)
@@ -267,17 +283,31 @@ impl LocalFluxScreener {
         let med_pulse = median(&pool_pulse);
 
         let lower_v: Vec<f64> = pool_v.iter().cloned().filter(|&x| x <= med_v).collect();
-        let lower_pulse: Vec<f64> = pool_pulse.iter().cloned().filter(|&x| x <= med_pulse).collect();
+        let lower_pulse: Vec<f64> = pool_pulse
+            .iter()
+            .cloned()
+            .filter(|&x| x <= med_pulse)
+            .collect();
 
         let mad_v = if !lower_v.is_empty() {
             let med_low = median(&lower_v);
-            median(&lower_v.iter().map(|&x| (x - med_low).abs()).collect::<Vec<_>>())
+            median(
+                &lower_v
+                    .iter()
+                    .map(|&x| (x - med_low).abs())
+                    .collect::<Vec<_>>(),
+            )
         } else {
             0.0
         };
         let mad_pulse = if !lower_pulse.is_empty() {
             let med_low = median(&lower_pulse);
-            median(&lower_pulse.iter().map(|&x| (x - med_low).abs()).collect::<Vec<_>>())
+            median(
+                &lower_pulse
+                    .iter()
+                    .map(|&x| (x - med_low).abs())
+                    .collect::<Vec<_>>(),
+            )
         } else {
             0.0
         };
@@ -393,54 +423,11 @@ fn median(vals: &[f64]) -> f64 {
     }
 }
 
-/// Machine-precision Acklam rational approximation of the standard normal percent point function (probit)
+/// Machine-precision Acklam rational approximation of the standard normal
+/// percent point function (probit).
+///
+/// Delegates to `aeon_manifold::norm_ppf`; the clamp preserves this wrapper's
+/// historical contract of never returning an infinite quantile.
 pub fn normal_ppf(p: f64) -> f64 {
-    let p = p.clamp(1e-15, 1.0 - 1e-15);
-    let a = [
-        -3.969683028665376e+01,
-        2.209460984245205e+02,
-        -2.759285104469687e+02,
-        1.383577518672690e+02,
-        -3.066479806614716e+01,
-        2.506628277459239e+00,
-    ];
-    let b = [
-        -5.447609879822406e+01,
-        1.615858368580409e+02,
-        -1.556989798529320e+02,
-        6.680131188771972e+01,
-        -1.328068155288572e+01,
-    ];
-    let c = [
-        -7.784894002430293e-03,
-        -3.223964580411365e-01,
-        -2.400758277161838e+00,
-        -2.549732539343734e+00,
-        4.374664141464968e+00,
-        2.938163982698783e+00,
-    ];
-    let d = [
-        7.784695709041462e-03,
-        3.224671290700398e-01,
-        2.445134137142996e+00,
-        3.754408661907416e+00,
-    ];
-
-    let p_low = 0.02425;
-    let p_high = 1.0 - p_low;
-
-    if p < p_low {
-        let q = (-2.0 * p.ln()).sqrt();
-        (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5])
-            / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1.0)
-    } else if p <= p_high {
-        let q = p - 0.5;
-        let r = q * q;
-        (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q
-            / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1.0)
-    } else {
-        let q = (-2.0 * (1.0 - p).ln()).sqrt();
-        -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5])
-            / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1.0)
-    }
+    aeon_manifold::norm_ppf(p.clamp(1e-15, 1.0 - 1e-15))
 }

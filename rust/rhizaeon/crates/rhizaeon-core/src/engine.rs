@@ -110,7 +110,8 @@ impl RhizAeonEngine {
         // Automatically compress to informative SNPs when L > 50,000 bp OR (L > 10,000 bp AND M_inf / L < 0.10)
         let should_compress = self.compress_snps.unwrap_or_else(|| {
             aln_trimmed.length > 50_000
-                || (aln_trimmed.length > 10_000 && (m_inf as f64) / (aln_trimmed.length as f64) < 0.10)
+                || (aln_trimmed.length > 10_000
+                    && (m_inf as f64) / (aln_trimmed.length as f64) < 0.10)
         });
 
         let (aln, snp_map_opt) = if should_compress && m_inf >= m_min {
@@ -120,7 +121,6 @@ impl RhizAeonEngine {
             (aln_trimmed, None)
         };
         let l = aln.length;
-
 
         // 1. Landmark Selection on Delta^K with adaptive scaling for large cohorts
         let effective_k = self.target_landmarks.max(n / 2).min(32).min(n);
@@ -138,13 +138,8 @@ impl RhizAeonEngine {
 
         // 4. Attention & Zero-drift Force Field
         let attention = PhyloAttentionEngine::new(self.dim, self.root_sink_factor);
-        let (a_tensor, f_tensor, c_tensor) = attention.compute_attention_and_force_tensors(
-            &aln,
-            &landmarks,
-            &m_matrix,
-            &b_prior,
-            &root_seq,
-        );
+        let (a_tensor, f_tensor, c_tensor) = attention
+            .compute_attention_and_force_tensors(&aln, &landmarks, &m_matrix, &b_prior, &root_seq);
 
         // 5. Pass 1 Screener
         let screener = LocalFluxScreener::new();
@@ -172,24 +167,13 @@ impl RhizAeonEngine {
 
         for &cand_idx in &screening.candidate_recombinant_indices {
             let parental_pairs = resolver.resolve_all_reticulation_channels(
-                cand_idx,
-                &c_tensor,
-                &a_tensor,
-                l,
-                n,
-                &landmarks,
+                cand_idx, &c_tensor, &a_tensor, l, n, &landmarks,
             );
 
             let mut candidate_tracts = Vec::new();
             for pair in &parental_pairs {
-                let tracts = polisher.deconvolve_candidate(
-                    cand_idx,
-                    pair,
-                    &c_tensor,
-                    l,
-                    n,
-                    num_channels,
-                );
+                let tracts =
+                    polisher.deconvolve_candidate(cand_idx, pair, &c_tensor, l, n, num_channels);
                 candidate_tracts.extend(tracts);
             }
 
@@ -209,21 +193,37 @@ impl RhizAeonEngine {
                     Some(tract.home_channel),
                     Some(tract.donor_channel),
                 );
-                let tract_opt = due_diligence.verify_tract(&tract, &local_parental, &aln, &landmarks, &screening.rate_burst_indices);
+                let tract_opt = due_diligence.verify_tract(
+                    &tract,
+                    &local_parental,
+                    &aln,
+                    &landmarks,
+                    &screening.rate_burst_indices,
+                );
 
                 if let Some(mut event) = tract_opt {
                     if event.is_verified {
                         if let Some(ref snp_map) = snp_map_opt {
                             // Map from 1-indexed SNP coordinates [1..M] to original chromosomal coordinates
-                            let s_snp = event.u1.saturating_sub(1).min(snp_map.len().saturating_sub(1));
-                            let e_snp = event.u2.saturating_sub(1).min(snp_map.len().saturating_sub(1));
+                            let s_snp = event
+                                .u1
+                                .saturating_sub(1)
+                                .min(snp_map.len().saturating_sub(1));
+                            let e_snp = event
+                                .u2
+                                .saturating_sub(1)
+                                .min(snp_map.len().saturating_sub(1));
                             let orig_u1 = snp_map[s_snp] + 1 + u_offset;
                             let orig_u2 = snp_map[e_snp] + 1 + u_offset;
                             event.u1 = orig_u1;
                             event.u2 = orig_u2;
                             event.u1_continuous = orig_u1 as f64;
                             event.u2_continuous = orig_u2 as f64;
-                            event.tract_length = if orig_u2 >= orig_u1 { orig_u2 - orig_u1 + 1 } else { 0 };
+                            event.tract_length = if orig_u2 >= orig_u1 {
+                                orig_u2 - orig_u1 + 1
+                            } else {
+                                0
+                            };
                         } else {
                             // Standard full-length alignment offset
                             event.u1 += u_offset;
@@ -238,19 +238,15 @@ impl RhizAeonEngine {
         }
 
         // Sort events by candidate name and u1
-        verified_events.sort_by(|a, b| {
-            a.isolates[0]
-                .cmp(&b.isolates[0])
-                .then(a.u1.cmp(&b.u1))
-        });
+        verified_events.sort_by(|a, b| a.isolates[0].cmp(&b.isolates[0]).then(a.u1.cmp(&b.u1)));
 
         // Deduplicate adjacent identical calls
-        verified_events.dedup_by(|a, b| {
-            a.isolates[0] == b.isolates[0] && a.u1 == b.u1 && a.u2 == b.u2
-        });
+        verified_events
+            .dedup_by(|a, b| a.isolates[0] == b.isolates[0] && a.u1 == b.u1 && a.u2 == b.u2);
 
         // Adjudicate reticulation graph (DIR-RHIZ-PAFF-013.1)
-        let mut verified_events = due_diligence.adjudicate_reticulation_graph(verified_events, &raw_aln, &screening);
+        let mut verified_events =
+            due_diligence.adjudicate_reticulation_graph(verified_events, &raw_aln, &screening);
 
         // Resolve transitive donor & home chains for co-recombinant isolates
         resolve_donor_chains(&mut verified_events, &raw_aln);
@@ -277,7 +273,10 @@ impl RhizAeonEngine {
 /// sharing the same Home lineage over an overlapping tract, A inherits donor C from B.
 /// Similarly, if sequence A cites B as Home, but B is a co-recombinant sharing the same donor
 /// over an overlapping tract with Home C, A inherits Home C from B.
-fn resolve_donor_chains(events: &mut [crate::types::RecombinationEvent], aln: &crate::types::Alignment) {
+fn resolve_donor_chains(
+    events: &mut [crate::types::RecombinationEvent],
+    aln: &crate::types::Alignment,
+) {
     if events.len() <= 1 {
         return;
     }
@@ -304,7 +303,8 @@ fn resolve_donor_chains(events: &mut [crate::types::RecombinationEvent], aln: &c
                         continue;
                     }
 
-                    let e2_is_donor_isolate = e2.candidate_name == e1_donor || e2.isolates.contains(&e1_donor);
+                    let e2_is_donor_isolate =
+                        e2.candidate_name == e1_donor || e2.isolates.contains(&e1_donor);
                     if !e2_is_donor_isolate {
                         continue;
                     }
@@ -316,7 +316,8 @@ fn resolve_donor_chains(events: &mut [crate::types::RecombinationEvent], aln: &c
                         continue;
                     }
                     let ov_len = ov_end - ov_start + 1;
-                    let min_len = (e1_u2.saturating_sub(e1_u1) + 1).min(e2.u2.saturating_sub(e2.u1) + 1);
+                    let min_len =
+                        (e1_u2.saturating_sub(e1_u1) + 1).min(e2.u2.saturating_sub(e2.u1) + 1);
                     if (ov_len as f64) < 0.5 * (min_len as f64) {
                         continue;
                     }
@@ -327,7 +328,10 @@ fn resolve_donor_chains(events: &mut [crate::types::RecombinationEvent], aln: &c
                     }
 
                     // e2's donor must not be e1 (prevent cyclic attribution)
-                    if e2.donor_name.is_empty() || e2.donor_name == e1_cand || events[i].isolates.contains(&e2.donor_name) {
+                    if e2.donor_name.is_empty()
+                        || e2.donor_name == e1_cand
+                        || events[i].isolates.contains(&e2.donor_name)
+                    {
                         continue;
                     }
 
@@ -361,10 +365,14 @@ fn resolve_donor_chains(events: &mut [crate::types::RecombinationEvent], aln: &c
                                     if rc > 0 && rd > 0 {
                                         if u >= s_idx && u < e_idx {
                                             v_tr += 1;
-                                            if rc != rd { d_tr += 1; }
+                                            if rc != rd {
+                                                d_tr += 1;
+                                            }
                                         } else {
                                             v_fl += 1;
-                                            if rc != rd { d_fl += 1; }
+                                            if rc != rd {
+                                                d_fl += 1;
+                                            }
                                         }
                                     }
                                 }
@@ -391,7 +399,8 @@ fn resolve_donor_chains(events: &mut [crate::types::RecombinationEvent], aln: &c
                         continue;
                     }
 
-                    let e2_is_home_isolate = e2.candidate_name == e1_home || e2.isolates.contains(&e1_home);
+                    let e2_is_home_isolate =
+                        e2.candidate_name == e1_home || e2.isolates.contains(&e1_home);
                     if !e2_is_home_isolate {
                         continue;
                     }
@@ -403,7 +412,8 @@ fn resolve_donor_chains(events: &mut [crate::types::RecombinationEvent], aln: &c
                         continue;
                     }
                     let ov_len = ov_end - ov_start + 1;
-                    let min_len = (e1_u2.saturating_sub(e1_u1) + 1).min(e2.u2.saturating_sub(e2.u1) + 1);
+                    let min_len =
+                        (e1_u2.saturating_sub(e1_u1) + 1).min(e2.u2.saturating_sub(e2.u1) + 1);
                     if (ov_len as f64) < 0.5 * (min_len as f64) {
                         continue;
                     }
@@ -414,7 +424,10 @@ fn resolve_donor_chains(events: &mut [crate::types::RecombinationEvent], aln: &c
                     }
 
                     // e2's home must not be e1
-                    if e2.home_name.is_empty() || e2.home_name == e1_cand || events[i].isolates.contains(&e2.home_name) {
+                    if e2.home_name.is_empty()
+                        || e2.home_name == e1_cand
+                        || events[i].isolates.contains(&e2.home_name)
+                    {
                         continue;
                     }
 
@@ -446,10 +459,14 @@ fn resolve_donor_chains(events: &mut [crate::types::RecombinationEvent], aln: &c
                                     if rc > 0 && rh > 0 {
                                         if u >= s_idx && u < e_idx {
                                             v_tr += 1;
-                                            if rc != rh { d_tr += 1; }
+                                            if rc != rh {
+                                                d_tr += 1;
+                                            }
                                         } else {
                                             v_fl += 1;
-                                            if rc != rh { d_fl += 1; }
+                                            if rc != rh {
+                                                d_fl += 1;
+                                            }
                                         }
                                     }
                                 }
@@ -473,7 +490,9 @@ fn resolve_donor_chains(events: &mut [crate::types::RecombinationEvent], aln: &c
     }
 }
 
-fn group_ancestral_events(mut events: Vec<crate::types::RecombinationEvent>) -> Vec<crate::types::RecombinationEvent> {
+fn group_ancestral_events(
+    mut events: Vec<crate::types::RecombinationEvent>,
+) -> Vec<crate::types::RecombinationEvent> {
     let mut grouped: Vec<crate::types::RecombinationEvent> = Vec::new();
     events.sort_by_key(|e| (e.home_idx, e.donor_idx, e.u1));
     for e in events {
@@ -484,7 +503,8 @@ fn group_ancestral_events(mut events: Vec<crate::types::RecombinationEvent>) -> 
                 let overlap_end = g.u2.min(e.u2);
                 if overlap_end >= overlap_start {
                     let overlap_len = overlap_end - overlap_start + 1;
-                    let min_len = (g.u2.saturating_sub(g.u1) + 1).min(e.u2.saturating_sub(e.u1) + 1);
+                    let min_len =
+                        (g.u2.saturating_sub(g.u1) + 1).min(e.u2.saturating_sub(e.u1) + 1);
                     if overlap_len as f64 >= 0.5 * min_len as f64 {
                         g.isolates.extend(e.isolates.clone());
                         g.isolates.sort();
@@ -511,7 +531,7 @@ fn group_ancestral_events(mut events: Vec<crate::types::RecombinationEvent>) -> 
             grouped.push(e);
         }
     }
-    
+
     // Assign 1-based sequential event ID and sort by it
     for (i, g) in grouped.iter_mut().enumerate() {
         g.event_id = i + 1;
@@ -522,7 +542,9 @@ fn group_ancestral_events(mut events: Vec<crate::types::RecombinationEvent>) -> 
 /// Deduplicates overlapping tracts across different parental channels for a single candidate taxon.
 /// Preserves distinct non-overlapping tracts (Multi-Way Mosaicism) while suppressing redundant
 /// sister-channel duplicates (IoU >= 0.50 or overlap >= 70% of either tract).
-fn deduplicate_candidate_tracts(mut tracts: Vec<crate::types::PhysicalTract>) -> Vec<crate::types::PhysicalTract> {
+fn deduplicate_candidate_tracts(
+    mut tracts: Vec<crate::types::PhysicalTract>,
+) -> Vec<crate::types::PhysicalTract> {
     if tracts.len() <= 1 {
         return tracts;
     }
@@ -546,8 +568,11 @@ fn deduplicate_candidate_tracts(mut tracts: Vec<crate::types::PhysicalTract>) ->
 
             if e_ov >= s_ov {
                 let inter = (e_ov - s_ov + 1) as f64;
-                let l_exist = (existing.u2_discrete.saturating_sub(existing.u1_discrete) + 1) as f64;
-                let union_span = (tract.u2_discrete.max(existing.u2_discrete) - tract.u1_discrete.min(existing.u1_discrete) + 1) as f64;
+                let l_exist =
+                    (existing.u2_discrete.saturating_sub(existing.u1_discrete) + 1) as f64;
+                let union_span = (tract.u2_discrete.max(existing.u2_discrete)
+                    - tract.u1_discrete.min(existing.u1_discrete)
+                    + 1) as f64;
                 let iou = inter / union_span.max(1.0);
                 let frac_tract = inter / l_tract.max(1.0);
                 let frac_exist = inter / l_exist.max(1.0);
@@ -624,7 +649,11 @@ mod tests {
         };
 
         let dedup = deduplicate_candidate_tracts(vec![t1, t2, t3]);
-        assert_eq!(dedup.len(), 2, "Expected 2 tracts after deduplicating redundant overlap");
+        assert_eq!(
+            dedup.len(),
+            2,
+            "Expected 2 tracts after deduplicating redundant overlap"
+        );
         assert_eq!(dedup[0].u1_discrete, 100);
         assert_eq!(dedup[0].u2_discrete, 500);
         assert_eq!(dedup[0].donor_channel, 2, "Stronger tract should survive");
@@ -636,7 +665,13 @@ mod tests {
     #[test]
     fn test_multiway_mosaic_detection() {
         let l = 2000;
-        let taxa = vec!["R".into(), "P1".into(), "P2".into(), "P3".into(), "O".into()];
+        let taxa = vec![
+            "R".into(),
+            "P1".into(),
+            "P2".into(),
+            "P3".into(),
+            "O".into(),
+        ];
         let n = taxa.len();
 
         let mut data = vec![1u8; n * l];
@@ -678,20 +713,38 @@ mod tests {
         let engine = RhizAeonEngine::new();
         let res = engine.scan(&aln);
 
-        assert!(!res.is_non_recombinant_h0, "Expected multiway mosaic to be detected");
+        assert!(
+            !res.is_non_recombinant_h0,
+            "Expected multiway mosaic to be detected"
+        );
         println!("Detected events: {:?}", res.events.len());
         for ev in &res.events {
-            println!("Event: {} in [{}, {}] Home: {} Donor: {}",
-                ev.candidate_name, ev.u1, ev.u2, ev.home_name, ev.donor_name);
+            println!(
+                "Event: {} in [{}, {}] Home: {} Donor: {}",
+                ev.candidate_name, ev.u1, ev.u2, ev.home_name, ev.donor_name
+            );
         }
 
         // Verify that R is the candidate and both tracts are detected
-        let r_events: Vec<_> = res.events.iter().filter(|e| e.candidate_name == "R").collect();
-        assert!(r_events.len() >= 2, "Expected at least 2 events for multi-way mosaic child R");
+        let r_events: Vec<_> = res
+            .events
+            .iter()
+            .filter(|e| e.candidate_name == "R")
+            .collect();
+        assert!(
+            r_events.len() >= 2,
+            "Expected at least 2 events for multi-way mosaic child R"
+        );
 
         let donors: Vec<_> = r_events.iter().map(|e| e.donor_name.as_str()).collect();
-        assert!(donors.contains(&"P2"), "Expected P2 to be identified as donor");
-        assert!(donors.contains(&"P3"), "Expected P3 to be identified as donor");
+        assert!(
+            donors.contains(&"P2"),
+            "Expected P2 to be identified as donor"
+        );
+        assert!(
+            donors.contains(&"P3"),
+            "Expected P3 to be identified as donor"
+        );
     }
 
     #[test]
@@ -762,16 +815,23 @@ mod tests {
 
         // Grouping should merge H and L into a single ancestral event
         let grouped = group_ancestral_events(events);
-        assert_eq!(grouped.len(), 1, "Expected H and L to merge into a single co-recombinant event");
+        assert_eq!(
+            grouped.len(),
+            1,
+            "Expected H and L to merge into a single co-recombinant event"
+        );
         assert_eq!(grouped[0].isolates, vec!["H", "L"]);
         assert_eq!(grouped[0].home_name, "I");
         assert_eq!(grouped[0].donor_name, "X");
         assert_eq!(grouped[0].u1, 1);
         assert_eq!(grouped[0].u2, 500);
-        assert_eq!(grouped[0].p_fisher, 1e-15, "Strongest p-value should be preserved");
-        assert_eq!(grouped[0].z_phys, 9.0, "Highest z-score should be preserved");
+        assert_eq!(
+            grouped[0].p_fisher, 1e-15,
+            "Strongest p-value should be preserved"
+        );
+        assert_eq!(
+            grouped[0].z_phys, 9.0,
+            "Highest z-score should be preserved"
+        );
     }
 }
-
-
-

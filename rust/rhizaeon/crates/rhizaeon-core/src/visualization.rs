@@ -1,8 +1,8 @@
 use crate::jacobi::symmetric_jacobi_eigh;
 use crate::types::{
-    Alignment, CanonicalManifold, GowerPoint, InformativeSnpRecord, MacroSegment,
-    MosaicSegment, ScanResult, TaxonMeta, VisualizationBreakpoint, VisualizationDossier,
-    VisualizationMetadata, VisualizationSignals, VisualizationSubspaces,
+    Alignment, CanonicalManifold, GowerPoint, InformativeSnpRecord, MacroSegment, MosaicSegment,
+    ScanResult, TaxonMeta, VisualizationBreakpoint, VisualizationDossier, VisualizationMetadata,
+    VisualizationSignals, VisualizationSubspaces,
 };
 use std::collections::{BTreeMap, HashSet};
 
@@ -128,7 +128,10 @@ pub fn generate_visualization_dossier(
     let mut taxa_meta = BTreeMap::new();
     for t in &sorted_taxa {
         if rec_taxa_set.contains(t) {
-            let color = parent_colors.get(t).cloned().unwrap_or_else(|| "#a855f7".to_string());
+            let color = parent_colors
+                .get(t)
+                .cloned()
+                .unwrap_or_else(|| "#a855f7".to_string());
             taxa_meta.insert(
                 t.clone(),
                 TaxonMeta {
@@ -138,7 +141,10 @@ pub fn generate_visualization_dossier(
                 },
             );
         } else if parent_taxa_set.contains(t) {
-            let color = parent_colors.get(t).cloned().unwrap_or_else(|| "#0072b2".to_string());
+            let color = parent_colors
+                .get(t)
+                .cloned()
+                .unwrap_or_else(|| "#0072b2".to_string());
             taxa_meta.insert(
                 t.clone(),
                 TaxonMeta {
@@ -166,7 +172,11 @@ pub fn generate_visualization_dossier(
 
     for ev in &scan_res.events {
         let first_isolate = &ev.isolates[0];
-        let cand_idx = aln.taxa.iter().position(|t| t == first_isolate).unwrap_or(0);
+        let cand_idx = aln
+            .taxa
+            .iter()
+            .position(|t| t == first_isolate)
+            .unwrap_or(0);
         let home_idx = ev.home_idx.unwrap_or(0);
         let donor_idx_opt = ev.donor_idx;
 
@@ -327,7 +337,11 @@ pub fn generate_visualization_dossier(
 
                 let ci_l_3p = left_flank_3p.unwrap_or_else(|| ev.u2.saturating_sub(5).max(1));
                 let ci_r_3p = right_flank_3p.unwrap_or_else(|| (ev.u2 + 5).min(l));
-                let plat_w_3p = if ci_r_3p >= ci_l_3p { ci_r_3p - ci_l_3p } else { 0 };
+                let plat_w_3p = if ci_r_3p >= ci_l_3p {
+                    ci_r_3p - ci_l_3p
+                } else {
+                    0
+                };
                 total_plateau_width += plat_w_3p;
 
                 breakpoints.push(VisualizationBreakpoint {
@@ -417,10 +431,18 @@ pub fn generate_visualization_dossier(
                 let is_5p_crossover = ev.is_crossover && ev.u1 <= 5 && ev.u2 < l;
 
                 if is_5p_crossover {
-                    let bp_rec = breakpoints.iter().find(|b| b.isolates.contains(t) && b.breakpoint_nt == ev.u2);
+                    let bp_rec = breakpoints
+                        .iter()
+                        .find(|b| b.isolates.contains(t) && b.breakpoint_nt == ev.u2);
                     let bp_id = bp_rec.map(|b| b.breakpoint_id.clone());
-                    let ci_l = bp_rec.map(|b| b.ci_left).unwrap_or(ev.u2.saturating_sub(5).max(1)).max(curr);
-                    let ci_r = bp_rec.map(|b| b.ci_right).unwrap_or((ev.u2 + 5).min(l)).max(ci_l);
+                    let ci_l = bp_rec
+                        .map(|b| b.ci_left)
+                        .unwrap_or(ev.u2.saturating_sub(5).max(1))
+                        .max(curr);
+                    let ci_r = bp_rec
+                        .map(|b| b.ci_right)
+                        .unwrap_or((ev.u2 + 5).min(l))
+                        .max(ci_l);
 
                     // Donor segment starting from curr up to ci_l - 1
                     if ci_l > curr {
@@ -449,10 +471,19 @@ pub fn generate_visualization_dossier(
 
                     curr = ci_r + 1;
                 } else {
-                    let bp_5p = breakpoints.iter().find(|b| b.isolates.contains(t) && b.breakpoint_nt == ev.u1);
+                    let bp_5p = breakpoints
+                        .iter()
+                        .find(|b| b.isolates.contains(t) && b.breakpoint_nt == ev.u1);
                     let bp_5p_id = bp_5p.map(|b| b.breakpoint_id.clone());
-                    let ci_l_5p = bp_5p.map(|b| b.ci_left).unwrap_or(ev.u1.saturating_sub(5).max(1)).max(curr);
-                    let ci_r_5p = bp_5p.map(|b| b.ci_right).unwrap_or((ev.u1 + 5).min(l)).min(ev.u2).max(ci_l_5p);
+                    let ci_l_5p = bp_5p
+                        .map(|b| b.ci_left)
+                        .unwrap_or(ev.u1.saturating_sub(5).max(1))
+                        .max(curr);
+                    let ci_r_5p = bp_5p
+                        .map(|b| b.ci_right)
+                        .unwrap_or((ev.u1 + 5).min(l))
+                        .min(ev.u2)
+                        .max(ci_l_5p);
 
                     // Flank before 5' breakpoint
                     if ci_l_5p > curr {
@@ -468,7 +499,11 @@ pub fn generate_visualization_dossier(
                     }
 
                     // 5' Plateau
-                    let plat_5p_w = if ci_r_5p >= ci_l_5p { ci_r_5p - ci_l_5p } else { 0 };
+                    let plat_5p_w = if ci_r_5p >= ci_l_5p {
+                        ci_r_5p - ci_l_5p
+                    } else {
+                        0
+                    };
                     segments.push(MosaicSegment {
                         start: ci_l_5p,
                         end: ci_r_5p,
@@ -494,11 +529,19 @@ pub fn generate_visualization_dossier(
                         curr = l + 1;
                         break;
                     } else {
-                        let bp_3p = breakpoints.iter().find(|b| b.isolates.contains(t) && b.breakpoint_nt == ev.u2);
+                        let bp_3p = breakpoints
+                            .iter()
+                            .find(|b| b.isolates.contains(t) && b.breakpoint_nt == ev.u2);
                         let bp_3p_id = bp_3p.map(|b| b.breakpoint_id.clone());
                         let tract_st = (ci_r_5p + 1).min(ev.u2);
-                        let ci_l_3p = bp_3p.map(|b| b.ci_left).unwrap_or(ev.u2.saturating_sub(5).max(1)).max(tract_st);
-                        let ci_r_3p = bp_3p.map(|b| b.ci_right).unwrap_or((ev.u2 + 5).min(l)).max(ci_l_3p);
+                        let ci_l_3p = bp_3p
+                            .map(|b| b.ci_left)
+                            .unwrap_or(ev.u2.saturating_sub(5).max(1))
+                            .max(tract_st);
+                        let ci_r_3p = bp_3p
+                            .map(|b| b.ci_right)
+                            .unwrap_or((ev.u2 + 5).min(l))
+                            .max(ci_l_3p);
 
                         // Donor tract between 5' and 3' plateaus
                         if ci_l_3p > tract_st {
@@ -514,7 +557,11 @@ pub fn generate_visualization_dossier(
                         }
 
                         // 3' Plateau
-                        let plat_3p_w = if ci_r_3p >= ci_l_3p { ci_r_3p - ci_l_3p } else { 0 };
+                        let plat_3p_w = if ci_r_3p >= ci_l_3p {
+                            ci_r_3p - ci_l_3p
+                        } else {
+                            0
+                        };
                         segments.push(MosaicSegment {
                             start: ci_l_3p,
                             end: ci_r_3p,
@@ -589,7 +636,10 @@ pub fn generate_visualization_dossier(
 
                         // If resolved donor color clashes with home color, ensure visual contrast
                         if home_colors.iter().any(|hc| hc == &resolved_col) {
-                            if let Some(alt) = PALETTE.iter().find(|&&c| !home_colors.contains(&c.to_string())) {
+                            if let Some(alt) = PALETTE
+                                .iter()
+                                .find(|&&c| !home_colors.contains(&c.to_string()))
+                            {
                                 resolved_col = alt.to_string();
                             }
                         }
@@ -658,26 +708,43 @@ pub fn generate_visualization_dossier(
     }
 
     // 7. Focal Recombinant & Continuous Signals
-    let (focal_cand_idx, focal_cand_name, focal_home_idx, focal_home_name, focal_donor_idx_opt, focal_donor_name) =
-        if let Some(ev) = scan_res.events.first() {
-            (
-                aln.taxa.iter().position(|t| t == &ev.isolates[0]).unwrap_or(0),
-                ev.isolates[0].clone(),
-                ev.home_idx.unwrap_or(0),
-                ev.home_name.clone(),
-                ev.donor_idx,
-                ev.donor_name.clone(),
-            )
-        } else {
-            (
-                0,
-                aln.taxa[0].clone(),
-                if n > 1 { 1 } else { 0 },
-                if n > 1 { aln.taxa[1].clone() } else { aln.taxa[0].clone() },
-                if n > 2 { Some(2) } else { None },
-                if n > 2 { aln.taxa[2].clone() } else { "None".to_string() },
-            )
-        };
+    let (
+        focal_cand_idx,
+        focal_cand_name,
+        focal_home_idx,
+        focal_home_name,
+        focal_donor_idx_opt,
+        focal_donor_name,
+    ) = if let Some(ev) = scan_res.events.first() {
+        (
+            aln.taxa
+                .iter()
+                .position(|t| t == &ev.isolates[0])
+                .unwrap_or(0),
+            ev.isolates[0].clone(),
+            ev.home_idx.unwrap_or(0),
+            ev.home_name.clone(),
+            ev.donor_idx,
+            ev.donor_name.clone(),
+        )
+    } else {
+        (
+            0,
+            aln.taxa[0].clone(),
+            if n > 1 { 1 } else { 0 },
+            if n > 1 {
+                aln.taxa[1].clone()
+            } else {
+                aln.taxa[0].clone()
+            },
+            if n > 2 { Some(2) } else { None },
+            if n > 2 {
+                aln.taxa[2].clone()
+            } else {
+                "None".to_string()
+            },
+        )
+    };
 
     let focal_donor_idx = focal_donor_idx_opt.unwrap_or_else(|| if n > 2 { 2 } else { 0 });
 
@@ -837,12 +904,8 @@ pub fn generate_visualization_dossier(
     };
 
     // 9. Time-invariant Canonical Metric Manifold & Chord Colinearity
-    let canonical_manifold = compute_canonical_manifold(
-        aln,
-        focal_cand_idx,
-        focal_home_idx,
-        focal_donor_idx,
-    );
+    let canonical_manifold =
+        compute_canonical_manifold(aln, focal_cand_idx, focal_home_idx, focal_donor_idx);
 
     // 10. Summary Metadata
     let mean_plat_w = if !breakpoints.is_empty() {
@@ -970,7 +1033,10 @@ fn compute_mds_2d(
         };
         res.insert(
             aln.taxa[i].clone(),
-            vec![(x * 10000.0).round() / 10000.0, (y * 10000.0).round() / 10000.0],
+            vec![
+                (x * 10000.0).round() / 10000.0,
+                (y * 10000.0).round() / 10000.0,
+            ],
         );
     }
 
@@ -1102,7 +1168,10 @@ fn compute_canonical_manifold(
         };
         ref_coords.insert(
             aln.taxa[i].clone(),
-            vec![(x * 10000.0).round() / 10000.0, (y * 10000.0).round() / 10000.0],
+            vec![
+                (x * 10000.0).round() / 10000.0,
+                (y * 10000.0).round() / 10000.0,
+            ],
         );
     }
 
@@ -1271,15 +1340,15 @@ TTTTTTTTTTTTTTTT
         for _ in 0..500 {
             p1_seq.push('A');
             p2_seq.push('C');
-            l_seq.push('C');  // Tract 1..500 from P2
-            h_seq.push('C');  // Tract 1..500 from L
+            l_seq.push('C'); // Tract 1..500 from P2
+            h_seq.push('C'); // Tract 1..500 from L
             o_seq.push('T');
         }
         for _ in 0..500 {
             p1_seq.push('A');
             p2_seq.push('C');
-            l_seq.push('A');  // Tract 501..1000 from P1
-            h_seq.push('A');  // Tract 501..1000 from P1
+            l_seq.push('A'); // Tract 501..1000 from P1
+            h_seq.push('A'); // Tract 501..1000 from P1
             o_seq.push('T');
         }
 
@@ -1294,9 +1363,15 @@ TTTTTTTTTTTTTTTT
         let dossier = generate_visualization_dossier(&aln, &scan_res, Some("Test Multi-Hop"));
 
         // If L and H have events where L is donor to H:
-        if let (Some(l_tracks), Some(h_tracks)) = (dossier.mosaic_taxa.get("L"), dossier.mosaic_taxa.get("H")) {
-            let l_donor_seg = l_tracks.iter().find(|s| s.lineage.contains("Donor") && s.start <= 250);
-            let h_donor_seg = h_tracks.iter().find(|s| s.lineage.contains("Donor") && s.start <= 250);
+        if let (Some(l_tracks), Some(h_tracks)) =
+            (dossier.mosaic_taxa.get("L"), dossier.mosaic_taxa.get("H"))
+        {
+            let l_donor_seg = l_tracks
+                .iter()
+                .find(|s| s.lineage.contains("Donor") && s.start <= 250);
+            let h_donor_seg = h_tracks
+                .iter()
+                .find(|s| s.lineage.contains("Donor") && s.start <= 250);
             if let (Some(l_seg), Some(h_seg)) = (l_donor_seg, h_donor_seg) {
                 // H's donor tract color MUST match L's donor tract color in that region!
                 assert_eq!(h_seg.color, l_seg.color);
@@ -1304,4 +1379,3 @@ TTTTTTTTTTTTTTTT
         }
     }
 }
-

@@ -22,7 +22,9 @@ pub struct TrajectoryParentalResolver {
 
 impl Default for TrajectoryParentalResolver {
     fn default() -> Self {
-        Self { min_root_swing: 3.0 }
+        Self {
+            min_root_swing: 3.0,
+        }
     }
 }
 
@@ -86,8 +88,12 @@ impl TrajectoryParentalResolver {
             let mut max_c = f64::NEG_INFINITY;
             for u in 0..l {
                 let c = c_tensor[u * n * num_channels + candidate_idx * num_channels + ch];
-                if c < min_c { min_c = c; }
-                if c > max_c { max_c = c; }
+                if c < min_c {
+                    min_c = c;
+                }
+                if c > max_c {
+                    max_c = c;
+                }
             }
             swings[ch] = (max_c - min_c).max(0.0);
         }
@@ -216,13 +222,21 @@ impl TrajectoryParentalResolver {
         // Autapomorphic rate bursts naturally pool into [ROOT], preventing false donor attribution.
 
         // Sort candidate donors by score descending
-        candidate_donors.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        candidate_donors.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         // Limit to top 4 active donors to preserve efficiency and eliminate spurious noise
         candidate_donors.truncate(4);
 
         // 7. Construct TrajectoryParentalPairs
         let home_k = home_ch.saturating_sub(1);
-        let home_name = landmarks.taxa.get(home_k).cloned().unwrap_or_else(|| "Home".to_string());
+        let home_name = landmarks
+            .taxa
+            .get(home_k)
+            .cloned()
+            .unwrap_or_else(|| "Home".to_string());
         let home_global = landmarks.indices.get(home_k).copied();
 
         let mut pairs = Vec::with_capacity(candidate_donors.len());
@@ -233,7 +247,11 @@ impl TrajectoryParentalResolver {
                 let dk = cd.channel.saturating_sub(1);
                 (
                     Some(dk),
-                    landmarks.taxa.get(dk).cloned().unwrap_or_else(|| "Donor".to_string()),
+                    landmarks
+                        .taxa
+                        .get(dk)
+                        .cloned()
+                        .unwrap_or_else(|| "Donor".to_string()),
                     landmarks.indices.get(dk).copied(),
                 )
             };
@@ -263,9 +281,16 @@ impl TrajectoryParentalResolver {
                 donor_landmark_idx: Some(primary_donor_ch.saturating_sub(1)),
                 is_ghost_donor: false,
                 home_name,
-                donor_name: landmarks.taxa.get(primary_donor_ch.saturating_sub(1)).cloned().unwrap_or_else(|| "Donor".to_string()),
+                donor_name: landmarks
+                    .taxa
+                    .get(primary_donor_ch.saturating_sub(1))
+                    .cloned()
+                    .unwrap_or_else(|| "Donor".to_string()),
                 home_global_idx: home_global,
-                donor_global_idx: landmarks.indices.get(primary_donor_ch.saturating_sub(1)).copied(),
+                donor_global_idx: landmarks
+                    .indices
+                    .get(primary_donor_ch.saturating_sub(1))
+                    .copied(),
                 swing_home: swings[home_ch],
                 swing_donor: swings[primary_donor_ch],
             });
@@ -293,7 +318,11 @@ impl TrajectoryParentalResolver {
 
         let u1_idx = (u1.saturating_sub(1)).min(l - 1);
         let u2_idx = (u2.saturating_sub(1)).min(l - 1);
-        let (s_idx, e_idx) = if u1_idx <= u2_idx { (u1_idx, u2_idx) } else { (u2_idx, u1_idx) };
+        let (s_idx, e_idx) = if u1_idx <= u2_idx {
+            (u1_idx, u2_idx)
+        } else {
+            (u2_idx, u1_idx)
+        };
 
         let mut w_tract = vec![0.0f64; num_channels];
         let mut w_flank = vec![0.0f64; num_channels];
@@ -341,7 +370,9 @@ impl TrajectoryParentalResolver {
             }
         }
 
-        if preferred_donor_ch == Some(0) || (w_tract[0] >= self.min_root_swing && w_tract[0] > max_w_tr_cont) {
+        if preferred_donor_ch == Some(0)
+            || (w_tract[0] >= self.min_root_swing && w_tract[0] > max_w_tr_cont)
+        {
             is_ghost = true;
         }
 
@@ -380,11 +411,17 @@ impl TrajectoryParentalResolver {
                                 let rt = t_row[u];
                                 if rc > 0 && rt > 0 {
                                     valid += 1;
-                                    if rc != rt { mismatches += 1; }
+                                    if rc != rt {
+                                        mismatches += 1;
+                                    }
                                 }
                             }
                         }
-                        let d = if valid > 0 { (mismatches as f64) / (valid as f64) } else { 1.0 };
+                        let d = if valid > 0 {
+                            (mismatches as f64) / (valid as f64)
+                        } else {
+                            1.0
+                        };
                         if d < best_dist {
                             best_dist = d;
                             final_home_ch = ch;
@@ -394,7 +431,11 @@ impl TrajectoryParentalResolver {
             }
 
             let home_k = final_home_ch.saturating_sub(1);
-            let home_name = landmarks.taxa.get(home_k).cloned().unwrap_or_else(|| "Home".to_string());
+            let home_name = landmarks
+                .taxa
+                .get(home_k)
+                .cloned()
+                .unwrap_or_else(|| "Home".to_string());
             let home_global = landmarks.indices.get(home_k).copied();
 
             return TrajectoryParentalPair {
@@ -415,7 +456,10 @@ impl TrajectoryParentalResolver {
 
         // Contemporary Donor Resolution
         let best_donor_ch = if let Some(pref_d) = preferred_donor_ch {
-            if pref_d > 0 && contemporary_channels.contains(&pref_d) && w_tract[pref_d] >= 0.5 * max_w_tr_cont {
+            if pref_d > 0
+                && contemporary_channels.contains(&pref_d)
+                && w_tract[pref_d] >= 0.5 * max_w_tr_cont
+            {
                 pref_d
             } else {
                 best_cont_donor
@@ -448,10 +492,16 @@ impl TrajectoryParentalResolver {
                         let rt = t_row[u];
                         if rc > 0 && rt > 0 {
                             valid += 1;
-                            if rc != rt { mismatches += 1; }
+                            if rc != rt {
+                                mismatches += 1;
+                            }
                         }
                     }
-                    let d = if valid > 0 { (mismatches as f64) / (valid as f64) } else { 1.0 };
+                    let d = if valid > 0 {
+                        (mismatches as f64) / (valid as f64)
+                    } else {
+                        1.0
+                    };
                     if d < best_dist {
                         best_dist = d;
                         final_donor_ch = ch;
@@ -509,11 +559,17 @@ impl TrajectoryParentalResolver {
                             let rt = t_row[u];
                             if rc > 0 && rt > 0 {
                                 valid += 1;
-                                if rc != rt { mismatches += 1; }
+                                if rc != rt {
+                                    mismatches += 1;
+                                }
                             }
                         }
                     }
-                    let d = if valid > 0 { (mismatches as f64) / (valid as f64) } else { 1.0 };
+                    let d = if valid > 0 {
+                        (mismatches as f64) / (valid as f64)
+                    } else {
+                        1.0
+                    };
                     if d < best_dist {
                         best_dist = d;
                         final_home_ch = ch;
@@ -544,20 +600,44 @@ impl TrajectoryParentalResolver {
             if rc > 0 && rd > 0 && rh > 0 {
                 if u >= s_idx && u <= e_idx {
                     v_tr += 1;
-                    if rc != rd { d_tr_d += 1; }
-                    if rc != rh { d_tr_h += 1; }
+                    if rc != rd {
+                        d_tr_d += 1;
+                    }
+                    if rc != rh {
+                        d_tr_h += 1;
+                    }
                 } else {
                     v_fl += 1;
-                    if rc != rd { d_fl_d += 1; }
-                    if rc != rh { d_fl_h += 1; }
+                    if rc != rd {
+                        d_fl_d += 1;
+                    }
+                    if rc != rh {
+                        d_fl_h += 1;
+                    }
                 }
             }
         }
 
-        let dist_tr_d = if v_tr > 0 { (d_tr_d as f64) / (v_tr as f64) } else { 0.0 };
-        let dist_fl_d = if v_fl > 0 { (d_fl_d as f64) / (v_fl as f64) } else { 0.0 };
-        let dist_tr_h = if v_tr > 0 { (d_tr_h as f64) / (v_tr as f64) } else { 0.0 };
-        let dist_fl_h = if v_fl > 0 { (d_fl_h as f64) / (v_fl as f64) } else { 0.0 };
+        let dist_tr_d = if v_tr > 0 {
+            (d_tr_d as f64) / (v_tr as f64)
+        } else {
+            0.0
+        };
+        let dist_fl_d = if v_fl > 0 {
+            (d_fl_d as f64) / (v_fl as f64)
+        } else {
+            0.0
+        };
+        let dist_tr_h = if v_tr > 0 {
+            (d_tr_h as f64) / (v_tr as f64)
+        } else {
+            0.0
+        };
+        let dist_fl_h = if v_fl > 0 {
+            (d_fl_h as f64) / (v_fl as f64)
+        } else {
+            0.0
+        };
 
         // If inverted polarity (closer to Donor in flank and closer to Home in tract), swap them
         if (dist_fl_d < dist_tr_d) && (dist_tr_h < dist_fl_h) {
@@ -565,11 +645,19 @@ impl TrajectoryParentalResolver {
         }
 
         let home_k = final_home_ch - 1;
-        let home_name = landmarks.taxa.get(home_k).cloned().unwrap_or_else(|| "Home".to_string());
+        let home_name = landmarks
+            .taxa
+            .get(home_k)
+            .cloned()
+            .unwrap_or_else(|| "Home".to_string());
         let home_global = landmarks.indices.get(home_k).copied();
 
         let donor_k = final_donor_ch - 1;
-        let donor_name = landmarks.taxa.get(donor_k).cloned().unwrap_or_else(|| "Donor".to_string());
+        let donor_name = landmarks
+            .taxa
+            .get(donor_k)
+            .cloned()
+            .unwrap_or_else(|| "Donor".to_string());
         let donor_global = landmarks.indices.get(donor_k).copied();
 
         TrajectoryParentalPair {
@@ -588,4 +676,3 @@ impl TrajectoryParentalResolver {
         }
     }
 }
-

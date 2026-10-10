@@ -20,11 +20,7 @@ impl PhyloBias {
     }
 
     /// Computes B^prior matrix of shape (N, K+1)
-    pub fn compute_prior_matrix(
-        &self,
-        aln: &Alignment,
-        landmarks: &LandmarkSet,
-    ) -> Vec<f64> {
+    pub fn compute_prior_matrix(&self, aln: &Alignment, landmarks: &LandmarkSet) -> Vec<f64> {
         let n = aln.num_taxa;
         let k = landmarks.num_landmarks;
         let num_channels = k + 1;

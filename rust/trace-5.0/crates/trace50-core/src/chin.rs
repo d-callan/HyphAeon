@@ -7,9 +7,9 @@
 //! - Inferred longitudinal surveillance sampling fraction: rho = 2 * E_obs / (n * R0).
 //! - Borel branching process cluster size spectrum decay test.
 
+use crate::math::{linregress, norm_ppf};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::math::{linregress, norm_ppf};
 
 /// Active transmitting population and surveillance coverage estimates.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,7 +55,12 @@ impl ChinEstimator {
     }
 
     /// Inverts quadratic law to estimate surveillance sampling fraction rho in [0, 1].
-    pub fn estimate_sampling_fraction(&self, n_samples: usize, n_edges: usize, r0_opt: Option<f64>) -> f64 {
+    pub fn estimate_sampling_fraction(
+        &self,
+        n_samples: usize,
+        n_edges: usize,
+        r0_opt: Option<f64>,
+    ) -> f64 {
         let r0 = r0_opt.unwrap_or(self.r0_default);
         if r0 <= 0.0 {
             return 0.0;
@@ -317,7 +322,9 @@ impl SimpleRng {
     #[inline]
     pub fn next_u64(&mut self) -> u64 {
         let oldstate = self.state;
-        self.state = oldstate.wrapping_mul(6364136223846793005).wrapping_add(self.inc | 1);
+        self.state = oldstate
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(self.inc | 1);
         let xorshifted = (((oldstate >> 18) ^ oldstate) >> 27) as u32;
         let rot = (oldstate >> 59) as u32;
         let p = (xorshifted >> rot) | (xorshifted << ((32 - rot) & 31));
@@ -370,15 +377,17 @@ mod tests {
     #[test]
     fn test_chin_bayesian_mcmc() {
         let chin = ChinEstimator::new(1.5);
-        let res = chin.run_joint_bayesian_monte_carlo(
-            1658,
-            101,
-            5000,
-            (1.2, 2.0),
-            (0.1, 0.5),
-            (0.0, 0.40),
-            42,
-        ).expect("MCMC should succeed");
+        let res = chin
+            .run_joint_bayesian_monte_carlo(
+                1658,
+                101,
+                5000,
+                (1.2, 2.0),
+                (0.1, 0.5),
+                (0.0, 0.40),
+                42,
+            )
+            .expect("MCMC should succeed");
 
         assert_eq!(res.n_samples, 1658);
         assert_eq!(res.n_edges, 101);
