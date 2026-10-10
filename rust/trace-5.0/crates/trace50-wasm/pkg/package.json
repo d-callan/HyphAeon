@@ -1,0 +1,20 @@
+{
+  "name": "trace50-wasm",
+  "type": "module",
+  "collaborators": [
+    "Sergei L. Kosakovsky Pond",
+    "Antigravity AI Engine"
+  ],
+  "description": "WebAssembly client-side engine for TRACE-5.0",
+  "version": "5.0.0",
+  "files": [
+    "trace50_wasm_bg.wasm",
+    "trace50_wasm.js",
+    "trace50_wasm.d.ts"
+  ],
+  "main": "trace50_wasm.js",
+  "types": "trace50_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
