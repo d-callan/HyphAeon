@@ -6,6 +6,7 @@
 //! - Cumulative Poisson probability `poisson_cdf`.
 //! - Normal and Student-t quantile functions (`norm_cdf`, `norm_ppf`, `student_t_ppf`).
 //! - Ordinary least squares linear regression `linregress`.
+//! - Order statistics: `percentile` (linear interpolation) and `median`.
 //! - Exact cyclic Jacobi eigensolver `symmetric_jacobi_eigh` for real symmetric
 //!   matrices (normalized graph Laplacians, Gram matrices).
 
@@ -456,9 +457,71 @@ pub fn symmetric_jacobi_eigh(a_flat: &[f64], k: usize) -> Eigendecomposition {
     }
 }
 
+/// Linear-interpolation percentile on a PRE-SORTED slice.
+///
+/// Rank convention matches `numpy.percentile`: rank = pct/100 * (n - 1),
+/// linear interpolation between the floor and ceil order statistics.
+/// Returns NaN for empty input. Callers must sort first — this is the
+/// contract historically held by `trace50_core::chin::percentile`.
+pub fn percentile(sorted: &[f64], pct: f64) -> f64 {
+    if sorted.is_empty() {
+        return f64::NAN;
+    }
+    if sorted.len() == 1 {
+        return sorted[0];
+    }
+    let rank = (pct / 100.0) * ((sorted.len() - 1) as f64);
+    let low = rank.floor() as usize;
+    let high = rank.ceil() as usize;
+    let frac = rank - (low as f64);
+    if low >= sorted.len() {
+        sorted[sorted.len() - 1]
+    } else if high >= sorted.len() {
+        sorted[low]
+    } else {
+        sorted[low] * (1.0 - frac) + sorted[high] * frac
+    }
+}
+
+/// Median of an unordered slice; sorts a copy internally.
+///
+/// Equivalent to `percentile(sorted, 50)` — identical interpolation
+/// semantics. Returns NaN for empty input; callers wanting the historical
+/// `rhizaeon` empty -> 0.0 contract must handle it at the call site.
+pub fn median(vals: &[f64]) -> f64 {
+    if vals.is_empty() {
+        return f64::NAN;
+    }
+    let mut sorted = vals.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    percentile(&sorted, 50.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_percentile_endpoints_and_interp() {
+        let s = [1.0, 2.0, 3.0, 4.0];
+        assert_eq!(percentile(&s, 0.0), 1.0);
+        assert_eq!(percentile(&s, 100.0), 4.0);
+        assert_eq!(percentile(&s, 50.0), 2.5); // rank 1.5 -> midpoint
+        assert_eq!(percentile(&s, 25.0), 1.75); // rank 0.75 -> lerp
+        assert_eq!(percentile(&[7.0], 63.0), 7.0);
+    }
+
+    #[test]
+    fn test_percentile_empty_is_nan() {
+        assert!(percentile(&[], 50.0).is_nan());
+    }
+
+    #[test]
+    fn test_median_odd_even_empty() {
+        assert_eq!(median(&[3.0, 1.0, 2.0]), 2.0);
+        assert_eq!(median(&[4.0, 1.0, 3.0, 2.0]), 2.5);
+        assert!(median(&[]).is_nan());
+    }
 
     #[test]
     fn test_ln_gamma() {

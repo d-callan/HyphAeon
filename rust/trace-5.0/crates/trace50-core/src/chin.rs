@@ -350,24 +350,10 @@ impl SimpleRng {
     }
 }
 
+/// Delegates to `aeon_manifold::percentile` — identical contract
+/// (pre-sorted input, numpy-linear rank interpolation, NaN on empty).
 pub fn percentile(sorted: &[f64], pct: f64) -> f64 {
-    if sorted.is_empty() {
-        return f64::NAN;
-    }
-    if sorted.len() == 1 {
-        return sorted[0];
-    }
-    let rank = (pct / 100.0) * ((sorted.len() - 1) as f64);
-    let low = rank.floor() as usize;
-    let high = rank.ceil() as usize;
-    let frac = rank - (low as f64);
-    if low >= sorted.len() {
-        sorted[sorted.len() - 1]
-    } else if high >= sorted.len() {
-        sorted[low]
-    } else {
-        sorted[low] * (1.0 - frac) + sorted[high] * frac
-    }
+    aeon_manifold::percentile(sorted, pct)
 }
 
 #[cfg(test)]

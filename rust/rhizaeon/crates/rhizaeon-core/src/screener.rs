@@ -409,18 +409,13 @@ impl LocalFluxScreener {
     }
 }
 
+/// Delegates to `aeon_manifold::median`; the empty-slice guard preserves
+/// this module's historical contract of returning 0.0 rather than NaN.
 fn median(vals: &[f64]) -> f64 {
     if vals.is_empty() {
         return 0.0;
     }
-    let mut sorted = vals.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let mid = sorted.len() / 2;
-    if sorted.len() % 2 == 1 {
-        sorted[mid]
-    } else {
-        0.5 * (sorted[mid - 1] + sorted[mid])
-    }
+    aeon_manifold::median(vals)
 }
 
 /// Machine-precision Acklam rational approximation of the standard normal
