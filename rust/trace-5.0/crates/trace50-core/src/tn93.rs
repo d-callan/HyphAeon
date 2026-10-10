@@ -2,12 +2,14 @@
 
 use serde::{Deserialize, Serialize};
 
-// Canonical IUPAC alphabet lives in aeon-manifold (single source of truth);
-// re-exported here so existing `crate::tn93::*` call sites are unchanged.
+// Canonical IUPAC alphabet and header date extraction live in aeon-manifold
+// (single source of truth); re-exported here so existing `crate::tn93::*`
+// call sites are unchanged.
 pub use aeon_manifold::encoding::{
     char_to_iupac_mask, char_to_nuc_int, iupac_base_probabilities,
     PURINE_MASK, PYRIMIDINE_MASK,
 };
+pub use aeon_manifold::temporal::parse_date_from_header;
 
 /// Computes analytical Tamura-Nei 93 (TN93) pairwise genetic distance.
 /// Resolves ambiguities to minimize distance (matching characters share bits).
@@ -230,37 +232,6 @@ impl Alignment {
     pub fn compute_distance_matrix(&self) -> Vec<f64> {
         self.compute_distance_matrix_with_progress(|_, _, _| {})
     }
-}
-
-/// Helper function to parse a calendar year or decimal date from sequence header.
-pub fn parse_date_from_header(header: &str) -> f64 {
-    for token in header.split(|c| c == '|' || c == '_' || c == '/' || c == ' ') {
-        // Direct float/integer parse (e.g. 2014.25 or 2014)
-        if let Ok(val) = token.parse::<f64>() {
-            if (1950.0..=2035.0).contains(&val) {
-                return val;
-            }
-        }
-        // ISO 8601 calendar date parse (e.g. 2021-04-15 or 2021-04)
-        let parts: Vec<&str> = token.split('-').collect();
-        if parts.len() == 2 || parts.len() == 3 {
-            if let Ok(year) = parts[0].parse::<f64>() {
-                if (1950.0..=2035.0).contains(&year) {
-                    if let Ok(month) = parts[1].parse::<f64>() {
-                        if (1.0..=12.0).contains(&month) {
-                            let day = if parts.len() == 3 {
-                                parts[2].parse::<f64>().unwrap_or(15.0)
-                            } else {
-                                15.0
-                            };
-                            return year + (month - 1.0) / 12.0 + (day - 1.0) / 365.25;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    f64::NAN
 }
 
 #[cfg(test)]
