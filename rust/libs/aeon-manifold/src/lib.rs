@@ -7,10 +7,15 @@
 //! - Normal and Student-t quantile functions (`norm_cdf`, `norm_ppf`, `student_t_ppf`).
 //! - Ordinary least squares linear regression `linregress`.
 //! - Order statistics: `percentile` (linear interpolation) and `median`.
+//! - Canonical IUPAC alphabet + encoding projections (`encoding` module,
+//!   re-exported at crate root).
 //! - Exact cyclic Jacobi eigensolver `symmetric_jacobi_eigh` for real symmetric
 //!   matrices (normalized graph Laplacians, Gram matrices).
 
 use std::f64::consts::{PI, SQRT_2};
+
+pub mod encoding;
+pub use encoding::*;
 
 /// 15-coefficient Lanczos approximation for ln(Gamma(z)) (g = 4.7421875).
 /// Machine-precision accuracy across z > 0.

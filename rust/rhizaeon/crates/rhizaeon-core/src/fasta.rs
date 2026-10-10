@@ -1,16 +1,13 @@
 use crate::types::Alignment;
 
 /// Encodes a nucleotide ASCII character into integer state:
-/// 1: A, 2: C, 3: G, 4: T/U, 0: gap/ambiguity
+/// 1: A, 2: C, 3: G, 4: T/U, 0: gap/ambiguity.
+///
+/// Delegates to `aeon_manifold::encode_char` — the canonical IUPAC table's
+/// ambiguity-collapse projection; identical semantics.
 #[inline(always)]
 pub fn encode_char(b: u8) -> u8 {
-    match b {
-        b'A' | b'a' => 1,
-        b'C' | b'c' => 2,
-        b'G' | b'g' => 3,
-        b'T' | b't' | b'U' | b'u' => 4,
-        _ => 0,
-    }
+    aeon_manifold::encode_char(b)
 }
 
 /// Parses a FASTA format string into an Alignment struct

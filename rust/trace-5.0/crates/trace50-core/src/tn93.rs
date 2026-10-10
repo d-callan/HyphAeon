@@ -2,67 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const PURINE_MASK: u8 = 0b0101; // A (1) or G (4)
-pub const PYRIMIDINE_MASK: u8 = 0b1010; // C (2) or T (8)
-
-/// Converts an ASCII character to a 4-bit IUPAC bitmask.
-/// A=1, C=2, G=4, T=8.
-#[inline(always)]
-pub fn char_to_iupac_mask(c: u8) -> u8 {
-    match c {
-        b'A' | b'a' => 0b0001,
-        b'C' | b'c' => 0b0010,
-        b'G' | b'g' => 0b0100,
-        b'T' | b't' | b'U' | b'u' => 0b1000,
-        b'R' | b'r' => 0b0101, // A or G
-        b'Y' | b'y' => 0b1010, // C or T
-        b'S' | b's' => 0b0110, // C or G
-        b'W' | b'w' => 0b1001, // A or T
-        b'K' | b'k' => 0b1100, // G or T
-        b'M' | b'm' => 0b0011, // A or C
-        b'B' | b'b' => 0b1110, // C, G, or T
-        b'D' | b'd' => 0b1101, // A, G, or T
-        b'H' | b'h' => 0b1011, // A, C, or T
-        b'V' | b'v' => 0b0111, // A, C, or G
-        b'N' | b'n' => 0b0000, // Fully ambiguous / missing data (skipped in valid overlap)
-        _ => 0b0000,           // Gap, unknown
-    }
-}
-
-/// Converts an ASCII character to an integer representation:
-/// 0=A, 1=C, 2=G, 3=T, -1=other.
-#[inline(always)]
-pub fn char_to_nuc_int(c: u8) -> i8 {
-    match c {
-        b'A' | b'a' => 0,
-        b'C' | b'c' => 1,
-        b'G' | b'g' => 2,
-        b'T' | b't' | b'U' | b'u' => 3,
-        _ => -1,
-    }
-}
-
-/// Probabilistic component base vector [f_A, f_C, f_G, f_T] for an IUPAC code.
-#[inline(always)]
-pub fn iupac_base_probabilities(c: u8) -> [f64; 4] {
-    match c {
-        b'A' | b'a' => [1.0, 0.0, 0.0, 0.0],
-        b'C' | b'c' => [0.0, 1.0, 0.0, 0.0],
-        b'G' | b'g' => [0.0, 0.0, 1.0, 0.0],
-        b'T' | b't' | b'U' | b'u' => [0.0, 0.0, 0.0, 1.0],
-        b'R' | b'r' => [0.5, 0.0, 0.5, 0.0],
-        b'Y' | b'y' => [0.0, 0.5, 0.0, 0.5],
-        b'S' | b's' => [0.0, 0.5, 0.5, 0.0],
-        b'W' | b'w' => [0.5, 0.0, 0.0, 0.5],
-        b'K' | b'k' => [0.0, 0.0, 0.5, 0.5],
-        b'M' | b'm' => [0.5, 0.5, 0.0, 0.0],
-        b'B' | b'b' => [0.0, 1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0],
-        b'D' | b'd' => [1.0 / 3.0, 0.0, 1.0 / 3.0, 1.0 / 3.0],
-        b'H' | b'h' => [1.0 / 3.0, 1.0 / 3.0, 0.0, 1.0 / 3.0],
-        b'V' | b'v' => [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0, 0.0],
-        _ => [0.25, 0.25, 0.25, 0.25],
-    }
-}
+// Canonical IUPAC alphabet lives in aeon-manifold (single source of truth);
+// re-exported here so existing `crate::tn93::*` call sites are unchanged.
+pub use aeon_manifold::encoding::{
+    char_to_iupac_mask, char_to_nuc_int, iupac_base_probabilities,
+    PURINE_MASK, PYRIMIDINE_MASK,
+};
 
 /// Computes analytical Tamura-Nei 93 (TN93) pairwise genetic distance.
 /// Resolves ambiguities to minimize distance (matching characters share bits).
