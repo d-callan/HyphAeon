@@ -153,67 +153,31 @@ pub struct Alignment {
 }
 
 impl Alignment {
-    /// Parses an aligned FASTA string and optional date extraction regex.
+    /// Parses an aligned FASTA string and extracts dates from headers.
+    ///
+    /// Tokenization and ragged-sequence padding delegate to
+    /// `aeon_manifold::fasta` (`PadToMax` mode); each sequence is then
+    /// dual-encoded to IUPAC bitmasks and integer states.
     pub fn from_fasta_str(fasta_content: &str) -> Result<Self, String> {
-        let mut headers = Vec::new();
-        let mut raw_seqs = Vec::new();
+        use aeon_manifold::fasta::{normalize_lengths, tokenize_fasta, ParseMode};
 
-        let mut current_header = None;
-        let mut current_seq = Vec::new();
+        let mut records = tokenize_fasta(fasta_content)
+            .map_err(|_| "No sequences found in FASTA content".to_string())?;
+        let seq_len = normalize_lengths(&mut records, ParseMode::PadToMax)?;
 
-        for line in fasta_content.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
+        let n = records.len();
+        let mut headers = Vec::with_capacity(n);
+        let mut encoded_bits = Vec::with_capacity(n);
+        let mut encoded_ints = Vec::with_capacity(n);
+        let mut dates = Vec::with_capacity(n);
+        let mut raw_seqs = Vec::with_capacity(n);
 
-            if trimmed.starts_with('>') {
-                if let Some(h) = current_header.take() {
-                    headers.push(h);
-                    raw_seqs.push(current_seq);
-                    current_seq = Vec::new();
-                }
-                let h = trimmed[1..]
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("")
-                    .to_string();
-                current_header = Some(h);
-            } else {
-                current_seq.extend_from_slice(trimmed.to_ascii_uppercase().as_bytes());
-            }
-        }
-
-        if let Some(h) = current_header {
-            headers.push(h);
-            raw_seqs.push(current_seq);
-        }
-
-        if headers.is_empty() {
-            return Err("No sequences found in FASTA content".to_string());
-        }
-
-        let seq_len = raw_seqs.iter().map(|s| s.len()).max().unwrap_or(0);
-
-        let mut encoded_bits = Vec::with_capacity(headers.len());
-        let mut encoded_ints = Vec::with_capacity(headers.len());
-        let mut dates = Vec::with_capacity(headers.len());
-
-        for (i, seq) in raw_seqs.iter_mut().enumerate() {
-            // Pad sequences to maximum length if ragged
-            if seq.len() < seq_len {
-                seq.resize(seq_len, b'-');
-            }
-
-            let bits: Vec<u8> = seq.iter().map(|&c| char_to_iupac_mask(c)).collect();
-            let ints: Vec<i8> = seq.iter().map(|&c| char_to_nuc_int(c)).collect();
-
-            encoded_bits.push(bits);
-            encoded_ints.push(ints);
-
-            // Attempt to parse date from header string
-            let d = parse_date_from_header(&headers[i]);
-            dates.push(d);
+        for rec in records {
+            encoded_bits.push(rec.seq.iter().map(|&c| char_to_iupac_mask(c)).collect());
+            encoded_ints.push(rec.seq.iter().map(|&c| char_to_nuc_int(c)).collect());
+            dates.push(parse_date_from_header(&rec.name));
+            headers.push(rec.name);
+            raw_seqs.push(rec.seq);
         }
 
         Ok(Self {

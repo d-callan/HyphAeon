@@ -10,63 +10,34 @@ pub fn encode_char(b: u8) -> u8 {
     aeon_manifold::encode_char(b)
 }
 
-/// Parses a FASTA format string into an Alignment struct
+/// Parses a FASTA format string into an Alignment struct.
+///
+/// Tokenization and the strict equal-length policy delegate to
+/// `aeon_manifold::fasta`; a header with no name token defaults to "taxon"
+/// (historical contract), and every sequence must match the first
+/// sequence's length.
 pub fn parse_fasta(fasta_str: &str) -> Result<Alignment, String> {
-    let mut taxa = Vec::new();
-    let mut sequences: Vec<Vec<u8>> = Vec::new();
-    let mut current_seq: Vec<u8> = Vec::new();
+    use aeon_manifold::fasta::{normalize_lengths, tokenize_fasta, ParseMode};
 
-    for line in fasta_str.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if trimmed.starts_with('>') {
-            if !current_seq.is_empty() {
-                sequences.push(current_seq);
-                current_seq = Vec::new();
+    let mut records =
+        tokenize_fasta(fasta_str).map_err(|_| "No sequences found in FASTA input".to_string())?;
+    let length = normalize_lengths(&mut records, ParseMode::Strict)?;
+
+    let taxa: Vec<String> = records
+        .iter()
+        .map(|r| {
+            if r.name.is_empty() {
+                "taxon".to_string()
+            } else {
+                r.name.clone()
             }
-            let header = trimmed[1..].trim().to_string();
-            // Take first token up to whitespace as canonical taxon name
-            let name = header
-                .split_whitespace()
-                .next()
-                .unwrap_or("taxon")
-                .to_string();
-            taxa.push(name);
-        } else {
-            for b in trimmed.bytes() {
-                if !b.is_ascii_whitespace() {
-                    current_seq.push(encode_char(b));
-                }
-            }
-        }
-    }
-    if !current_seq.is_empty() {
-        sequences.push(current_seq);
-    }
-
-    if taxa.is_empty() {
-        return Err("No sequences found in FASTA input".to_string());
-    }
-
-    let length = sequences[0].len();
-    for (i, seq) in sequences.iter().enumerate() {
-        if seq.len() != length {
-            return Err(format!(
-                "Sequence {} ('{}') has length {} but expected {}",
-                i,
-                taxa[i],
-                seq.len(),
-                length
-            ));
-        }
-    }
+        })
+        .collect();
 
     let num_taxa = taxa.len();
     let mut matrix = Vec::with_capacity(num_taxa * length);
-    for seq in sequences {
-        matrix.extend_from_slice(&seq);
+    for rec in &records {
+        matrix.extend(rec.seq.iter().map(|&b| encode_char(b)));
     }
 
     Ok(Alignment::new(taxa, length, matrix))

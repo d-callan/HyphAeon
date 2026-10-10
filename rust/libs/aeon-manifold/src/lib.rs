@@ -9,12 +9,14 @@
 //! - Order statistics: `percentile` (linear interpolation) and `median`.
 //! - Canonical IUPAC alphabet + encoding projections (`encoding` module,
 //!   re-exported at crate root).
+//! - Shared FASTA tokenizer with strict/pad length policy (`fasta` module).
 //! - Exact cyclic Jacobi eigensolver `symmetric_jacobi_eigh` for real symmetric
 //!   matrices (normalized graph Laplacians, Gram matrices).
 
 use std::f64::consts::{PI, SQRT_2};
 
 pub mod encoding;
+pub mod fasta;
 pub use encoding::*;
 
 /// 15-coefficient Lanczos approximation for ln(Gamma(z)) (g = 4.7421875).
