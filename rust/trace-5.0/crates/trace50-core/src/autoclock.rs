@@ -226,7 +226,10 @@ pub fn fit_clock_community(
     let (ci_mrca, fieller_status) =
         compute_fieller_mrca(lr.slope, d_mean, se_mu, se_d0, t_mean, df_eff, alpha);
 
-    let tmrca = if lr.slope.abs() > 1e-12 {
+    // Python contract: only a strictly positive rate yields a tMRCA
+    // estimate; a non-positive slope falls back to the earliest sample
+    // date rather than extrapolating a future origin.
+    let tmrca = if lr.slope > 1e-12 {
         t_mean - d_mean / lr.slope
     } else {
         min_date
@@ -299,8 +302,11 @@ pub fn optimize_fiedler_modularity(
     let mut best_q = -1e9;
     let mut best_k = 0;
 
-    let min_k = 1;
-    let max_k = if n > 1 { n - 1 } else { 0 };
+    // Children must each have >= min_size members, matching the Python
+    // contract (chronaeon.autoclock requires len(c0), len(c1) >= min_size
+    // or it refuses the bisection).
+    let min_k = min_size;
+    let max_k = n.saturating_sub(min_size);
 
     for k in min_k..=max_k {
         let mut k0_deg = 0.0;
@@ -392,9 +398,11 @@ pub fn recursive_autoclock_deconvolution(
         return vec![fit];
     }
 
+    // Adaptive bandwidth: 15th percentile of local subcommunity distances.
+    // Uses the canonical aeon-manifold percentile (numpy-linear
+    // interpolation), matching np.percentile(nonzero_d, 15) exactly.
     nonzero.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let p15_idx = ((nonzero.len() as f64) * 0.15) as usize;
-    let sigma = nonzero[p15_idx.min(nonzero.len() - 1)].max(0.005);
+    let sigma = aeon_manifold::percentile(&nonzero, 15.0).max(0.005);
 
     // Build affinity graph W
     let mut w = vec![0.0; n * n];
@@ -410,22 +418,25 @@ pub fn recursive_autoclock_deconvolution(
         }
     }
 
-    for &deg in &degrees {
-        if deg <= 1e-12 {
-            fit.stop_reason = "disconnected_graph".to_string();
-            return vec![fit];
-        }
+    // Python contract: only abort when EVERY node is disconnected;
+    // isolated taxa get d_inv_sqrt = 0 and stay in the spectrum as
+    // eigenvalue-1 singletons instead of killing the recursion.
+    if degrees.iter().all(|&d| d <= 1e-12) {
+        fit.stop_reason = "disconnected_graph".to_string();
+        return vec![fit];
     }
 
     // Normalized symmetric Laplacian L_sym = I - D^-1/2 W D^-1/2
+    let d_inv_sqrt: Vec<f64> = degrees
+        .iter()
+        .map(|&d| if d > 0.0 { 1.0 / d.sqrt() } else { 0.0 })
+        .collect();
     let mut l_sym = vec![0.0; n * n];
     for i in 0..n {
         l_sym[i * n + i] = 1.0;
-        let d_i_inv = 1.0 / degrees[i].sqrt();
         for j in 0..n {
             if i != j {
-                let d_j_inv = 1.0 / degrees[j].sqrt();
-                l_sym[i * n + j] = -d_i_inv * w[i * n + j] * d_j_inv;
+                l_sym[i * n + j] = -d_inv_sqrt[i] * w[i * n + j] * d_inv_sqrt[j];
             }
         }
     }
@@ -440,6 +451,14 @@ pub fn recursive_autoclock_deconvolution(
 
     // Fiedler vector is the column of evecs matching the 2nd-smallest eigenvalue
     let fiedler_col = eigh.eigenvalues.len() - 2;
+
+    // Homogeneity gate (Python: evals[1] > 0.999): a uniformly connected
+    // blob has lambda_2 ~ n/(n-1) and carries no community structure.
+    if eigh.eigenvalues[fiedler_col] > 0.999 {
+        fit.stop_reason = "homogeneous_spectral_manifold".to_string();
+        return vec![fit];
+    }
+
     let mut fiedler = vec![0.0; n];
     for i in 0..n {
         fiedler[i] = eigh.eigenvectors[i * n + fiedler_col];

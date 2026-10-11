@@ -207,19 +207,22 @@ def test_date_parsing_pinned_contract(fasta, expected, tmp_path):
 # Autoclock spectral deconvolution — per-engine partition goldens
 # ---------------------------------------------------------------------------
 
-# On identical (dates, D) inputs the two engines produce different terminal
-# partitions: they implement different split criteria (Rust: modularity-
-# optimized Cheeger cut + conductance gate; Python: its own cut heuristic).
-# Pinned so Phase-2 dedup work can't silently unify or drift either one.
-EXPECTED_PARTITION_RUST = [
-    frozenset({0, 1, 5, 6, 7}),
-    frozenset({2, 3, 4}),
-    frozenset({8, 9}),
-]
-EXPECTED_PARTITION_PYTHON = [
-    frozenset({0, 2, 4, 6, 7}),
-    frozenset({1, 3, 5, 8, 9}),
-]
+# Pinned partitions (P0.4): terminal leaf communities on demo_outbreak.fasta.
+# The two engines legitimately produce different partitions — they implement
+# different split criteria (Rust: modularity-optimized Cheeger cut +
+# conductance gate; Python: KMeans-2 + median fallback + Welch-z cohesive
+# gate). The test pins each engine's CURRENT partition so any drift is a
+# deliberate decision.
+# W11 note: the Rust partition was re-pinned after porting five contract
+# gaps (min_size on children, isolated-node tolerance, canonical percentile
+# for sigma, positive-mu tMRCA, lambda_2 homogeneity gate). The old {8,9}
+# dyad leaf violated the min_size=3 contract and is correctly absorbed.
+EXPECTED_PARTITION_RUST = frozenset(
+    [frozenset({0, 1, 5, 6}), frozenset({2, 3, 4}), frozenset({7, 8, 9})]
+)
+EXPECTED_PARTITION_PYTHON = frozenset(
+    [frozenset({0, 2, 4, 6, 7}), frozenset({1, 3, 5, 8, 9})]
+)
 
 
 def test_autoclock_partition_pinned_per_engine(tmp_path):
