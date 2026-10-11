@@ -18,6 +18,7 @@ use std::f64::consts::{PI, SQRT_2};
 
 pub mod encoding;
 pub mod fasta;
+pub mod stats;
 pub mod temporal;
 pub mod tn93;
 pub use encoding::*;

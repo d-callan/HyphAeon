@@ -12,6 +12,15 @@ Centralizing them here ensures all call sites use the same formula.
 import numpy as np
 from scipy.stats import chi2
 
+# Canonical engine: the same kernels implemented in aeon-manifold::stats
+# and exposed via the aeon_py bindings. When the extension is present it
+# is preferred so all deployments share one implementation; the scipy
+# formulas below remain as the zero-extra-dependency fallback.
+try:
+    import aeon_py
+except ImportError:
+    aeon_py = None
+
 
 def pvals_from_lrt_meme(lrts: np.ndarray) -> np.ndarray:
     """Convert LRTs to p-values using the MEME asymptotic mixture null.
@@ -24,6 +33,8 @@ def pvals_from_lrt_meme(lrts: np.ndarray) -> np.ndarray:
     This is the formula HyPhy MEME uses and the one HyphAeon's neural model
     is trained to mimic (training targets are MEME LRTs).
     """
+    if aeon_py is not None:
+        return np.asarray(aeon_py.pvals_from_lrt_meme(np.asarray(lrts, dtype=np.float64).tolist()))
     pvals = np.full(len(lrts), 2.0 / 3.0, dtype=np.float64)
     pos = lrts > 0.0
     if np.any(pos):
@@ -40,6 +51,8 @@ def pvals_from_lrt_self_liang(lrts: np.ndarray) -> np.ndarray:
     (single-parameter counterfactual tests). Not appropriate for per-site
     MEME-style p-values — use pvals_from_lrt_meme for those.
     """
+    if aeon_py is not None:
+        return np.asarray(aeon_py.pvals_from_lrt_self_liang(np.asarray(lrts, dtype=np.float64).tolist()))
     pvals = np.ones(len(lrts), dtype=np.float64)
     pos = lrts > 0.0
     if np.any(pos):
@@ -52,6 +65,8 @@ def benjamini_hochberg(pvals: np.ndarray) -> np.ndarray:
 
     Returns q-values clipped to [0, 1], same length as input.
     """
+    if aeon_py is not None:
+        return np.asarray(aeon_py.benjamini_hochberg(np.asarray(pvals, dtype=np.float64).tolist()))
     n = len(pvals)
     if n == 0:
         return np.array([], dtype=np.float64)
@@ -76,6 +91,8 @@ def cauchy_combination_p(pvals: np.ndarray) -> float:
     Cauchy combination: tan((0.5 - p) * pi) averaged, then back-transformed.
     Robust to dependency among the input p-values.
     """
+    if aeon_py is not None:
+        return float(aeon_py.cauchy_combination_p(np.asarray(pvals, dtype=np.float64).tolist()))
     if len(pvals) == 0:
         return 1.0
     p_clipped = np.clip(pvals, 1e-15, 1.0 - 1e-15)

@@ -101,6 +101,30 @@ fn tn93_cross_distance_matrix(seqs_a: Vec<Vec<u8>>, seqs_b: Vec<Vec<u8>>) -> Vec
     aeon_manifold::tn93::cross_distance_matrix(&encode(&seqs_a), &encode(&seqs_b))
 }
 
+/// MEME mixture-null p-values: 1/3·δ(0) + 2/3·(0.45·χ²₁ + 0.55·χ²₂).
+#[pyfunction]
+fn pvals_from_lrt_meme(lrts: Vec<f64>) -> Vec<f64> {
+    aeon_manifold::stats::pvals_from_lrt_meme(&lrts)
+}
+
+/// Self & Liang (1987) mixture-null p-values: 0.5·δ(0) + 0.5·χ²₁.
+#[pyfunction]
+fn pvals_from_lrt_self_liang(lrts: Vec<f64>) -> Vec<f64> {
+    aeon_manifold::stats::pvals_from_lrt_self_liang(&lrts)
+}
+
+/// Benjamini-Hochberg FDR q-values, clipped to [0, 1].
+#[pyfunction]
+fn benjamini_hochberg(pvals: Vec<f64>) -> Vec<f64> {
+    aeon_manifold::stats::benjamini_hochberg(&pvals)
+}
+
+/// Cauchy Combination Test omnibus p-value (empty input → 1.0).
+#[pyfunction]
+fn cauchy_combination_p(pvals: Vec<f64>) -> f64 {
+    aeon_manifold::stats::cauchy_combination_p(&pvals)
+}
+
 #[pymodule]
 fn aeon_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(percentile, m)?)?;
@@ -112,5 +136,9 @@ fn aeon_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(fasta_normalize_lengths, m)?)?;
     m.add_function(wrap_pyfunction!(tn93_distance_matrix, m)?)?;
     m.add_function(wrap_pyfunction!(tn93_cross_distance_matrix, m)?)?;
+    m.add_function(wrap_pyfunction!(pvals_from_lrt_meme, m)?)?;
+    m.add_function(wrap_pyfunction!(pvals_from_lrt_self_liang, m)?)?;
+    m.add_function(wrap_pyfunction!(benjamini_hochberg, m)?)?;
+    m.add_function(wrap_pyfunction!(cauchy_combination_p, m)?)?;
     Ok(())
 }

@@ -23,6 +23,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import aeon_py
+
 RUST_ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = RUST_ROOT / "tests" / "fixtures"
 REPO_ROOT = RUST_ROOT.parent
@@ -223,6 +225,56 @@ EXPECTED_PARTITION_RUST = frozenset(
 EXPECTED_PARTITION_PYTHON = frozenset(
     [frozenset({0, 2, 4, 6, 7}), frozenset({1, 3, 5, 8, 9})]
 )
+
+
+def test_stats_kernels_parity():
+    """W12: aeon-manifold stats kernels must match the scipy formulas.
+
+    aeon_core.stats prefers aeon_py and falls back to the scipy
+    implementation; this pins their agreement on edge + interior cases.
+    """
+    from scipy.stats import chi2
+
+    lrts = np.array([0.0, -0.5, 1e-4, 1.0, 3.8415, 25.0])
+
+    # MEME mixture null: 1/3 delta(0) + 2/3 (0.45 chi2_1 + 0.55 chi2_2)
+    ref_meme = np.full(len(lrts), 2.0 / 3.0)
+    pos = lrts > 0.0
+    ref_meme[pos] = (2.0 / 3.0) * (
+        0.45 * chi2.sf(lrts[pos], df=1) + 0.55 * chi2.sf(lrts[pos], df=2)
+    )
+    np.testing.assert_allclose(
+        aeon_py.pvals_from_lrt_meme(lrts.tolist()), ref_meme, rtol=1e-12
+    )
+
+    # Self & Liang null: 0.5 delta(0) + 0.5 chi2_1
+    ref_sl = np.ones(len(lrts))
+    ref_sl[pos] = 0.5 * chi2.sf(lrts[pos], df=1)
+    np.testing.assert_allclose(
+        aeon_py.pvals_from_lrt_self_liang(lrts.tolist()), ref_sl, rtol=1e-12
+    )
+
+    # BH on a non-trivial ranking (duplicate p-values exercise ties)
+    pv = np.array([0.01, 0.04, 0.03, 0.002, 0.04, 1.0])
+    order = np.argsort(pv)
+    sorted_p = pv[order]
+    q_sorted = np.minimum.accumulate(
+        (sorted_p * len(pv) / (np.arange(len(pv)) + 1))[::-1]
+    )[::-1]
+    ref_bh = np.empty_like(pv)
+    ref_bh[order] = np.clip(q_sorted, 0.0, 1.0)
+    np.testing.assert_allclose(
+        aeon_py.benjamini_hochberg(pv.tolist()), ref_bh, atol=1e-15
+    )
+
+    # Cauchy combination vs direct formula
+    p_clip = np.clip(pv, 1e-15, 1.0 - 1e-15)
+    ref_cct = float(
+        np.clip(0.5 - np.arctan(np.mean(np.tan((0.5 - p_clip) * np.pi))) / np.pi,
+                1e-15, 1.0)
+    )
+    assert abs(aeon_py.cauchy_combination_p(pv.tolist()) - ref_cct) < 1e-15
+    assert aeon_py.cauchy_combination_p([]) == 1.0
 
 
 def test_autoclock_partition_pinned_per_engine(tmp_path):
