@@ -4,6 +4,7 @@ version = "5.0.0"
 edition = "2021"
 authors = ["Sergei L. Kosakovsky Pond", "Antigravity AI Engine"]
 description = "WebAssembly client-side engine for TRACE-5.0"
+publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]

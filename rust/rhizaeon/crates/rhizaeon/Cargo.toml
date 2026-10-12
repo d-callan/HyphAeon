@@ -6,6 +6,7 @@ authors = ["Sergei L. Kosakovsky Pond", "Antigravity AI Engine"]
 description = "High-performance, zero-dependency algorithmic kernel + CLI for RhizAeon PA-FF (v2.1)"
 license = "MIT"
 repository = "https://github.com/veg/HyphAeon"
+homepage = "https://github.com/veg/HyphAeon"
 
 [dependencies]
 aeon-manifold.workspace = true

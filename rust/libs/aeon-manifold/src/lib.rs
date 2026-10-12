@@ -473,7 +473,7 @@ pub fn symmetric_jacobi_eigh(a_flat: &[f64], k: usize) -> Eigendecomposition {
 /// Rank convention matches `numpy.percentile`: rank = pct/100 * (n - 1),
 /// linear interpolation between the floor and ceil order statistics.
 /// Returns NaN for empty input. Callers must sort first — this is the
-/// contract historically held by `trace50_core::chin::percentile`.
+/// contract historically held by `trace50::chin::percentile`.
 pub fn percentile(sorted: &[f64], pct: f64) -> f64 {
     debug_assert!(
         sorted.windows(2).all(|w| w[0] <= w[1]),

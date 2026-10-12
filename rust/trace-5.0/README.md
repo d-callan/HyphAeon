@@ -69,7 +69,7 @@ TRACE-5.0 is implemented in a pure, modern Rust workspace with zero C dependenci
 trace-5.0/
 ├── Cargo.toml                     # Workspace root manifest
 ├── crates/
-│   ├── trace50-core/              # Algorithmic kernel (zero C-dependencies, pure Rust, WASM-safe)
+│   ├── trace50/                   # Algorithmic kernel + CLI (zero C-dependencies, pure Rust, WASM-safe)
 │   │   ├── src/
 │   │   │   ├── math.rs            # Lanczos ln_gamma, incomplete upper gamma gammaincc, Poisson CDF, Jacobi eigensolver
 │   │   │   ├── tn93.rs            # Bitmask IUPAC ambiguous Tamura-Nei 93 pairwise distance & FASTA parser
@@ -79,11 +79,12 @@ trace-5.0/
 │   │   │   ├── chin.rs            # Macro-epidemic quadratic scaling law inversion & Borel branching decay
 │   │   │   ├── network.rs         # Connected components, giant component tracking & Borel cluster decay
 │   │   │   ├── visualization.rs   # Comprehensive Visualization Dossier JSON schema
-│   │   │   └── pipeline.rs        # End-to-end execution orchestrator
+│   │   │   ├── pipeline.rs        # End-to-end execution orchestrator
+│   │   │   └── bin/
+│   │   │       ├── trace50.rs     # Native multi-platform CLI binary (`cli` feature, on by default)
+│   │   │       └── conformance.rs # Rust-side conformance harness binary
 │   │   └── tests/
 │   │       └── test_pipeline.rs   # Automated integration tests
-│   ├── trace50-cli/               # Native multi-platform CLI binary (`trace50`)
-│   │   └── src/main.rs            # Command-line interface with rich scorecard reporting
 │   └── trace50-wasm/              # WebAssembly package for browsers, Node.js, and Observable Framework
 │       ├── src/lib.rs             # wasm-bindgen bindings and JS Object serialization
 │       ├── pkg/                   # Compiled WASM distribution (350 KB)

@@ -6,6 +6,7 @@ authors = ["Sergei L. Kosakovsky Pond", "Antigravity AI Engine"]
 description = "High-performance algorithmic kernel + CLI for TRACE-5.0: Dynamic Molecular Surveillance of Viral Transmission Networks"
 license = "MIT"
 repository = "https://github.com/veg/HyphAeon"
+homepage = "https://github.com/veg/HyphAeon"
 
 [dependencies]
 aeon-manifold.workspace = true

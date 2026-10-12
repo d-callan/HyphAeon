@@ -1,4 +1,4 @@
-"""Cross-language conformance tests: Rust trace50-core vs Python aeon-core/chronaeon.
+"""Cross-language conformance tests: Rust trace50 vs Python aeon-core/chronaeon.
 
 A small Rust driver (`cargo build --release --bin conformance`) dumps the
 pipeline's intermediate quantities — parsed dates, the TN93 distance matrix,

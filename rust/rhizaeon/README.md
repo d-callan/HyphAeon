@@ -235,7 +235,7 @@ rhizaeon-code/
 ├── AGENT.md                      # Machine-readable specification for AI agents
 ├── LICENSE                       # MIT License
 ├── crates/
-│   ├── rhizaeon-core/            # Core PA-FF v2.1 algorithmic kernel
+│   ├── rhizaeon/                 # Core PA-FF v2.1 algorithmic kernel + CLI
 │   │   ├── src/
 │   │   │   ├── engine.rs         # Scanner pipeline & candidate coordination
 │   │   │   ├── attention.rs      # Continuous Tree-RoPE cross-attention
@@ -245,10 +245,12 @@ rhizaeon-code/
 │   │   │   ├── due_diligence.rs  # Fisher's test & cycle adjudication
 │   │   │   ├── fasta.rs          # Fast alignment parser & IUPAC validator
 │   │   │   └── visualization.rs  # Interactive HTML & dossier generator
+│   │   ├── bin/
+│   │   │   ├── rhizaeon.rs       # Standalone CLI (`cli` feature, on by default)
+│   │   │   └── export_figure1_data.rs
 │   │   └── tests/
 │   │       ├── empirical_benchmarks.rs
 │   │       └── simulated_scenarios.rs
-│   ├── rhizaeon-cli/             # Standalone CLI binary source
 │   └── rhizaeon-wasm/            # WebAssembly bindings & web package
 └── tests/
     ├── empirical/                # Real-world benchmark alignments

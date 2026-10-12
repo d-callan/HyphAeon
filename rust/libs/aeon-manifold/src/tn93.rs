@@ -6,7 +6,8 @@
 //! counted over the union of both sequences' masks per valid site — an
 //! ambiguity-aware approximation of HyPhy's marginal frequencies, not a
 //! bit-exact port of the tn93 binary. This module is the canonical Rust
-//! implementation; `trace50-core` re-exports it and `aeon-py` binds it.
+//! implementation; `trace50` re-exports it and the `aeon_core._native`
+//! extension (aeon-core/native) binds it.
 
 use crate::encoding::{PYRIMIDINE_MASK, PURINE_MASK};
 
@@ -15,7 +16,7 @@ use crate::encoding::{PYRIMIDINE_MASK, PURINE_MASK};
 ///
 /// Pairs with no valid comparison sites return `0.0` — the historical
 /// trace50 kernel contract. Consumers that need to distinguish "identical"
-/// from "unresolvable" (e.g. `aeon-py` -> `dataset.py` max-distance
+/// from "unresolvable" (e.g. `aeon_core._native` -> `dataset.py` max-distance
 /// imputation) should use the `_nan` matrix variants instead.
 pub fn compute_pairwise_tn93(seq_a_bits: &[u8], seq_b_bits: &[u8]) -> f64 {
     pairwise_inner(seq_a_bits, seq_b_bits).unwrap_or(0.0)

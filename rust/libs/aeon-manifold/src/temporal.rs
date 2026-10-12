@@ -1,6 +1,6 @@
 //! Date extraction from sequence headers.
 //!
-//! Contract (canonical Rust semantics, formerly `trace50_core::tn93`):
+//! Contract (canonical Rust semantics, formerly `trace50::tn93`):
 //! the header is split on `|`, `_`, `/`, and space; tokens are examined
 //! left-to-right and the FIRST resolvable token wins.
 //!

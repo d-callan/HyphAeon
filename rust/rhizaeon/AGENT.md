@@ -111,7 +111,7 @@ To maintain $O(N \cdot K \cdot L)$ throughput, the screener applies strict zero-
 
 ```
 crates/
-├── rhizaeon-core/             # High-performance algorithmic engine
+├── rhizaeon/                  # High-performance algorithmic engine + CLI
 │   ├── src/
 │   │   ├── lib.rs             # Public API exports: RhizAeonEngine, Alignment, Event
 │   │   ├── engine.rs          # Main driver: pipeline orchestration & event deduplication
@@ -134,8 +134,9 @@ crates/
 │   └── tests/
 │       ├── empirical_benchmarks.rs                     # Integration test on KAL-153 & mtDNA
 │       └── simulated_scenarios.rs                      # Synthetic crossover, cassette, nulls
-├── rhizaeon-cli/              # CLI executable
-│   └── src/main.rs            # Clap-based CLI interface
+│   └── src/bin/
+│       ├── rhizaeon.rs             # Clap-based CLI interface (`cli` feature, on by default)
+│       └── export_figure1_data.rs  # Benchmark data export binary
 └── rhizaeon-wasm/             # WebAssembly client-side library
     └── src/lib.rs             # wasm-bindgen bindings: scan_alignment, generate_dashboard
 tests/
@@ -151,7 +152,7 @@ tests/
 
 ## 4. AST Rules & Invariants for Autonomous Modifications
 
-When editing or extending `crates/rhizaeon-core`:
+When editing or extending `crates/rhizaeon`:
 
 1. **Inner Loop Allocation Prohibition:**
    - Inner loops over genomic coordinates $u \in [0, L)$ must perform **zero heap allocations** (`Vec::new`, `String`, etc.). All buffers must be pre-allocated or circular (`[f64; 50]`).
