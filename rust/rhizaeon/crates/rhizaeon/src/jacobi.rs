@@ -2,5 +2,5 @@
 ///
 /// The implementation lives in the shared workspace crate `aeon-manifold`;
 /// this module re-exports it so `crate::jacobi::symmetric_jacobi_eigh` and
-/// `rhizaeon_core::jacobi::symmetric_jacobi_eigh` keep resolving.
+/// `rhizaeon::jacobi::symmetric_jacobi_eigh` keep resolving.
 pub use aeon_manifold::{symmetric_jacobi_eigh, Eigendecomposition};

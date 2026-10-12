@@ -8,7 +8,7 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
-use trace50_core::{run_trace50, Alignment, Trace50Config};
+use trace50::{run_trace50, Alignment, Trace50Config};
 
 #[derive(Parser, Debug)]
 #[command(

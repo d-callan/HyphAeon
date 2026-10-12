@@ -1,9 +1,9 @@
 use clap::Parser;
-use rhizaeon_core::fasta::parse_fasta;
-use rhizaeon_core::jacobi::symmetric_jacobi_eigh;
-use rhizaeon_core::landmarks::{compute_pairwise_distance, jukes_cantor_distance};
-use rhizaeon_core::types::Alignment;
-use rhizaeon_core::RhizAeonEngine;
+use rhizaeon::fasta::parse_fasta;
+use rhizaeon::jacobi::symmetric_jacobi_eigh;
+use rhizaeon::landmarks::{compute_pairwise_distance, jukes_cantor_distance};
+use rhizaeon::types::Alignment;
+use rhizaeon::RhizAeonEngine;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;

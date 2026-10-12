@@ -1,5 +1,5 @@
 use clap::Parser;
-use rhizaeon_core::{
+use rhizaeon::{
     generate_standalone_html, generate_visualization_dossier, parse_fasta, RhizAeonEngine,
 };
 use std::fs;

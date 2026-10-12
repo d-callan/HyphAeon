@@ -1,4 +1,4 @@
-use trace50_core::{run_trace50, Alignment, Trace50Config};
+use trace50::{run_trace50, Alignment, Trace50Config};
 
 #[test]
 fn test_end_to_end_pipeline() {

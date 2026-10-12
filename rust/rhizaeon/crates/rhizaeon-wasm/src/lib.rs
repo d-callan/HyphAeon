@@ -1,4 +1,4 @@
-use rhizaeon_core::{parse_fasta, RhizAeonEngine};
+use rhizaeon::{parse_fasta, RhizAeonEngine};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -61,7 +61,7 @@ pub fn scan_fasta_json(
 #[wasm_bindgen]
 pub fn count_informative_sites(fasta_str: &str) -> Result<usize, JsValue> {
     let aln = parse_fasta(fasta_str).map_err(|e| JsValue::from_str(&e))?;
-    Ok(rhizaeon_core::fasta::count_parsimony_informative_sites(
+    Ok(rhizaeon::fasta::count_parsimony_informative_sites(
         &aln,
     ))
 }
@@ -89,7 +89,7 @@ pub fn scan_fasta_dossier(
     let end_time = js_sys::Date::now();
     res.run_time_ms = end_time - start_time;
 
-    let dossier = rhizaeon_core::generate_visualization_dossier(&aln, &res, title.as_deref());
+    let dossier = rhizaeon::generate_visualization_dossier(&aln, &res, title.as_deref());
     serde_wasm_bindgen::to_value(&dossier).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
@@ -116,7 +116,7 @@ pub fn scan_fasta_dossier_json(
     let end_time = js_sys::Date::now();
     res.run_time_ms = end_time - start_time;
 
-    let dossier = rhizaeon_core::generate_visualization_dossier(&aln, &res, title.as_deref());
+    let dossier = rhizaeon::generate_visualization_dossier(&aln, &res, title.as_deref());
     serde_json::to_string_pretty(&dossier).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
@@ -143,6 +143,6 @@ pub fn scan_fasta_html(
     let end_time = js_sys::Date::now();
     res.run_time_ms = end_time - start_time;
 
-    let dossier = rhizaeon_core::generate_visualization_dossier(&aln, &res, title.as_deref());
-    rhizaeon_core::generate_standalone_html(&dossier).map_err(|e| JsValue::from_str(&e))
+    let dossier = rhizaeon::generate_visualization_dossier(&aln, &res, title.as_deref());
+    rhizaeon::generate_standalone_html(&dossier).map_err(|e| JsValue::from_str(&e))
 }

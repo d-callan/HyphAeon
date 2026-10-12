@@ -9,7 +9,7 @@ description = "WebAssembly client-side engine for RhizAeon PA-FF (v2.1)"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-rhizaeon-core.workspace = true
+rhizaeon.workspace = true
 wasm-bindgen.workspace = true
 js-sys.workspace = true
 serde-wasm-bindgen.workspace = true

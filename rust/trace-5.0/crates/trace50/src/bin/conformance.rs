@@ -8,8 +8,8 @@
 use std::fs;
 
 use serde::Serialize;
-use trace50_core::autoclock::recursive_autoclock_deconvolution;
-use trace50_core::tn93::Alignment;
+use trace50::autoclock::recursive_autoclock_deconvolution;
+use trace50::tn93::Alignment;
 
 #[derive(Serialize)]
 struct CommunityOut {

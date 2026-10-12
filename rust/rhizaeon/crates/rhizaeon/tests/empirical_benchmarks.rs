@@ -1,4 +1,4 @@
-use rhizaeon_core::{parse_fasta, RhizAeonEngine};
+use rhizaeon::{parse_fasta, RhizAeonEngine};
 use std::path::Path;
 
 #[test]

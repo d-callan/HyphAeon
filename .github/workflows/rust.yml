@@ -34,7 +34,13 @@ jobs:
       - name: cargo test --workspace
         run: cargo test --workspace
       - name: cargo build --release (CLI binaries)
-        run: cargo build --release -p rhizaeon-cli -p trace50-cli
+        run: cargo build --release -p rhizaeon -p trace50
+      - name: verify wasm dep graph stays clap-free
+        run: |
+          for p in rhizaeon-wasm trace50-wasm; do
+            cargo tree -p "$p" -e normal | grep -q '^.*clap' && { echo "clap leaked into $p"; exit 1; }
+          done
+          echo "wasm dep trees are clap-free"
 
   wasm:
     name: wasm-pack build --target web

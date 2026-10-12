@@ -1,4 +1,4 @@
-use rhizaeon_core::{parse_fasta, RhizAeonEngine};
+use rhizaeon::{parse_fasta, RhizAeonEngine};
 
 #[test]
 fn test_synthetic_crossover() {
@@ -101,7 +101,7 @@ fn test_strictly_clonal_monomorphic_null() {
 
 #[test]
 fn test_bacterial_snp_compression_scenario() {
-    use rhizaeon_core::fasta::extract_informative_snp_alignment;
+    use rhizaeon::fasta::extract_informative_snp_alignment;
 
     // Simulate 60,000 bp bacterial chromosome with sparse polymorphic sites (every 100 bp)
     // Clade 1: P1_1, P1_2 carry 'T'

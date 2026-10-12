@@ -3,8 +3,8 @@
 //! Exposes the complete molecular transmission network surveillance engine
 //! directly to Web browsers, Observable Framework, D3.js dashboards, and Node.js.
 
-use trace50_core::tn93::char_to_iupac_mask;
-use trace50_core::{
+use trace50::tn93::char_to_iupac_mask;
+use trace50::{
     compute_pairwise_tn93, run_trace50, run_trace50_json, run_trace50_json_with_progress,
     Alignment, DannoEstimator, Trace50Config,
 };
@@ -123,7 +123,7 @@ pub fn run_chin_bayesian_mcmc(
     phi_max: f64,
     seed: u32,
 ) -> Result<JsValue, JsValue> {
-    let chin = trace50_core::ChinEstimator::new(1.5);
+    let chin = trace50::ChinEstimator::new(1.5);
     let res = chin
         .run_joint_bayesian_monte_carlo(
             n_samples,

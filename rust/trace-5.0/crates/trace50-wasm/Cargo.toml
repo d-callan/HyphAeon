@@ -9,7 +9,7 @@ description = "WebAssembly client-side engine for TRACE-5.0"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-trace50-core.workspace = true
+trace50.workspace = true
 wasm-bindgen.workspace = true
 js-sys.workspace = true
 serde-wasm-bindgen.workspace = true

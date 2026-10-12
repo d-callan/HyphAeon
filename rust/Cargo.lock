@@ -378,21 +378,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "rhizaeon-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "rayon",
- "rhizaeon-core",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "rhizaeon-core"
+name = "rhizaeon"
 version = "0.1.0"
 dependencies = [
  "aeon-manifold",
+ "clap",
+ "rayon",
  "serde",
  "serde_json",
 ]
@@ -403,7 +394,7 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
- "rhizaeon-core",
+ "rhizaeon",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
@@ -511,20 +502,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 
 [[package]]
-name = "trace50-cli"
-version = "5.0.0"
-dependencies = [
- "clap",
- "serde",
- "serde_json",
- "trace50-core",
-]
-
-[[package]]
-name = "trace50-core"
+name = "trace50"
 version = "5.0.0"
 dependencies = [
  "aeon-manifold",
+ "clap",
  "rayon",
  "serde",
  "serde_json",
@@ -539,7 +521,7 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
- "trace50-core",
+ "trace50",
  "wasm-bindgen",
 ]
 
