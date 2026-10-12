@@ -9,7 +9,7 @@
 //! implementation; `trace50` re-exports it and the `aeon_core._native`
 //! extension (aeon-core/native) binds it.
 
-use crate::encoding::{PYRIMIDINE_MASK, PURINE_MASK};
+use crate::encoding::{PURINE_MASK, PYRIMIDINE_MASK};
 
 /// Computes analytical Tamura-Nei 93 (TN93) pairwise genetic distance.
 /// Resolves ambiguities to minimize distance (matching characters share bits).
@@ -161,8 +161,7 @@ fn cross_distance_matrix_impl(a: &[Vec<u8>], b: &[Vec<u8>], unresolvable: f64) -
     let mut matrix = vec![0.0; n * m];
     for i in 0..n {
         for j in 0..m {
-            matrix[i * m + j] =
-                pairwise_inner(&a[i], &b[j]).unwrap_or(unresolvable);
+            matrix[i * m + j] = pairwise_inner(&a[i], &b[j]).unwrap_or(unresolvable);
         }
     }
     matrix

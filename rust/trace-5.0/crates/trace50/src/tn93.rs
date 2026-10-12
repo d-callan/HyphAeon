@@ -6,8 +6,7 @@ use serde::{Deserialize, Serialize};
 // (single source of truth); re-exported here so existing `crate::tn93::*`
 // call sites are unchanged.
 pub use aeon_manifold::encoding::{
-    char_to_iupac_mask, char_to_nuc_int, iupac_base_probabilities,
-    PURINE_MASK, PYRIMIDINE_MASK,
+    char_to_iupac_mask, char_to_nuc_int, iupac_base_probabilities, PURINE_MASK, PYRIMIDINE_MASK,
 };
 pub use aeon_manifold::temporal::parse_date_from_header;
 pub use aeon_manifold::tn93::compute_pairwise_tn93;
@@ -184,7 +183,7 @@ mod tests {
         assert_eq!(char_to_iupac_mask(b'D'), 0b1101); // A|G|T
         assert_eq!(char_to_iupac_mask(b'H'), 0b1011); // A|C|T
         assert_eq!(char_to_iupac_mask(b'V'), 0b0111); // A|C|G
-        // N and unknowns/gaps map to 0 (skipped in valid overlap)
+                                                      // N and unknowns/gaps map to 0 (skipped in valid overlap)
         assert_eq!(char_to_iupac_mask(b'N'), 0);
         assert_eq!(char_to_iupac_mask(b'-'), 0);
         assert_eq!(char_to_iupac_mask(b'?'), 0);
@@ -234,7 +233,10 @@ mod tests {
     fn test_from_fasta_str_basic() {
         let aln = Alignment::from_fasta_str(">a|2001\nACGT\n>b|2002\nTGCA\n").unwrap();
         assert_eq!(aln.num_sequences(), 2);
-        assert_eq!(aln.headers, vec!["a|2001".to_string(), "b|2002".to_string()]);
+        assert_eq!(
+            aln.headers,
+            vec!["a|2001".to_string(), "b|2002".to_string()]
+        );
         assert_eq!(aln.dates, vec![2001.0, 2002.0]);
         assert_eq!(aln.seq_len, 4);
     }

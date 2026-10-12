@@ -134,10 +134,7 @@ mod tests {
                 assert_eq!(p, [0.25; 4], "uniform probs for {b}");
             } else {
                 let k = m.count_ones() as f64;
-                for (i, &bit) in [0b0001u8, 0b0010, 0b0100, 0b1000]
-                    .iter()
-                    .enumerate()
-                {
+                for (i, &bit) in [0b0001u8, 0b0010, 0b0100, 0b1000].iter().enumerate() {
                     let want = if m & bit != 0 { 1.0 / k } else { 0.0 };
                     assert_eq!(p[i], want, "prob[{i}] for {b}");
                 }

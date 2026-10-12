@@ -50,11 +50,7 @@ pub fn tokenize_fasta(input: &str) -> Result<Vec<FastaRecord>, String> {
             if let Some(rec) = current.take() {
                 records.push(rec);
             }
-            let name = rest
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .to_string();
+            let name = rest.split_whitespace().next().unwrap_or("").to_string();
             current = Some(FastaRecord {
                 name,
                 seq: Vec::new(),
@@ -82,10 +78,7 @@ pub fn tokenize_fasta(input: &str) -> Result<Vec<FastaRecord>, String> {
 ///
 /// `Strict` uses the FIRST record's length as the expected value and reports
 /// errors in the historical rhizaeon message format.
-pub fn normalize_lengths(
-    records: &mut [FastaRecord],
-    mode: ParseMode,
-) -> Result<usize, String> {
+pub fn normalize_lengths(records: &mut [FastaRecord], mode: ParseMode) -> Result<usize, String> {
     debug_assert!(!records.is_empty());
     match mode {
         ParseMode::Strict => {
@@ -144,10 +137,7 @@ mod tests {
     fn test_strict_ragged_error_message() {
         let mut recs = tokenize_fasta(">a\nACGT\n>b\nACG\n").unwrap();
         let err = normalize_lengths(&mut recs, ParseMode::Strict).unwrap_err();
-        assert_eq!(
-            err,
-            "Sequence 1 ('b') has length 3 but expected 4"
-        );
+        assert_eq!(err, "Sequence 1 ('b') has length 3 but expected 4");
     }
 
     #[test]

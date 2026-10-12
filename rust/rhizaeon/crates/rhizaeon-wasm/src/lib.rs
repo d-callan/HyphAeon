@@ -61,9 +61,7 @@ pub fn scan_fasta_json(
 #[wasm_bindgen]
 pub fn count_informative_sites(fasta_str: &str) -> Result<usize, JsValue> {
     let aln = parse_fasta(fasta_str).map_err(|e| JsValue::from_str(&e))?;
-    Ok(rhizaeon::fasta::count_parsimony_informative_sites(
-        &aln,
-    ))
+    Ok(rhizaeon::fasta::count_parsimony_informative_sites(&aln))
 }
 
 /// Scans a FASTA string and returns a rich visualization dossier as a JS Object payload

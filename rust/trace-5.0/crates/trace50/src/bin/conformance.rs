@@ -67,9 +67,9 @@ fn main() {
         &dates_raw,
         &d_matrix,
         n,
-        3,    // min_cluster_size (pipeline default)
-        10,   // max_recursion_depth (pipeline default)
-        0,    // depth
+        3,  // min_cluster_size (pipeline default)
+        10, // max_recursion_depth (pipeline default)
+        0,  // depth
         "root",
         0.65, // conductance_cut (pipeline value)
     );

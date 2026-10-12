@@ -36,7 +36,13 @@ pub fn pvals_from_lrt_meme(lrts: &[f64]) -> Vec<f64> {
 /// NaN LRTs take the point-mass branch, matching `pos = lrts > 0.0`.
 pub fn pvals_from_lrt_self_liang(lrts: &[f64]) -> Vec<f64> {
     lrts.iter()
-        .map(|&l| if !(l > 0.0) { 1.0 } else { 0.5 * chi2_sf(l, 1.0) })
+        .map(|&l| {
+            if !(l > 0.0) {
+                1.0
+            } else {
+                0.5 * chi2_sf(l, 1.0)
+            }
+        })
         .collect()
 }
 
@@ -117,8 +123,7 @@ mod tests {
     fn meme_positive_tail() {
         // chi2.sf(1.0, df=1) = 0.3173105078629142, df=2 = 0.6065306597126334
         let p = pvals_from_lrt_meme(&[1.0]);
-        let expected =
-            (2.0 / 3.0) * (0.45 * 0.3173105078629142 + 0.55 * 0.6065306597126334);
+        let expected = (2.0 / 3.0) * (0.45 * 0.3173105078629142 + 0.55 * 0.6065306597126334);
         assert!((p[0] - expected).abs() < 1e-12, "got {}", p[0]);
     }
 
