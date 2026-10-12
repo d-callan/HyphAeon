@@ -12,6 +12,19 @@ reachable by Rust's first-token scan) tight tolerances are used; where they
 diverge (saturation ceilings, decimal-year regex coverage, autoclock split
 criteria) each engine's current output is pinned as a golden so any drift —
 intentional or accidental — fails loudly during the Phase-2 refactor.
+
+Known intentional divergences (audited, NOT parity bugs — do not "fix"):
+  * Rust fit_clock_community penalizes all degrees of freedom by the
+    Bartlett effective sample size (n_eff - 2); Python fit_clock uses n - 2.
+    se_mu / ci_mu / ci_mrca therefore differ systematically; only the
+    terminal partition is pinned, never the fit statistics.
+  * Operational tier taxonomies differ: Rust uses 4 tiers with relative
+    horizons (max_date - 6 / - 4 yr), Python classify uses 5 tiers with
+    fixed horizons. fieller_status vocabularies partially overlap.
+  * For n < 3, Rust reports the real mean_pairwise_dist / time_span_years;
+    Python fit_clock returns zeros for mean_dist / max_dist / span.
+  * Cohesive stopping: Rust uses modularity delta + conductance cut;
+    Python uses a Welch-z test on child clock fits (documented below).
 """
 
 import json
@@ -134,6 +147,33 @@ def test_tn93_saturation_unified(tmp_path):
     assert abs(float(py_mat[0, 1]) - rust_mat[0, 1]) < 1e-6, (
         f"python no longer unified with rust kernel: {py_mat[0, 1]}"
     )
+
+
+def test_tn93_unresolvable_pairs_imputed():
+    """Zero-valid-site pairs impute to max distance, never 0 (identical).
+
+    The aeon_py binding returns NaN for pairs with no valid comparison
+    sites (all-N/gap sequences); dataset.py must impute them to
+    max(1.0, max observed) on both the NxN and NxM paths. Previously the
+    Rust path silently fused incomparable taxa as identical (d=0.0).
+    """
+    from aeon_core.dataset import (
+        compute_tn93_cross_distance_matrix,
+        compute_tn93_distance_matrix,
+    )
+
+    seq_dict = {"a": "ACGTACGT", "b": "ACGTTCGT", "bad": "NNNNNNNN"}
+    taxa = ["a", "b", "bad"]
+
+    mat = compute_tn93_distance_matrix(seq_dict, taxa)
+    assert np.isfinite(mat).all(), "imputation left NaN in distance matrix"
+    assert mat[0, 1] > 0.0, "a-b should be a real positive distance"
+    assert mat[0, 2] >= 1.0 and mat[2, 0] >= 1.0
+    assert mat[1, 2] >= 1.0 and mat[2, 1] >= 1.0
+
+    cross = compute_tn93_cross_distance_matrix(seq_dict, ["a", "bad"], ["a"])
+    assert cross[0, 0] == 0.0  # self-pair
+    assert cross[1, 0] >= 1.0  # unresolvable -> imputed max
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +315,48 @@ def test_stats_kernels_parity():
     )
     assert abs(aeon_py.cauchy_combination_p(pv.tolist()) - ref_cct) < 1e-15
     assert aeon_py.cauchy_combination_p([]) == 1.0
+
+
+def test_stats_kernels_nan_contract():
+    """NaN inputs follow the scipy/numpy reference semantics exactly.
+
+    `pos = lrts > 0.0` masks NaN into the point-mass branch; `np.argsort`
+    places NaN last and `np.minimum.accumulate` poisons the BH cumulative
+    min, so one NaN p-value yields all-NaN q-values.
+    """
+    from scipy.stats import chi2
+
+    lrts = [float("nan"), -1.0, 4.0]
+    pos = np.array(lrts) > 0.0
+
+    ref_meme = np.full(3, 2.0 / 3.0)
+    ref_meme[pos] = (2.0 / 3.0) * (
+        0.45 * chi2.sf(4.0, df=1) + 0.55 * chi2.sf(4.0, df=2)
+    )
+    np.testing.assert_allclose(
+        aeon_py.pvals_from_lrt_meme(lrts), ref_meme, rtol=1e-12
+    )
+
+    ref_sl = np.ones(3)
+    ref_sl[pos] = 0.5 * chi2.sf(4.0, df=1)
+    np.testing.assert_allclose(
+        aeon_py.pvals_from_lrt_self_liang(lrts), ref_sl, rtol=1e-12
+    )
+
+    # BH: replicate the Python reference then assert all-NaN output parity
+    pv = np.array([0.01, np.nan, 0.04])
+    order = np.argsort(pv)
+    sorted_p = pv[order]
+    q_sorted = np.minimum.accumulate(
+        (sorted_p * len(pv) / (np.arange(len(pv)) + 1))[::-1]
+    )[::-1]
+    ref_bh = np.empty_like(pv)
+    ref_bh[order] = np.clip(q_sorted, 0.0, 1.0)
+    rust_bh = np.array(aeon_py.benjamini_hochberg(pv.tolist()))
+    assert np.isnan(ref_bh).all(), "numpy reference itself changed"
+    assert np.isnan(rust_bh).all(), (
+        f"rust BH NaN handling diverged from numpy: {rust_bh}"
+    )
 
 
 def test_autoclock_partition_pinned_per_engine(tmp_path):

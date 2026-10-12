@@ -15,10 +15,13 @@ fn chi2_sf(x: f64, df: f64) -> f64 {
 /// LRT ≤ 0 → p = 2/3 (point mass at zero); LRT > 0 → continuous mixture
 /// tail. This is the HyPhy MEME null and the distribution HyphAeon's
 /// neural model is trained to mimic.
+///
+/// The predicate is `l > 0.0`, matching the Python `pos = lrts > 0.0`
+/// mask: NaN LRTs (failed fits) take the point-mass branch, not the tail.
 pub fn pvals_from_lrt_meme(lrts: &[f64]) -> Vec<f64> {
     lrts.iter()
         .map(|&l| {
-            if l <= 0.0 {
+            if !(l > 0.0) {
                 2.0 / 3.0
             } else {
                 (2.0 / 3.0) * (0.45 * chi2_sf(l, 1.0) + 0.55 * chi2_sf(l, 2.0))
@@ -30,9 +33,10 @@ pub fn pvals_from_lrt_meme(lrts: &[f64]) -> Vec<f64> {
 /// Self & Liang (1987) mixture null: 0.5·δ(0) + 0.5·χ²₁.
 ///
 /// Used by BUSTED (whole-gene omnibus test) and attribution p-values.
+/// NaN LRTs take the point-mass branch, matching `pos = lrts > 0.0`.
 pub fn pvals_from_lrt_self_liang(lrts: &[f64]) -> Vec<f64> {
     lrts.iter()
-        .map(|&l| if l <= 0.0 { 1.0 } else { 0.5 * chi2_sf(l, 1.0) })
+        .map(|&l| if !(l > 0.0) { 1.0 } else { 0.5 * chi2_sf(l, 1.0) })
         .collect()
 }
 
@@ -40,23 +44,37 @@ pub fn pvals_from_lrt_self_liang(lrts: &[f64]) -> Vec<f64> {
 ///
 /// Identical order semantics to the Python impl: argsort ascending,
 /// backward cumulative min of p·n/(i+1), scatter back to original order.
-/// NaN inputs sort to the end and produce NaN q-values (argsort total order
-/// matches np.argsort's NaN-last convention only for finite inputs).
+///
+/// NaN semantics replicate numpy exactly: `np.argsort` places NaN last and
+/// `np.minimum.accumulate` propagates NaN through the cumulative min, so a
+/// single NaN p-value produces all-NaN q-values.
 pub fn benjamini_hochberg(pvals: &[f64]) -> Vec<f64> {
     let n = pvals.len();
     if n == 0 {
         return Vec::new();
     }
     let mut order: Vec<usize> = (0..n).collect();
-    order.sort_by(|&a, &b| pvals[a].partial_cmp(&pvals[b]).unwrap_or(std::cmp::Ordering::Equal));
+    // np.argsort total order: NaN sorts last.
+    order.sort_by(|&a, &b| match (pvals[a].is_nan(), pvals[b].is_nan()) {
+        (true, true) => std::cmp::Ordering::Equal,
+        (true, false) => std::cmp::Ordering::Greater,
+        (false, true) => std::cmp::Ordering::Less,
+        (false, false) => pvals[a]
+            .partial_cmp(&pvals[b])
+            .unwrap_or(std::cmp::Ordering::Equal),
+    });
 
     let mut q_sorted = vec![0.0; n];
-    let mut min_q = 1.0;
+    let mut min_q: f64 = 1.0;
     for i in (0..n).rev() {
         let q = pvals[order[i]] * n as f64 / (i as f64 + 1.0);
-        if q < min_q {
-            min_q = q;
-        }
+        // np.minimum propagates NaN in both operands; f64::min would
+        // silently discard it from either side.
+        min_q = if q.is_nan() || min_q.is_nan() {
+            f64::NAN
+        } else {
+            min_q.min(q)
+        };
         q_sorted[i] = min_q;
     }
 
@@ -124,6 +142,22 @@ mod tests {
     #[test]
     fn bh_empty() {
         assert!(benjamini_hochberg(&[]).is_empty());
+    }
+
+    #[test]
+    fn bh_nan_poisons_all() {
+        // np.argsort NaN-last + np.minimum.accumulate propagation:
+        // one NaN p-value -> all q-values NaN.
+        let q = benjamini_hochberg(&[0.01, f64::NAN, 0.04]);
+        assert!(q.iter().all(|v| v.is_nan()));
+    }
+
+    #[test]
+    fn nan_lrt_takes_point_mass() {
+        let p = pvals_from_lrt_meme(&[f64::NAN]);
+        assert_eq!(p[0], 2.0 / 3.0);
+        let p = pvals_from_lrt_self_liang(&[f64::NAN]);
+        assert_eq!(p[0], 1.0);
     }
 
     #[test]

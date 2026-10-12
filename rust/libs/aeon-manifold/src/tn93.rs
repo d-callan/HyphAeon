@@ -2,17 +2,31 @@
 //!
 //! Operates on IUPAC bitmasks (see [`crate::encoding`]). Ambiguities are
 //! resolved to minimize distance: sites whose masks share at least one bit
-//! contribute zero divergence. This module is the canonical Rust
+//! contribute zero divergence ("resolve" mode). Nucleotide frequencies are
+//! counted over the union of both sequences' masks per valid site — an
+//! ambiguity-aware approximation of HyPhy's marginal frequencies, not a
+//! bit-exact port of the tn93 binary. This module is the canonical Rust
 //! implementation; `trace50-core` re-exports it and `aeon-py` binds it.
 
 use crate::encoding::{PYRIMIDINE_MASK, PURINE_MASK};
 
 /// Computes analytical Tamura-Nei 93 (TN93) pairwise genetic distance.
 /// Resolves ambiguities to minimize distance (matching characters share bits).
+///
+/// Pairs with no valid comparison sites return `0.0` — the historical
+/// trace50 kernel contract. Consumers that need to distinguish "identical"
+/// from "unresolvable" (e.g. `aeon-py` -> `dataset.py` max-distance
+/// imputation) should use the `_nan` matrix variants instead.
 pub fn compute_pairwise_tn93(seq_a_bits: &[u8], seq_b_bits: &[u8]) -> f64 {
+    pairwise_inner(seq_a_bits, seq_b_bits).unwrap_or(0.0)
+}
+
+/// Inner TN93 computation. Returns `None` when the pair has zero valid
+/// comparison sites (empty sequences, or every site masked by N/gap/`*`).
+fn pairwise_inner(seq_a_bits: &[u8], seq_b_bits: &[u8]) -> Option<f64> {
     let n = seq_a_bits.len().min(seq_b_bits.len());
     if n == 0 {
-        return 0.0;
+        return None;
     }
 
     let mut l_valid = 0usize;
@@ -63,7 +77,7 @@ pub fn compute_pairwise_tn93(seq_a_bits: &[u8], seq_b_bits: &[u8]) -> f64 {
     }
 
     if l_valid == 0 {
-        return 0.0;
+        return None;
     }
 
     let p1 = (p1_count as f64) / (l_valid as f64);
@@ -72,7 +86,7 @@ pub fn compute_pairwise_tn93(seq_a_bits: &[u8], seq_b_bits: &[u8]) -> f64 {
     let p_ham = p1 + p2 + q;
 
     if p_ham <= 0.0 {
-        return 0.0;
+        return Some(0.0);
     }
 
     let tot = (cnt_a + cnt_c + cnt_g + cnt_t).max(1) as f64;
@@ -93,24 +107,36 @@ pub fn compute_pairwise_tn93(seq_a_bits: &[u8], seq_b_bits: &[u8]) -> f64 {
     let arg3 = 1.0 - (q / (2.0 * f_r * f_y));
 
     if arg1 <= 1e-6 || arg2 <= 1e-6 || arg3 <= 1e-6 {
-        return p_ham;
+        return Some(p_ham);
     }
 
     let d = -k1 * arg1.ln() - k2 * arg2.ln() - k3 * arg3.ln();
     if !d.is_finite() || d < 0.0 {
-        return p_ham;
+        return Some(p_ham);
     }
-    d
+    Some(d)
 }
 
 /// Flat row-major `N x N` TN93 distance matrix over mask-encoded sequences.
 /// Diagonal is 0; every off-diagonal pair is computed (no threshold gating).
+/// Unresolvable pairs (no valid sites) are 0.0.
 pub fn distance_matrix(encoded: &[Vec<u8>]) -> Vec<f64> {
+    distance_matrix_impl(encoded, 0.0)
+}
+
+/// Same as [`distance_matrix`] but unresolvable pairs are `NaN`, so callers
+/// can impute them (e.g. to the maximum observed distance) instead of
+/// silently treating incomparable taxa as identical.
+pub fn distance_matrix_nan(encoded: &[Vec<u8>]) -> Vec<f64> {
+    distance_matrix_impl(encoded, f64::NAN)
+}
+
+fn distance_matrix_impl(encoded: &[Vec<u8>], unresolvable: f64) -> Vec<f64> {
     let n = encoded.len();
     let mut matrix = vec![0.0; n * n];
     for i in 0..n {
         for j in (i + 1)..n {
-            let d = compute_pairwise_tn93(&encoded[i], &encoded[j]);
+            let d = pairwise_inner(&encoded[i], &encoded[j]).unwrap_or(unresolvable);
             matrix[i * n + j] = d;
             matrix[j * n + i] = d;
         }
@@ -121,11 +147,21 @@ pub fn distance_matrix(encoded: &[Vec<u8>]) -> Vec<f64> {
 /// Flat row-major `N x M` TN93 cross-distance matrix: every row sequence in
 /// `a` against every column sequence in `b` (landmark/Nystroem-style use).
 pub fn cross_distance_matrix(a: &[Vec<u8>], b: &[Vec<u8>]) -> Vec<f64> {
+    cross_distance_matrix_impl(a, b, 0.0)
+}
+
+/// Same as [`cross_distance_matrix`] but unresolvable pairs are `NaN`.
+pub fn cross_distance_matrix_nan(a: &[Vec<u8>], b: &[Vec<u8>]) -> Vec<f64> {
+    cross_distance_matrix_impl(a, b, f64::NAN)
+}
+
+fn cross_distance_matrix_impl(a: &[Vec<u8>], b: &[Vec<u8>], unresolvable: f64) -> Vec<f64> {
     let (n, m) = (a.len(), b.len());
     let mut matrix = vec![0.0; n * m];
     for i in 0..n {
         for j in 0..m {
-            matrix[i * m + j] = compute_pairwise_tn93(&a[i], &b[j]);
+            matrix[i * m + j] =
+                pairwise_inner(&a[i], &b[j]).unwrap_or(unresolvable);
         }
     }
     matrix
@@ -172,6 +208,25 @@ mod tests {
         assert!(m[1] > 0.0);
         // All-N pair: no valid sites -> 0.0 (kernel contract)
         assert_eq!(m[2], 0.0);
+    }
+
+    #[test]
+    fn test_distance_matrix_nan_unresolvable() {
+        let seqs = vec![enc(b"ACGTACGT"), enc(b"NNNNNNNN")];
+        let m = distance_matrix_nan(&seqs);
+        assert!(m[1].is_nan());
+        assert!(m[2].is_nan());
+        assert_eq!(m[0], 0.0);
+        assert_eq!(m[3], 0.0);
+    }
+
+    #[test]
+    fn test_cross_distance_matrix_nan_unresolvable() {
+        let a = vec![enc(b"ACGT")];
+        let b = vec![enc(b"ACGT"), enc(b"----")];
+        let m = cross_distance_matrix_nan(&a, &b);
+        assert_eq!(m[0], 0.0);
+        assert!(m[1].is_nan());
     }
 
     #[test]

@@ -475,6 +475,10 @@ pub fn symmetric_jacobi_eigh(a_flat: &[f64], k: usize) -> Eigendecomposition {
 /// Returns NaN for empty input. Callers must sort first — this is the
 /// contract historically held by `trace50_core::chin::percentile`.
 pub fn percentile(sorted: &[f64], pct: f64) -> f64 {
+    debug_assert!(
+        sorted.windows(2).all(|w| w[0] <= w[1]),
+        "percentile requires non-decreasing pre-sorted input"
+    );
     if sorted.is_empty() {
         return f64::NAN;
     }

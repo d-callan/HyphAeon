@@ -174,6 +174,34 @@ pub fn fit_clock_community(
 
     let root_dists: Vec<f64> = (0..n).map(|i| d_sub[earliest_local_idx * n + i]).collect();
 
+    let t_mean = sub_dates.iter().sum::<f64>() / (n as f64);
+    let s_tt = sub_dates.iter().map(|&t| (t - t_mean).powi(2)).sum::<f64>();
+
+    // Python contract (fit_clock): a degenerate time axis (var_x < 1e-12)
+    // cannot identify a rate — bail before regression with ZERO_TIME_VAR
+    // rather than extrapolating an unstable slope.
+    if s_tt < 1e-12 {
+        return SteveCommunity {
+            community_id: 0,
+            path: "".to_string(),
+            members: sub_idx.to_vec(),
+            size: n,
+            n_eff: n as f64,
+            mu: 0.0,
+            se_mu: 0.0,
+            ci_mu: [0.0, 0.0],
+            r_squared: 0.0,
+            tmrca: min_date,
+            ci_mrca: [min_date, min_date],
+            fieller_status: "ZERO_TIME_VAR".to_string(),
+            mean_pairwise_dist: mean_d,
+            time_span_years: span,
+            is_active_outbreak: false,
+            operational_tier: "Indeterminate".to_string(),
+            stop_reason: "zero_time_var".to_string(),
+        };
+    }
+
     let lr = match linregress(&sub_dates, &root_dists) {
         Some(res) => res,
         None => {
@@ -202,10 +230,8 @@ pub fn fit_clock_community(
     let n_eff = compute_bartlett_neff(&d_sub, n, 100.0);
     let df_eff = (n_eff - 2.0).max(1.0);
 
-    let t_mean = sub_dates.iter().sum::<f64>() / (n as f64);
     let d_mean = root_dists.iter().sum::<f64>() / (n as f64);
 
-    let s_tt = sub_dates.iter().map(|&t| (t - t_mean).powi(2)).sum::<f64>();
     let rss = (root_dists
         .iter()
         .map(|&d| (d - d_mean).powi(2))

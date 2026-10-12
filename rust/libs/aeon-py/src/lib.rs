@@ -78,19 +78,23 @@ fn fasta_normalize_lengths(
 }
 
 /// Flat row-major `N x N` TN93 distance matrix from raw ASCII sequences.
-/// Sequences may be ragged (pairs truncate to the shorter length, matching
-/// the kernel contract). Non-IUPAC bytes encode as mask 0 and are skipped.
+/// Ragged inputs truncate each pair to the shorter length (the historical
+/// kernel/package contract — real MASE inputs are ragged). Non-IUPAC bytes
+/// encode as mask 0 and are skipped; pairs with zero valid sites return
+/// NaN so the caller can impute them rather than treat them as identical.
 #[pyfunction]
 fn tn93_distance_matrix(seqs: Vec<Vec<u8>>) -> Vec<f64> {
     let enc: Vec<Vec<u8>> = seqs
         .iter()
         .map(|s| s.iter().map(|&c| aeon_manifold::char_to_iupac_mask(c)).collect())
         .collect();
-    aeon_manifold::tn93::distance_matrix(&enc)
+    aeon_manifold::tn93::distance_matrix_nan(&enc)
 }
 
 /// Flat row-major `N x M` TN93 cross-distance matrix: each sequence in
 /// `seqs_a` (rows) against each in `seqs_b` (columns, e.g. landmarks).
+/// Pairs truncate to the shorter length; pairs with zero valid sites
+/// return NaN.
 #[pyfunction]
 fn tn93_cross_distance_matrix(seqs_a: Vec<Vec<u8>>, seqs_b: Vec<Vec<u8>>) -> Vec<f64> {
     let encode = |v: &[Vec<u8>]| -> Vec<Vec<u8>> {
@@ -98,7 +102,7 @@ fn tn93_cross_distance_matrix(seqs_a: Vec<Vec<u8>>, seqs_b: Vec<Vec<u8>>) -> Vec
             .map(|s| s.iter().map(|&c| aeon_manifold::char_to_iupac_mask(c)).collect())
             .collect()
     };
-    aeon_manifold::tn93::cross_distance_matrix(&encode(&seqs_a), &encode(&seqs_b))
+    aeon_manifold::tn93::cross_distance_matrix_nan(&encode(&seqs_a), &encode(&seqs_b))
 }
 
 /// MEME mixture-null p-values: 1/3·δ(0) + 2/3·(0.45·χ²₁ + 0.55·χ²₂).

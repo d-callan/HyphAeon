@@ -91,3 +91,6 @@ weights/
 *.pt
 *.safetensors
 REVIEW.md
+
+# Local debug data (not for version control)
+examples/hpi/

@@ -699,13 +699,16 @@ def compute_tn93_distance_matrix(
 ) -> np.ndarray:
     """
     Computes pairwise Tamura-Nei 93 (TN93) genetic distance matrix directly from sequences.
-    Prefers the high-speed compiled 'tn93' C binary if available in PATH, falling back
-    to the Python 'tn93' package (from tn93.tn93 import TN93).
+    Prefers the canonical Rust TN93 kernel via the 'aeon_py' extension module
+    (maturin build of rust/libs/aeon-py), falling back to the compiled 'tn93'
+    C binary in PATH. Pairs with no valid comparison sites are imputed to the
+    maximum observed distance (floored at 1.0), never treated as identical.
 
-    threshold: Distance cutoff for TN93 reporting. Set to a high value (default 100.0) so that
-    no divergent pairwise distances are prematurely omitted from deep alignments. If the installed
-    tn93 binary strictly bounds distance to [0, 1] (e.g. stock <= v1.0.15), it automatically retries
-    with threshold=1.0.
+    threshold: Distance cutoff for TN93 reporting on the binary fallback path.
+    Set to a high value (default 100.0) so that no divergent pairwise distances
+    are prematurely omitted from deep alignments. If the installed tn93 binary
+    strictly bounds distance to [0, 1] (e.g. stock <= v1.0.15), it automatically
+    retries with threshold=1.0. Ignored on the aeon_py path.
     """
     n = len(taxa)
     dist_mat = np.full((n, n), -1.0, dtype=np.float32)
@@ -784,11 +787,14 @@ def compute_tn93_distance_matrix(
 
     # Impute missing off-diagonal distances (vectorized).
     # Identical sequences (distance == 0.0) are preserved.
-    # Any negative entry (< 0.0) represents a divergent pair whose distance
-    # exceeded the threshold or was omitted -> impute with max observed distance or 1.0.
+    # Missing means either a negative sentinel from the tn93 binary path
+    # (distance omitted/exceeded threshold) or NaN from the aeon_py path
+    # (pair with zero valid comparison sites) -> impute with the maximum
+    # observed distance, floored at 1.0.
     np.fill_diagonal(dist_mat, 0.0)
-    missing = (dist_mat < 0.0)
-    max_d = float(dist_mat.max()) if dist_mat.max() > 0 else 1.0
+    missing = ~(dist_mat >= 0.0)
+    observed = dist_mat[~missing]
+    max_d = float(observed.max()) if observed.size else 0.0
     dist_mat[missing] = max(1.0, max_d)
     np.fill_diagonal(dist_mat, 0.0)
     return dist_mat
@@ -886,9 +892,12 @@ def compute_tn93_cross_distance_matrix(
         if lm in taxa_idx:
             dist_mat[taxa_idx[lm], j] = 0.0
 
-    # Impute missing entries
-    missing = (dist_mat < 0.0)
-    max_d = float(dist_mat.max()) if dist_mat.max() > 0 else 1.0
+    # Impute missing entries: negative sentinel (binary path) or NaN
+    # (aeon_py path, zero valid comparison sites) -> max observed distance,
+    # floored at 1.0.
+    missing = ~(dist_mat >= 0.0)
+    observed = dist_mat[~missing]
+    max_d = float(observed.max()) if observed.size else 0.0
     dist_mat[missing] = max(1.0, max_d)
     for j, lm in enumerate(taxa_landmarks):
         if lm in taxa_idx:
