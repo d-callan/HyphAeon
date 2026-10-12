@@ -2,11 +2,13 @@
 name = "aeon-py"
 version = "0.1.0"
 edition = "2021"
+publish = false
+workspace = "../../rust"
 
 [lib]
-name = "aeon_py"
+name = "aeon_core_native"
 crate-type = ["cdylib"]
 
 [dependencies]
 aeon-manifold = { workspace = true }
-pyo3 = { workspace = true }
+pyo3 = { workspace = true, features = ["abi3-py38"] }

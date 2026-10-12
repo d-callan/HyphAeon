@@ -18,9 +18,10 @@ from hyphaeon.splits import (
     tree_dict_to_newick,
     get_all_clade_taxa,
 )
-# TN93 engine availability: canonical aeon_py bindings, else the tn93 binary.
+# TN93 engine availability: canonical aeon_core._native bindings, else the
+# tn93 binary.
 try:
-    import aeon_py  # noqa: F401
+    from aeon_core import _native  # noqa: F401
     _HAS_TN93 = True
 except ImportError:
     import shutil
@@ -201,7 +202,7 @@ class TestRunSpectralSplits:
         parsed = Phylo.read(io.StringIO(res["newick"]), "newick")
         assert len(parsed.get_terminals()) == 3
 
-    @pytest.mark.skipif(not _HAS_TN93, reason="no TN93 engine (aeon_py bindings or tn93 binary)")
+    @pytest.mark.skipif(not _HAS_TN93, reason="no TN93 engine (aeon_core._native or tn93 binary)")
     def test_run_tree_free_dummy(self, fasta_file, dummy_weights):
         res = run_spectral_splits(
             alignment_path=fasta_file,
@@ -235,7 +236,7 @@ class TestRunSpectralSplits:
         # Must match biological subordinal split 100%
         assert (left == yin and right == yang) or (left == yang and right == yin)
 
-    @pytest.mark.skipif(not _HAS_TN93, reason="no TN93 engine (aeon_py bindings or tn93 binary)")
+    @pytest.mark.skipif(not _HAS_TN93, reason="no TN93 engine (aeon_core._native or tn93 binary)")
     def test_bat_oas1_tree_free_spectral_splits(self, examples_dir, real_weights_path):
         """Test spectral bisection in TREE-FREE mode (TN93 only, no tree input)."""
         if real_weights_path is None:
@@ -299,7 +300,7 @@ class TestSplitsCLI:
         assert len(df) == 18
         assert set(df["primary_clade"].unique()).issubset({"Left", "Right"})
 
-    @pytest.mark.skipif(not _HAS_TN93, reason="no TN93 engine (aeon_py bindings or tn93 binary)")
+    @pytest.mark.skipif(not _HAS_TN93, reason="no TN93 engine (aeon_core._native or tn93 binary)")
     def test_cli_splits_tree_free(self, examples_dir, dummy_weights, tmp_path):
         fa = os.path.join(examples_dir, "bat_oas1.fasta")
         if not os.path.exists(fa):

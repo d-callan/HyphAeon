@@ -13,11 +13,12 @@ import numpy as np
 from scipy.stats import chi2
 
 # Canonical engine: the same kernels implemented in aeon-manifold::stats
-# and exposed via the aeon_py bindings. When the extension is present it
-# is preferred so all deployments share one implementation; the scipy
-# formulas below remain as the zero-extra-dependency fallback.
+# and exposed via the aeon_core._native extension module. When the
+# extension is present it is preferred so all deployments share one
+# implementation; the scipy formulas below remain as the
+# zero-extra-dependency fallback.
 try:
-    import aeon_py
+    from aeon_core import _native as aeon_py
 except ImportError:
     aeon_py = None
 

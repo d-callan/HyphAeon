@@ -699,8 +699,8 @@ def compute_tn93_distance_matrix(
 ) -> np.ndarray:
     """
     Computes pairwise Tamura-Nei 93 (TN93) genetic distance matrix directly from sequences.
-    Prefers the canonical Rust TN93 kernel via the 'aeon_py' extension module
-    (maturin build of rust/libs/aeon-py), falling back to the compiled 'tn93'
+    Prefers the canonical Rust TN93 kernel via the `aeon_core._native` extension module
+    (compiled aeon_core._native extension), falling back to the compiled 'tn93'
     C binary in PATH. Pairs with no valid comparison sites are imputed to the
     maximum observed distance (floored at 1.0), never treated as identical.
 
@@ -720,12 +720,12 @@ def compute_tn93_distance_matrix(
     tn93_bin = shutil.which("tn93")
     used_binary = False
 
-    # Canonical engine: Rust TN93 kernel exposed via the aeon_py bindings.
-    # Preferred over the external tn93 binary so all deployments share one
-    # implementation. '*' encodes as mask 0 on this path (site skipped), which
-    # is equivalent to the binary-path '*' -> '-' sanitize.
+    # Canonical engine: Rust TN93 kernel exposed via the aeon_core._native
+    # extension. Preferred over the external tn93 binary so all deployments
+    # share one implementation. '*' encodes as mask 0 on this path (site
+    # skipped), which is equivalent to the binary-path '*' -> '-' sanitize.
     try:
-        import aeon_py
+        from aeon_core import _native as aeon_py
         flat = aeon_py.tn93_distance_matrix(
             [seq_dict[t].encode("utf-8") for t in taxa]
         )
@@ -780,8 +780,8 @@ def compute_tn93_distance_matrix(
 
     if not used_binary:
         raise ImportError(
-            "TN93 distances require the 'aeon_py' extension module "
-            "(maturin build of rust/libs/aeon-py) or the tn93 binary "
+            "TN93 distances require the compiled `aeon_core._native` "
+            "extension module or the tn93 binary "
             "(https://github.com/veg/tn93)."
         )
 
@@ -822,10 +822,10 @@ def compute_tn93_cross_distance_matrix(
     tn93_bin = shutil.which("tn93")
     used_binary = False
 
-    # Canonical engine: Rust TN93 kernel via aeon_py (see
+    # Canonical engine: Rust TN93 kernel via aeon_core._native (see
     # compute_tn93_distance_matrix for the precedence rationale).
     try:
-        import aeon_py
+        from aeon_core import _native as aeon_py
         flat = aeon_py.tn93_cross_distance_matrix(
             [seq_dict[t].encode("utf-8") for t in taxa_all],
             [seq_dict[t].encode("utf-8") for t in taxa_landmarks],
@@ -882,8 +882,8 @@ def compute_tn93_cross_distance_matrix(
 
     if not used_binary:
         raise ImportError(
-            "TN93 distances require the 'aeon_py' extension module "
-            "(maturin build of rust/libs/aeon-py) or the tn93 binary "
+            "TN93 distances require the compiled `aeon_core._native` "
+            "extension module or the tn93 binary "
             "(https://github.com/veg/tn93)."
         )
 
@@ -893,7 +893,7 @@ def compute_tn93_cross_distance_matrix(
             dist_mat[taxa_idx[lm], j] = 0.0
 
     # Impute missing entries: negative sentinel (binary path) or NaN
-    # (aeon_py path, zero valid comparison sites) -> max observed distance,
+    # (extension path, zero valid comparison sites) -> max observed distance,
     # floored at 1.0.
     missing = ~(dist_mat >= 0.0)
     observed = dist_mat[~missing]

@@ -36,8 +36,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import aeon_py
-
 RUST_ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = RUST_ROOT / "tests" / "fixtures"
 REPO_ROOT = RUST_ROOT.parent
@@ -45,6 +43,8 @@ CONFORMANCE_BIN = RUST_ROOT / "target" / "release" / "conformance"
 
 sys.path.insert(0, str(REPO_ROOT / "aeon-core" / "src"))
 sys.path.insert(0, str(REPO_ROOT / "chronaeon" / "src"))
+
+from aeon_core import _native as aeon_py  # noqa: E402
 
 DEMO_OUTBREAK = FIXTURES / "demo_outbreak.fasta"
 HCV_CHRONIC = FIXTURES / "demo_hcv_chronic.fasta"

@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "libs/aeon-manifold",
-    "libs/aeon-py",
+    "../aeon-core/native",
     "rhizaeon/crates/rhizaeon",
     "rhizaeon/crates/rhizaeon-wasm",
     "trace-5.0/crates/trace50",

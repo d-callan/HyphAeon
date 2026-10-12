@@ -130,7 +130,7 @@ fn cauchy_combination_p(pvals: Vec<f64>) -> f64 {
 }
 
 #[pymodule]
-fn aeon_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(percentile, m)?)?;
     m.add_function(wrap_pyfunction!(median, m)?)?;
     m.add_function(wrap_pyfunction!(parse_date_from_header, m)?)?;
