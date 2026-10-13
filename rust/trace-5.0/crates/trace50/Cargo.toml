@@ -9,6 +9,7 @@ repository = "https://github.com/veg/HyphAeon"
 homepage = "https://github.com/veg/HyphAeon"
 
 [dependencies]
+aeon-autoclock.workspace = true
 aeon-manifold.workspace = true
 serde.workspace = true
 serde_json.workspace = true

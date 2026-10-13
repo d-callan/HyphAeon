@@ -1,0 +1,13 @@
+[package]
+name = "aeon-autoclock"
+version = "0.1.0"
+edition = "2021"
+authors = ["Sergei L. Kosakovsky Pond", "Antigravity AI Engine"]
+description = "Canonical STEVE/AutoClock spectral temporal deconvolution engine for the Aeon family (TRACE-5.0, ChronAeon)"
+license = "MIT"
+repository = "https://github.com/veg/HyphAeon"
+homepage = "https://github.com/veg/HyphAeon"
+
+[dependencies]
+aeon-manifold.workspace = true
+serde.workspace = true

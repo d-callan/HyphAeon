@@ -1,12 +1,12 @@
 name: publish-crates
 
-# Tag-driven crates.io publishing. Release order matters: rhizaeon and
-# trace50 have versioned deps on aeon-manifold, so the shared crate must
-# be on the registry first. Push aeon-manifold-v* first, wait for this
-# workflow to go green, then push rhizaeon-v* / trace50-v*. The product
-# jobs poll `cargo search` and fail fast after a timeout rather than
-# silently succeeding — if they time out, publish the shared crate tag
-# and re-run.
+# Tag-driven crates.io publishing. Release order matters: aeon-autoclock
+# and rhizaeon depend on aeon-manifold, and trace50 depends on both, so
+# shared crates must be on the registry first. Push aeon-manifold-v*
+# first, wait for this workflow to go green, then aeon-autoclock-v* /
+# rhizaeon-v*, then trace50-v*. The product jobs poll `cargo search` and
+# fail fast after a timeout rather than silently succeeding — if they
+# time out, publish the shared crate tag and re-run.
 #
 # Requires secret CARGO_REGISTRY_TOKEN (crates.io API token, publish scope
 # for all listed crates). crates.io OIDC trusted publishing is the
@@ -14,6 +14,7 @@ name: publish-crates
 on:
   push:
     tags:
+      - "aeon-autoclock-v*"
       - "aeon-manifold-v*"
       - "rhizaeon-v*"
       - "trace50-v*"
@@ -33,6 +34,10 @@ jobs:
             tag_prefix: aeon-manifold-v
             toml: rust/libs/aeon-manifold/Cargo.toml
             wait_for: ""
+          - crate: aeon-autoclock
+            tag_prefix: aeon-autoclock-v
+            toml: rust/libs/aeon-autoclock/Cargo.toml
+            wait_for: aeon-manifold
           - crate: rhizaeon
             tag_prefix: rhizaeon-v
             toml: rust/rhizaeon/crates/rhizaeon/Cargo.toml
@@ -40,7 +45,7 @@ jobs:
           - crate: trace50
             tag_prefix: trace50-v
             toml: rust/trace-5.0/crates/trace50/Cargo.toml
-            wait_for: aeon-manifold
+            wait_for: "aeon-manifold aeon-autoclock"
     # Each matrix leg fires on every tag push; only the leg matching the
     # pushed tag does any work.
     if: startsWith(github.ref, format('refs/tags/{0}', matrix.tag_prefix))
@@ -63,17 +68,23 @@ jobs:
         if: matrix.wait_for != ''
         working-directory: rust
         run: |
-          # Version required by workspace.dependencies for ${{ matrix.wait_for }}.
-          REQ=$(python -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['dependencies']['${{ matrix.wait_for }}']['version'])")
-          echo "Waiting for ${{ matrix.wait_for }} $REQ on crates.io..."
-          for i in $(seq 1 60); do
-            if cargo search "${{ matrix.wait_for }}" --limit 1 2>/dev/null | grep -q "\"$REQ\""; then
-              echo "${{ matrix.wait_for }} $REQ is live"; exit 0
+          # wait_for is a space-separated list; each entry is a
+          # workspace.dependencies key whose version must be live.
+          for dep in ${{ matrix.wait_for }}; do
+            REQ=$(python -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['dependencies']['$dep']['version'])")
+            echo "Waiting for $dep $REQ on crates.io..."
+            live=0
+            for i in $(seq 1 60); do
+              if cargo search "$dep" --limit 1 2>/dev/null | grep -q "\"$REQ\""; then
+                echo "$dep $REQ is live"; live=1; break
+              fi
+              sleep 10
+            done
+            if [ "$live" -ne 1 ]; then
+              echo "::error::$dep $REQ not on crates.io after 10 min — push its tag first"
+              exit 1
             fi
-            sleep 10
           done
-          echo "::error::${{ matrix.wait_for }} $REQ not on crates.io after 10 min — push its tag first"
-          exit 1
       - name: cargo publish --dry-run
         working-directory: rust
         run: cargo publish -p ${{ matrix.crate }} --dry-run --token ${{ secrets.CARGO_REGISTRY_TOKEN }}

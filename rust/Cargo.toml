@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "libs/aeon-autoclock",
     "libs/aeon-manifold",
     "../aeon-core/native",
     "rhizaeon/crates/rhizaeon",
@@ -10,6 +11,7 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
+aeon-autoclock = { path = "libs/aeon-autoclock", version = "0.1.0" }
 aeon-manifold = { path = "libs/aeon-manifold", version = "0.1.0" }
 rhizaeon = { path = "rhizaeon/crates/rhizaeon", version = "0.1.0", default-features = false }
 trace50 = { path = "trace-5.0/crates/trace50", version = "5.0.0", default-features = false }

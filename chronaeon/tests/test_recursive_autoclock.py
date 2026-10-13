@@ -19,6 +19,7 @@ from chronaeon.autoclock import (
     classify_community,
     classify_leaf_community,
 )
+from chronaeon.autoclock import _native_ext as _HAS_NATIVE_KERNEL
 
 
 def _generate_synthetic_epidemic_transmission_matrix():
@@ -172,8 +173,11 @@ class TestRecursiveSpectralAutoClock:
 
     def test_cohesive_clock_cluster_stopping_rule(self):
         """
-        Tests that when a subcommunity is tight (mean dist < 1.5%), linear (R2 >= 0.20),
-        and rate separability Welch z < 1.96, recursion halts immediately.
+        Canonical (Rust/aeon-autoclock) semantics: a monolithic clock whose
+        time-gradient gives the affinity graph real spectral structure is
+        bisected by the modularity/conductance gates; each half then halts
+        as a homogeneous spectral manifold. The legacy Python fallback
+        instead applies its Welch-z rate-separability stop at the parent.
         """
         np.random.seed(123)
         n = 8
@@ -196,11 +200,21 @@ class TestRecursiveSpectralAutoClock:
             max_depth=4,
         )
 
-        # Must not split: cohesive cluster stopping rule should trigger
-        assert len(leaves) == 1
-        sub_idx, fit, stop_reason, path = leaves[0]
-        assert "cohesive_clock_cluster" in stop_reason
-        assert len(sub_idx) == n
+        members = sorted(m for leaf in leaves for m in leaf[0].tolist())
+        assert members == list(range(n)), "leaves must cover all taxa"
+
+        if _HAS_NATIVE_KERNEL is not None:
+            # Canonical: the conductance gate passes the early-vs-late
+            # split; each child then reads as a homogeneous manifold.
+            assert len(leaves) == 2
+            for _, _, stop_reason, _ in leaves:
+                assert stop_reason == "homogeneous_spectral_manifold"
+        else:
+            # Legacy Python fallback: Welch-z cohesive stop at the parent.
+            assert len(leaves) == 1
+            sub_idx, fit, stop_reason, path = leaves[0]
+            assert "cohesive_clock_cluster" in stop_reason
+            assert len(sub_idx) == n
 
 
 class TestCommunityClassification:

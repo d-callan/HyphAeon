@@ -47,11 +47,12 @@ Python's `recursive_spectral_autoclock(sub_idx, dates, D, min_size, max_depth, d
 - **Structured fit results** — Python `fit_clock` returns a dict of fields (`mu`, `d0`, `se_mu`, `t_mrca`, `t_mrca_ci`, `r_squared`, `tier`, `stop_reason`, ...). Add a `pub struct ClockFit` (serde-serializable) collecting exactly the fields the Python dict emits today; document field-by-field mapping in the struct docstring.
 - **`SteveCommunity` extension** — carry `stop_reason: String` and `path: String` (Python's tuple elements 2,3) plus the `ClockFit`.
 
-**Canonical semantics decision (PENDING — flagged to Sergei, 2026-10-12):** the conformance suite documents 4 divergences. Two paths: Sergei fixes upstream in the standalone trace-5.0 repo and we pull + migrate, or he specifies canonical semantics for us to implement here. Do not write the convergence code until he responds; the mechanical extraction (A1) and API extension (A2, `is_ref_array`/`ClockFit`/stop_reason plumbing) can proceed independent of the semantics choice. Leaning: adopt **chronaeon's Python semantics** where impls differ (feature-complete/reference impl for the shipping product). Specifically:
-- Bartlett n_eff: implement `compute_bartlett_neff` exactly as Python computes it (single formula in one place — divergence dies).
-- Tier taxonomy + n<3 fields: port `classify_community`/`classify_leaf_community` logic into Rust (`fn classify(fit: &ClockFit) -> Tier`) so both consumers classify identically.
-- Cohesive stopping: single stopping predicate in Rust matching Python's.
-- trace50 pipeline consumes the new fields it cares about; fields it ignores cost nothing.
+**Canonical semantics decision (RESOLVED 2026-10-13 — Sergei: Rust is canonical):** the trace50 STEVE engine is the reference implementation. The four conformance-documented divergences are resolved by making the Python kernels delegates to `aeon_core._native` bindings of `aeon-autoclock`; the pure-Python bodies remain only as the no-extension fallback (legacy semantics, pinned separately in the conformance suite).
+- Bartlett n_eff: Rust's `df_eff = n_eff - 2` penalty is canonical; Python's `n - 2` is fallback-only.
+- Tier taxonomy + n<3 fields: Rust's 4-tier relative-horizon taxonomy and real `mean_pairwise_dist`/`time_span_years` on dyads are canonical; the delegated fit dict additionally exposes `n_eff`, `ci_mu`, `is_active_outbreak`, `operational_tier` for Python consumers.
+- Cohesive stopping: Rust's modularity/conductance gate is canonical; Python's Welch-z child-rate stop is fallback-only.
+- `is_ref_array`: dead plumbing in Python (threaded, never read) — the Rust binding accepts and reserves it but does not consume it.
+- `SteveCommunity` extended with `rss`, `tot_var`, `aicc` (Hurvich-Tsai, Bartlett-penalized sigma^2), `max_pairwise_dist`, `d0` — additive serde fields covering the full Python fit-dict contract.
 
 ### A3. Rewire trace50
 
@@ -86,7 +87,7 @@ Return types: `ClockFit`/`SteveCommunity` → Python `dict` — use `pythonize` 
 
 ## Phase B — Collapse `-core`/`-cli` into one crate per product
 
-Target: workspace members shrink from 8 → 6: `aeon-manifold`, `aeon-autoclock`, `aeon-py`, `rhizaeon`, `rhizaeon-wasm`, `trace50`, `trace50-wasm` (7 — wasm crates stay separate; aeon-py moves out in Phase C).
+Target: workspace members shrink from 8 → 7: `aeon-autoclock`, `aeon-manifold`, `aeon-py` (moved to `aeon-core/native` in Phase C), `rhizaeon`, `rhizaeon-wasm`, `trace50`, `trace50-wasm` (wasm crates stay separate).
 
 ### B1. `rhizaeon` crate
 

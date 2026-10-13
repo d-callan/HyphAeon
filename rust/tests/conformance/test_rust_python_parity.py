@@ -14,17 +14,18 @@ criteria) each engine's current output is pinned as a golden so any drift —
 intentional or accidental — fails loudly during the Phase-2 refactor.
 
 Known intentional divergences (audited, NOT parity bugs — do not "fix"):
-  * Rust fit_clock_community penalizes all degrees of freedom by the
-    Bartlett effective sample size (n_eff - 2); Python fit_clock uses n - 2.
-    se_mu / ci_mu / ci_mrca therefore differ systematically; only the
-    terminal partition is pinned, never the fit statistics.
-  * Operational tier taxonomies differ: Rust uses 4 tiers with relative
-    horizons (max_date - 6 / - 4 yr), Python classify uses 5 tiers with
-    fixed horizons. fieller_status vocabularies partially overlap.
-  * For n < 3, Rust reports the real mean_pairwise_dist / time_span_years;
-    Python fit_clock returns zeros for mean_dist / max_dist / span.
-  * Cohesive stopping: Rust uses modularity delta + conductance cut;
-    Python uses a Welch-z test on child clock fits (documented below).
+  * Saturation ceilings and decimal-year regex coverage differ between the
+    Rust and Python TN93/date kernels.
+
+AUTOCLOCK UNIFICATION (Phase A, canonical = Rust per Sergei 2026-10-13):
+  chronaeon's fit_clock / recursive_spectral_autoclock delegate to
+  aeon_core._native -> aeon-autoclock whenever the extension is
+  importable, so both engines emit the same partitions and fit
+  statistics. The historical divergences (Bartlett n_eff df penalty vs
+  n - 2, relative- vs fixed-horizon tier taxonomies, n < 3 leaf field
+  zeroing, and the Welch-z cohesive stop vs the modularity/conductance
+  gate) survive only in the pure-Python fallback used when the extension
+  is absent — those paths are legacy, not canonical.
 """
 
 import json
@@ -250,11 +251,10 @@ def test_date_parsing_pinned_contract(fasta, expected, tmp_path):
 # ---------------------------------------------------------------------------
 
 # Pinned partitions (P0.4): terminal leaf communities on demo_outbreak.fasta.
-# The two engines legitimately produce different partitions — they implement
-# different split criteria (Rust: modularity-optimized Cheeger cut +
-# conductance gate; Python: KMeans-2 + median fallback + Welch-z cohesive
-# gate). The test pins each engine's CURRENT partition so any drift is a
-# deliberate decision.
+# Phase A unified the engines: with aeon_core._native present, Python
+# delegates to aeon-autoclock and MUST reproduce the Rust partition
+# bit-for-bit. The legacy pure-Python golden is kept only to pin the
+# fallback semantics when the extension is absent.
 # W11 note: the Rust partition was re-pinned after porting five contract
 # gaps (min_size on children, isolated-node tolerance, canonical percentile
 # for sigma, positive-mu tMRCA, lambda_2 homogeneity gate). The old {8,9}
@@ -262,7 +262,7 @@ def test_date_parsing_pinned_contract(fasta, expected, tmp_path):
 EXPECTED_PARTITION_RUST = frozenset(
     [frozenset({0, 1, 5, 6}), frozenset({2, 3, 4}), frozenset({7, 8, 9})]
 )
-EXPECTED_PARTITION_PYTHON = frozenset(
+EXPECTED_PARTITION_PYTHON_LEGACY = frozenset(
     [frozenset({0, 2, 4, 6, 7}), frozenset({1, 3, 5, 8, 9})]
 )
 
@@ -359,15 +359,17 @@ def test_stats_kernels_nan_contract():
     )
 
 
-def test_autoclock_partition_pinned_per_engine(tmp_path):
-    """Pin each engine's terminal partition on identical inputs.
+def test_autoclock_partition_unified(tmp_path):
+    """Post-Phase A: the delegated Python path IS the canonical Rust engine.
 
-    Feeds the Rust-parsed dates and Rust-computed TN93 matrix to BOTH
-    engines, isolating the deconvolution algorithm itself. Each side's
-    partition is asserted against its own golden — a drift in either is a
-    regression signal, not a parity claim.
+    Feeds the Rust-parsed dates and Rust-computed TN93 matrix to both the
+    conformance driver and chronaeon's recursive_spectral_autoclock. When
+    aeon_core._native is importable the Python call delegates to
+    aeon-autoclock, so the partitions must be IDENTICAL — not merely
+    similar. When the extension is absent the legacy pure-Python fallback
+    keeps its own pinned golden.
     """
-    from chronaeon.autoclock import recursive_spectral_autoclock
+    import chronaeon.autoclock as ch_ac
 
     rust = _run_driver(DEMO_OUTBREAK, tmp_path)
     n = rust["n"]
@@ -375,7 +377,7 @@ def test_autoclock_partition_pinned_per_engine(tmp_path):
     dates = np.array([d if d is not None else np.nan for d in rust["dates"]])
 
     rust_part = frozenset(frozenset(c["members"]) for c in rust["communities"])
-    leaves = recursive_spectral_autoclock(
+    leaves = ch_ac.recursive_spectral_autoclock(
         np.arange(n),
         dates,
         d_mat,
@@ -393,7 +395,13 @@ def test_autoclock_partition_pinned_per_engine(tmp_path):
         f"rust autoclock partition drifted: "
         f"{sorted(map(sorted, rust_part))}"
     )
-    assert py_part == frozenset(EXPECTED_PARTITION_PYTHON), (
-        f"python autoclock partition drifted: "
-        f"{sorted(map(sorted, py_part))}"
-    )
+    if ch_ac._native_ext is not None:
+        assert py_part == rust_part, (
+            "delegated Python autoclock diverged from canonical Rust: "
+            f"{sorted(map(sorted, py_part))}"
+        )
+    else:
+        assert py_part == frozenset(EXPECTED_PARTITION_PYTHON_LEGACY), (
+            f"python fallback autoclock partition drifted: "
+            f"{sorted(map(sorted, py_part))}"
+        )

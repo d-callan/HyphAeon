@@ -58,6 +58,47 @@ from .dating import (
 )
 
 
+# The STEVE/AutoClock kernels are canonically implemented in Rust
+# (aeon-autoclock, bound via aeon_core._native). The Python bodies below
+# remain as the fallback for installs without the compiled extension; their
+# legacy semantics differ where the two engines historically diverged
+# (Bartlett n_eff df penalty, cohesive stopping criterion, n<3 leaf fields,
+# operational tier taxonomy). Canonical = Rust.
+try:
+    from aeon_core import _native as _native_ext
+except ImportError:
+    _native_ext = None
+
+
+def _steve_to_fit_dict(c: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Maps a serialized aeon-autoclock SteveCommunity record onto the
+    chronaeon fit-dict contract emitted by fit_clock. Rust-only fields
+    (n_eff, ci_mu, operational_tier, is_active_outbreak) are carried
+    through for consumers that want them.
+    """
+    return {
+        "n": c["size"],
+        "mu": c["mu"],
+        "se": c["se_mu"],
+        "r2": c["r_squared"],
+        "rss": c["rss"],
+        "tot_var": c["tot_var"],
+        "aicc": c["aicc"],
+        "tmrca": c["tmrca"],
+        "ci_mrca": list(c["ci_mrca"]),
+        "fieller_status": c["fieller_status"],
+        "mean_dist": c["mean_pairwise_dist"],
+        "max_dist": c["max_pairwise_dist"],
+        "span": c["time_span_years"],
+        "d0": c["d0"],
+        "n_eff": c["n_eff"],
+        "ci_mu": list(c["ci_mu"]),
+        "is_active_outbreak": c["is_active_outbreak"],
+        "operational_tier": c["operational_tier"],
+    }
+
+
 def select_adaptive_n_landmarks(
     n_taxa: int,
     max_k: int = 8,
@@ -126,6 +167,18 @@ def fit_clock(
         - span: temporal duration (years)
         - d0: mean root-to-sample distance
     """
+    if _native_ext is not None:
+        D_arr = np.asarray(D, dtype=np.float64)
+        raw = json.loads(
+            _native_ext.fit_clock_community(
+                np.asarray(sub_idx, dtype=np.int64).tolist(),
+                np.asarray(dates, dtype=np.float64).tolist(),
+                D_arr.ravel().tolist(),
+                int(D_arr.shape[0]),
+            )
+        )
+        return _steve_to_fit_dict(raw)
+
     sub_idx = np.asarray(sub_idx)
     n = len(sub_idx)
     if n < 3:
@@ -228,6 +281,30 @@ def recursive_spectral_autoclock(
     -------
     List of tuples: (sub_idx, fit, stop_reason, path)
     """
+    if _native_ext is not None and depth == 0 and path == "root":
+        D_arr = np.asarray(D, dtype=np.float64)
+        raw = json.loads(
+            _native_ext.recursive_spectral_autoclock(
+                np.asarray(sub_idx, dtype=np.int64).tolist(),
+                np.asarray(dates, dtype=np.float64).tolist(),
+                D_arr.ravel().tolist(),
+                int(D_arr.shape[0]),
+                min_size,
+                max_depth,
+                0.65,  # conductance_cut — the value the trace50 pipeline uses
+                is_ref=np.asarray(is_ref_array).tolist() if is_ref_array is not None else None,
+            )
+        )
+        return [
+            (
+                np.asarray(c["members"], dtype=np.int64),
+                _steve_to_fit_dict(c),
+                c["stop_reason"],
+                c["path"],
+            )
+            for c in raw
+        ]
+
     sub_idx = np.asarray(sub_idx)
     n = len(sub_idx)
     fit_p = fit_clock(sub_idx, dates, D)

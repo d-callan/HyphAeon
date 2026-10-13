@@ -71,10 +71,7 @@ fn fasta_normalize_lengths(
         .map(|(name, seq)| FastaRecord { name, seq })
         .collect();
     let len = normalize_lengths(&mut recs, parsed).map_err(PyValueError::new_err)?;
-    Ok((
-        recs.into_iter().map(|r| (r.name, r.seq)).collect(),
-        len,
-    ))
+    Ok((recs.into_iter().map(|r| (r.name, r.seq)).collect(), len))
 }
 
 /// Flat row-major `N x N` TN93 distance matrix from raw ASCII sequences.
@@ -86,7 +83,11 @@ fn fasta_normalize_lengths(
 fn tn93_distance_matrix(seqs: Vec<Vec<u8>>) -> Vec<f64> {
     let enc: Vec<Vec<u8>> = seqs
         .iter()
-        .map(|s| s.iter().map(|&c| aeon_manifold::char_to_iupac_mask(c)).collect())
+        .map(|s| {
+            s.iter()
+                .map(|&c| aeon_manifold::char_to_iupac_mask(c))
+                .collect()
+        })
         .collect();
     aeon_manifold::tn93::distance_matrix_nan(&enc)
 }
@@ -99,7 +100,11 @@ fn tn93_distance_matrix(seqs: Vec<Vec<u8>>) -> Vec<f64> {
 fn tn93_cross_distance_matrix(seqs_a: Vec<Vec<u8>>, seqs_b: Vec<Vec<u8>>) -> Vec<f64> {
     let encode = |v: &[Vec<u8>]| -> Vec<Vec<u8>> {
         v.iter()
-            .map(|s| s.iter().map(|&c| aeon_manifold::char_to_iupac_mask(c)).collect())
+            .map(|s| {
+                s.iter()
+                    .map(|&c| aeon_manifold::char_to_iupac_mask(c))
+                    .collect()
+            })
             .collect()
     };
     aeon_manifold::tn93::cross_distance_matrix_nan(&encode(&seqs_a), &encode(&seqs_b))
@@ -129,6 +134,59 @@ fn cauchy_combination_p(pvals: Vec<f64>) -> f64 {
     aeon_manifold::stats::cauchy_combination_p(&pvals)
 }
 
+/// Canonical root-to-tip clock fit for a subcommunity. `d_matrix_flat` is
+/// the row-major n x n distance matrix; `sub_idx` indexes into it. Returns
+/// the SteveCommunity record as a JSON object string — the Python side
+/// json.loads() it into the chronaeon fit-dict shape.
+#[pyfunction]
+fn fit_clock_community(
+    sub_idx: Vec<usize>,
+    dates: Vec<f64>,
+    d_matrix_flat: Vec<f64>,
+    n: usize,
+) -> PyResult<String> {
+    let fit = aeon_autoclock::fit_clock_community(&sub_idx, &dates, &d_matrix_flat, n, 0.05);
+    serde_json::to_string(&fit)
+        .map_err(|e| PyValueError::new_err(format!("SteveCommunity serialization failed: {e}")))
+}
+
+/// Canonical recursive spectral deconvolution (STEVE/AutoClock). Returns a
+/// JSON array of leaf-community objects; Python reshapes each into the
+/// (sub_idx, fit_dict, stop_reason, path) tuple contract.
+///
+/// `conductance_cut` defaults to 0.65 — the value the trace50 pipeline has
+/// always used; exposed for callers that need to match it exactly.
+/// `is_ref` is accepted for signature parity with the Python kernel but is
+/// currently inert on both sides (the Python arg was threaded but never
+/// read); it is reserved for reference-anchor weighting in a future tier.
+#[pyfunction]
+#[pyo3(signature = (sub_idx, dates, d_matrix_flat, n, min_size=3, max_depth=10, conductance_cut=0.65, is_ref=None))]
+fn recursive_spectral_autoclock(
+    sub_idx: Vec<usize>,
+    dates: Vec<f64>,
+    d_matrix_flat: Vec<f64>,
+    n: usize,
+    min_size: usize,
+    max_depth: usize,
+    conductance_cut: f64,
+    is_ref: Option<Vec<bool>>,
+) -> PyResult<String> {
+    let _ = is_ref; // reserved: reference-panel anchors are not yet consumed
+    let communities = aeon_autoclock::recursive_autoclock_deconvolution(
+        &sub_idx,
+        &dates,
+        &d_matrix_flat,
+        n,
+        min_size,
+        max_depth,
+        0,
+        "root",
+        conductance_cut,
+    );
+    serde_json::to_string(&communities)
+        .map_err(|e| PyValueError::new_err(format!("community serialization failed: {e}")))
+}
+
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(percentile, m)?)?;
@@ -144,5 +202,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(pvals_from_lrt_self_liang, m)?)?;
     m.add_function(wrap_pyfunction!(benjamini_hochberg, m)?)?;
     m.add_function(wrap_pyfunction!(cauchy_combination_p, m)?)?;
+    m.add_function(wrap_pyfunction!(fit_clock_community, m)?)?;
+    m.add_function(wrap_pyfunction!(recursive_spectral_autoclock, m)?)?;
     Ok(())
 }
