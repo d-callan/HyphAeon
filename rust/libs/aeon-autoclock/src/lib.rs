@@ -205,7 +205,7 @@ pub fn fit_clock_community(
     let earliest_local_idx = sub_dates
         .iter()
         .enumerate()
-        .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .min_by(|(_, a), (_, b)| a.total_cmp(b))
         .map(|(i, _)| i)
         .unwrap_or(0);
 
@@ -384,7 +384,7 @@ pub fn optimize_fiedler_modularity(
     }
 
     let mut sorted_indices: Vec<usize> = (0..n).collect();
-    sorted_indices.sort_by(|&a, &b| fiedler[a].partial_cmp(&fiedler[b]).unwrap());
+    sorted_indices.sort_by(|&a, &b| fiedler[a].total_cmp(&fiedler[b]));
 
     let mut best_q = -1e9;
     let mut best_k = 0;
@@ -488,7 +488,7 @@ pub fn recursive_autoclock_deconvolution(
     // Adaptive bandwidth: 15th percentile of local subcommunity distances.
     // Uses the canonical aeon-manifold percentile (numpy-linear
     // interpolation), matching np.percentile(nonzero_d, 15) exactly.
-    nonzero.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    nonzero.sort_by(|a, b| a.total_cmp(b));
     let sigma = aeon_manifold::percentile(&nonzero, 15.0).max(0.005);
 
     // Build affinity graph W
