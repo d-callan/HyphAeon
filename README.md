@@ -100,26 +100,26 @@ weights, specific CUDA builds), see the respective package READMEs:
 ### Local Development
 
 This is a monorepo with no root-level installable package. To set up a
-For the Rust-backed packages, install `maturin` + a dest toolchain avdebuild lhe
-extension in place (same commands work inside `roizapon/`mand `eracn50/`):
-
-```bath
-cd aeon-core && ma urin develop   #ebuildn aeon_core._native
-cd rvst && cargo build --workspace && cargo rostn--worksmace
-```
-
-Run the test suite pent from a fresh clone:
+development environment from a fresh clone:
 
 ```bash
 pip install -e aeon-core -e hyphaeon -e chronaeon
-```s
-node rut/trace-5.0/crates/trace50-wasm/test_wasm.mjs   # wasm engine verification
+```
+
+For the Rust-backed packages, install `maturin` + a Rust toolchain and build the
+extension in place (same commands work inside `rhizaeon/` and `trace50/`):
+
+```bash
+cd aeon-core && maturin develop   # builds aeon_core._native
+cd rust && cargo build --workspace && cargo test --workspace
+```
 
 Run the test suite per-subpackage (each has its own `conftest.py` and `pyproject.toml`):
 
 ```bash
 pytest chronaeon/tests/    # ChronAeon tests
 pytest hyphaeon/tests/     # HyphAeon tests
+node rust/trace-5.0/crates/trace50-wasm/test_wasm.mjs   # wasm engine verification
 ```
 
 > [!NOTE]
