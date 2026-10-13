@@ -14,7 +14,7 @@ use trace50::{run_trace50, Alignment, Trace50Config};
 #[command(
     name = "trace50",
     author = "Sergei L. Kosakovsky Pond & Antigravity AI Engine",
-    version = "5.0.0",
+    version,
     about = "TRACE-5.0: Dynamic Molecular Surveillance of Viral Transmission Networks"
 )]
 struct CliArgs {

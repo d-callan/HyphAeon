@@ -254,8 +254,8 @@ cargo test --all
 # WebAssembly Node.js verification test suite
 cd crates/trace50-wasm && node test_wasm.mjs
 
-# Example CLI pipeline execution
-./examples/run_cli_example.sh
+# CLI parity check against committed baselines (requires maturin develop)
+cd .. && ./scripts/compare_cli_baseline.sh
 ```
 
 ---

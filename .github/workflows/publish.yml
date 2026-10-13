@@ -83,27 +83,15 @@ jobs:
           name: wheels-${{ matrix.platform }}
           path: ${{ needs.verify.outputs.dir }}/dist/
 
-  sdist:
-    name: sdist (requires Rust toolchain to install)
-    needs: verify
-    if: needs.verify.outputs.native == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: PyO3/maturin-action@v1
-        with:
-          working-directory: ${{ needs.verify.outputs.dir }}
-          command: sdist
-          args: --out dist
-      - name: Upload sdist
-        uses: actions/upload-artifact@v4
-        with:
-          name: sdist
-          path: ${{ needs.verify.outputs.dir }}/dist/
+  # No sdist job: the binding manifests live outside the rust workspace
+  # root (rhizaeon/native, trace50/native, aeon-core/native), so
+  # `maturin sdist` cannot strip the workspace prefix and workspace path
+  # deps can't be vendored anyway. The abi3 wheel matrix covers all
+  # tier-1 platforms; other users build from the repo with maturin.
 
   publish-native:
     name: twine check + PyPI upload (native: ${{ needs.verify.outputs.dir }})
-    needs: [verify, wheels, sdist]
+    needs: [verify, wheels]
     if: needs.verify.outputs.native == 'true'
     runs-on: ubuntu-latest
     steps:

@@ -9,7 +9,7 @@ use std::time::Instant;
 #[derive(Parser, Debug)]
 #[command(name = "rhizaeon")]
 #[command(author = "Sergei L. Kosakovsky Pond & Antigravity AI Engine")]
-#[command(version = "0.1.0")]
+#[command(version)]
 #[command(about = "Ultra-fast Physical Force Field (PA-FF v2.1) Recombination Engine", long_about = None)]
 struct Args {
     /// Path to input alignment FASTA file

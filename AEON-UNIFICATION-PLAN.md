@@ -13,17 +13,17 @@
 
 ## Current state (verified)
 
-- Rust workspace root: `rust/Cargo.toml`, members: `libs/aeon-manifold`, `libs/aeon-py`, `rhizaeon/crates/rhizaeon-{core,cli,wasm}`, `trace-5.0/crates/trace50-{core,cli,wasm}`. Workspace deps declared with `path = ..., version = ...` (crates.io-ready).
-- `trace50-core/src/autoclock.rs` (~545 LoC) exports `SteveCommunity`, `compute_fieller_mrca`, `compute_bartlett_neff`, `fit_clock_community`, `optimize_fiedler_modularity`, `recursive_autoclock_deconvolution`. Used by `pipeline.rs:347` (the STEVE stage). Rust impl = `git log`-verified descendant of the standalone trace-5.0 repo.
+- Rust workspace root: `rust/Cargo.toml`, members: `libs/aeon-manifold`, `libs/aeon-autoclock`, `rhizaeon/crates/rhizaeon{,-wasm}`, `trace-5.0/crates/trace50{,-wasm}`, plus the PyO3 binding crates `aeon-core/native`, `rhizaeon/native`, `trace50/native` (members via `../` paths — outside the `rust/` dir, which breaks `maturin sdist`; publish.yml is wheels-only for native packages). Workspace deps declared with `path = ..., version = ...` (crates.io-ready).
+- `trace50/src/autoclock.rs` (~545 LoC) exports `SteveCommunity`, `compute_fieller_mrca`, `compute_bartlett_neff`, `fit_clock_community`, `optimize_fiedler_modularity`, `recursive_autoclock_deconvolution`. Used by `pipeline.rs:347` (the STEVE stage). Rust impl = `git log`-verified descendant of the standalone trace-5.0 repo.
 - `chronaeon/src/chronaeon/autoclock.py` (~2600 LoC): kernel functions `fit_clock`, `recursive_spectral_autoclock`, `classify_community`, `classify_leaf_community`, `detect_contemporaneous_dyads`, `select_adaptive_n_landmarks`, plus orchestration classes (`AutoClockDeconvolution`, `HierarchicalAutoClock`) doing CSV/JSON/figure output. Exported via `chronaeon/__init__.py`.
-- `aeon-py` (`rust/libs/aeon-py`, `crate-type = ["cdylib"]`, module name `aeon_py`) exports: `percentile`, `median`, `parse_date_from_header`, `char_to_iupac_mask`, `iupac_base_probabilities`, `fasta_tokenize`, `fasta_normalize_lengths`, `tn93_distance_matrix`, `tn93_cross_distance_matrix`, `pvals_from_lrt_meme`, `pvals_from_lrt_self_liang`, `benjamini_hochberg`, `cauchy_combination_p`. Python consumers use `import aeon_py` guarded by try/except (see `aeon-core/src/aeon_core/dataset.py`, test probes `_HAS_TN93` in `aeon-core/tests/test_load_alignment.py`, `hyphaeon/tests/test_{integration,splits}.py`).
-- `aeon-core` = pure-Python setuptools package, `pyproject.toml` at `aeon-core/pyproject.toml`, PyPI name **`hyphaeon-core`**, src-layout `aeon-core/src/aeon_core/`.
-- `rhizaeon-cli` = 2 bins (`rhizaeon` from `main.rs`, `export_figure1_data` from `bin/`); `trace50-cli` = 1 bin (`trace50`). Both wasm crates depend only on their `-core` and wasm-bindgen stack.
-- `trace50-core` already has `parallel = ["dep:rayon"]` feature. `rhizaeon-core` uses rayon indirectly via `rhizaeon-cli`.
-- `.github/workflows/publish.yml`: tag glob `hyphaeon-core-v*`/`hyphaeon-v*`/`chronaeon-v*` → package dir → `python -m build` + `twine check` + OIDC trusted-publisher upload (no token secret).
-- `.github/workflows/rust.yml`: fmt + `cargo test --workspace` + `cargo build --release -p rhizaeon-cli -p trace50-cli` + wasm-pack job.
-- **No `license` field in any `rust/**/Cargo.toml`** — required by crates.io. `publish = false` set nowhere.
-- **crates.io availability verified (2026-10-12, crates.io API)**: `aeon-manifold`, `aeon-autoclock`, `aeon-py`, `rhizaeon`, `trace50`, `rhizaeon-cli`, `trace50-cli` all return 404 — every candidate name is free.
+- The former `aeon-py` crate is now `aeon-core/native` (module `aeon_core._native`) and exports `percentile`, `median`, `parse_date_from_header`, `char_to_iupac_mask`, `iupac_base_probabilities`, `fasta_tokenize`, `fasta_normalize_lengths`, `tn93_distance_matrix`, `tn93_cross_distance_matrix`, `pvals_from_lrt_meme`, `pvals_from_lrt_self_liang`, `benjamini_hochberg`, `cauchy_combination_p`, plus autoclock (`fit_clock_community`, `recursive_spectral_autoclock`). Python consumers probe the extension guarded by try/except (see `aeon-core/src/aeon_core/dataset.py`, test probes `_HAS_TN93` in `aeon-core/tests/test_load_alignment.py`, `hyphaeon/tests/test_{integration,splits}.py`).
+- `aeon-core` = maturin package, `pyproject.toml` at `aeon-core/pyproject.toml`, PyPI name **`hyphaeon-core`**, src-layout `aeon-core/src/aeon_core/` + `aeon-core/native` (aeon-py folded in, Phase C).
+- Product CLIs ship as Python packages: `rhizaeon/` exposes `rhizaeon` + `export_figure1_data` console scripts via `rhizaeon-native` (PyO3, forwards argv to the same clap parsers in `native/src/cli.rs`/`fig1.rs`); `trace50/` exposes `trace50` via `trace50-native`. The `rhizaeon`/`trace50` lib crates are clap-free; `conformance` remains trace50's only bin (dev driver).
+- The `cli`/`parallel` features were dropped with the cargo bins — rayon was dead wiring (no lib code used it) and was removed from workspace deps.
+- `.github/workflows/publish.yml`: tag globs `hyphaeon-core-v*`/`hyphaeon-v*`/`chronaeon-v*`/`rhizaeon-v*`/`trace50-v*` → package dir → abi3 wheel matrix (maturin, 5 platforms) for native packages / `python -m build` for pure → `twine check` + OIDC trusted-publisher upload (no token secret). No sdist leg (see workspace bullet).
+- `.github/workflows/rust.yml`: fmt + `cargo test --workspace` + `cargo build --release` on libs/binding crates/conformance + wasm-pack job + clap-free wasm dep-tree check.
+- `license = "MIT"` set on all publishable lib crates; the `*-native` binding crates carry `publish = false`.
+- **crates.io availability verified (2026-10-12, crates.io API)**: `aeon-manifold`, `aeon-autoclock` return 404 — free. Products no longer publish to crates.io; `rhizaeon`/`trace50` name availability on **PyPI** is unverified (check before first tag) and trusted publishers must be registered for both projects.
 - Conformance suite `rust/tests/conformance/test_rust_python_parity.py` documents intentional divergences between the two autoclock impls: **Bartlett n_eff penalty, tier taxonomy, n<3 fields, cohesive stopping criterion** — merging eliminates these; canonical semantics must be chosen (see Decisions).
 
 ---
@@ -248,18 +248,24 @@ Trigger on tags `aeon-manifold-v*`, `aeon-autoclock-v*`, `rhizaeon-v*`, `trace50
 **Ordering constraint:** `rhizaeon`/`trace50` depend on `aeon-manifold` + `aeon-autoclock` being published first — release order: tag/push shared crates → wait for registry propagation (~5–10 min; add `sleep 300` + `cargo search` poll step) → tag/push products. Optionally single workflow with `needs:`-chained publish jobs so one tag push orchestrates all.
 - Secret needed: `CARGO_REGISTRY_TOKEN` (crates.io has OIDC trusted publishing as an alternative — supported since 2025; evaluate, else token).
 
-### D4. Release binaries (optional, recommended)
+### D4. Release binaries — SUPERSEDED
 
-New `release-binaries.yml` on `rhizaeon-v*`/`trace50-v*` tags: `cargo build --release -p rhizaeon -p trace50` matrix (linux gnu, macos intel+arm, windows) → attach to GitHub Release. Gives non-cargo users a `pip install`-equivalent.
+No longer needed: `publish.yml`'s maturin wheel matrix already produces
+prebuilt artifacts for linux x86_64/arm64, macOS intel/arm, and Windows on
+`rhizaeon-v*`/`trace50-v*` tags — those ARE the release binaries, shipped
+through PyPI. A GH-release binary matrix would duplicate the wheel matrix.
 
 ### D5. Bioconda path (note, not in-repo)
 
-Post-publish, bioconda recipes (in user's `bioconda-recipes` fork) can source the crates.io tarball — recipe is `cargo install --locked --root {{ PREFIX }} --path .` — self-contained tarball, deps resolve from registry. Flag as follow-up, not part of this plan's in-repo changes.
+Products now publish to PyPI, not crates.io, so bioconda recipes should
+follow the standard `pip install` skeleton (host deps: maturin + rust
+toolchain — the same pattern already used by the chronaeon recipe).
+Flag as follow-up, not part of this plan's in-repo changes.
 
 ### D6. README/doc updates
 
-- **Root `README.md`**: install table — `pip install hyphaeon` / `pip install chronaeon` (pull `hyphaeon-core` w/ native ext on supported platforms), `cargo install rhizaeon` / `cargo install trace50` or GH-release binaries, wasm bundles for browser. Dev-install section: `cd aeon-core && maturin develop` (requires rustup toolchain); `cd rust && cargo build --workspace`.
-- **`rust/trace-5.0/README.md` + `rust/rhizaeon/README.md`**: replace "build the cli crate" instructions with single-crate equivalents; note `--no-default-features` for lib-only/wasm consumers; add `cargo install` once published.
+- **Root `README.md`**: install table — `pip install hyphaeon` / `pip install chronaeon` (pull `hyphaeon-core` w/ native ext on supported platforms), `pip install rhizaeon` / `pip install trace50`, wasm bundles for browser. Dev-install section: `cd <pkg> && maturin develop` (requires rustup toolchain); `cd rust && cargo build --workspace`.
+- **`rust/trace-5.0/README.md` + `rust/rhizaeon/README.md`**: ✅ done — pip install + maturin develop instructions.
 - **`aeon-core/README.md`**: document maturin build, sdist→cargo requirement, platform wheel coverage, `aeon_core._native` availability probe.
 - **`rust/tests/conformance` header**: remove resolved-divergence notes (Phase A6).
 - Any docs mentioning `aeon_py` top-level import or `rhizaeon-cli`/`trace50-cli`/`rhizaeon-core`/`trace50-core` crate names — `grep -rn` and update.

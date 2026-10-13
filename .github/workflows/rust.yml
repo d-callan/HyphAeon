@@ -37,8 +37,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: cargo test --workspace
         run: cargo test --workspace
-      - name: cargo build --release (libs + conformance driver)
-        run: cargo build --release -p rhizaeon -p trace50
+      - name: cargo build --release (libs, bindings, conformance driver)
+        run: cargo build --release -p rhizaeon -p trace50 -p rhizaeon-native -p trace50-native
       - name: verify wasm dep graph stays clap-free
         run: |
           for p in rhizaeon-wasm trace50-wasm; do
