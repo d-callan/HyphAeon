@@ -15,18 +15,13 @@ use std::path::PathBuf;
     about = "Exports authentic Force-Field & Canonical Manifold trajectory data for Figure 1"
 )]
 struct Args {
-    #[arg(
-        short,
-        long,
-        default_value = "/Users/sergei/Projects/TOGA_MEME/recombination/visual_intuition/hiv1_pol_8B_8C_3CRF07_3CRF08.fasta"
-    )]
+    /// Path to input alignment FASTA (expected taxa prefixes: B., C.,
+    /// CRF07, CRF08 plus AF286230/AY008715 prototypes)
+    #[arg(short, long, required = true)]
     input: PathBuf,
 
-    #[arg(
-        short,
-        long,
-        default_value = "/Users/sergei/Projects/rhizaeon-code/paper/figures/fig1_rhizaeon_authentic_data.json"
-    )]
+    /// Output JSON path (default: fig1_rhizaeon_authentic_data.json in cwd)
+    #[arg(short, long, default_value = "fig1_rhizaeon_authentic_data.json")]
     output: PathBuf,
 
     #[arg(short, long, default_value_t = 300)]
@@ -159,9 +154,18 @@ fn compute_local_jc_distance(
 
 /// Entry point forwarded by the `export_figure1_data` Python console
 /// script. `argv` includes the program name at index 0 (clap `parse_from`
-/// semantics). Returns a process exit code.
+/// semantics); `try_parse_from` keeps clap's exit() from killing the
+/// Python interpreter for programmatic callers. Returns a process exit
+/// code.
 pub fn fig1_export(argv: Vec<String>) -> i32 {
-    match run(&argv) {
+    let args = match Args::try_parse_from(&argv) {
+        Ok(a) => a,
+        Err(e) => {
+            let _ = e.print();
+            return e.exit_code();
+        }
+    };
+    match run(args) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("Error: {}", e);
@@ -170,9 +174,7 @@ pub fn fig1_export(argv: Vec<String>) -> i32 {
     }
 }
 
-fn run(argv: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse_from(argv);
-
+fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     println!("================================================================================");
     println!("  RHIZAEON PA-FF: Authentic Figure 1 Trajectory & Force-Field Exporter");
     println!("================================================================================");
@@ -210,12 +212,12 @@ fn run(argv: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         .taxa
         .iter()
         .position(|t| t.contains("AF286230"))
-        .expect("AF286230 prototype not found");
+        .ok_or("AF286230 prototype not found in alignment")?;
     let ay008715_idx = aln
         .taxa
         .iter()
         .position(|t| t.contains("AY008715"))
-        .expect("AY008715 prototype not found");
+        .ok_or("AY008715 prototype not found in alignment")?;
 
     println!(
         "  Taxa composition: {} B, {} C, {} CRF07, {} CRF08",
@@ -522,8 +524,16 @@ fn run(argv: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         let t = &aln.taxa[target_idx];
         let z1 = trajectories_z1[t].clone();
         let z2 = trajectories_z2[t].clone();
-        let start_5p = vec![z1[0], z2[0]];
-        let end_3p = vec![*z1.last().unwrap(), *z2.last().unwrap()];
+        let (&z1_first, &z1_last) = z1
+            .first()
+            .zip(z1.last())
+            .ok_or("empty z1 trajectory (alignment shorter than window?)")?;
+        let (&z2_first, &z2_last) = z2
+            .first()
+            .zip(z2.last())
+            .ok_or("empty z2 trajectory (alignment shorter than window?)")?;
+        let start_5p = vec![z1_first, z2_first];
+        let end_3p = vec![z1_last, z2_last];
 
         // Sample 4 representative points along the trajectory for dynamical tangent flow arrows
         let sample_steps = [

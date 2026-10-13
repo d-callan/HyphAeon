@@ -8,7 +8,7 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
-use trace50::{run_trace50, Alignment, Trace50Config};
+use trace50::{run_trace50, Alignment, Trace50Config, VisualizationDossier};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -222,38 +222,40 @@ fn parse_metadata_dates(
 }
 
 /// Entry point forwarded by the `trace50` Python console script. `argv`
-/// includes the program name at index 0 (clap `parse_from` semantics); clap
-/// prints and exits internally for --help/--version/usage errors, exactly
-/// as the standalone binary did. Returns a process exit code.
+/// includes the program name at index 0 (clap `parse_from` semantics);
+/// clap reports --help/--version/usage errors via `try_parse_from` so a
+/// programmatic caller never has its process exited underneath it; the
+/// console script still sees the same exit codes (0 help, 2 usage) as the
+/// standalone binary. Returns a process exit code.
 pub fn cli_main(argv: Vec<String>) -> i32 {
-    run(&argv);
-    0
+    let args = match CliArgs::try_parse_from(&argv) {
+        Ok(a) => a,
+        Err(e) => {
+            let _ = e.print();
+            return e.exit_code();
+        }
+    };
+    match run(args) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("{}", e);
+            1
+        }
+    }
 }
 
-fn run(argv: &[String]) {
-    let args = CliArgs::parse_from(argv);
-
+fn run(args: CliArgs) -> Result<(), Box<dyn std::error::Error>> {
     println!("================================================================================");
     println!(" TRACE-5.0: Molecular Transmission Surveillance Engine (Rust Native)");
     println!("================================================================================");
 
     // Read input FASTA
     println!("[*] Loading FASTA alignment from: {}", args.fasta.display());
-    let fasta_content = match fs::read_to_string(&args.fasta) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("[!] Error reading FASTA file: {}", e);
-            std::process::exit(1);
-        }
-    };
+    let fasta_content = fs::read_to_string(&args.fasta)
+        .map_err(|e| format!("[!] Error reading FASTA file: {}", e))?;
 
-    let mut alignment = match Alignment::from_fasta_str(&fasta_content) {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("[!] Error parsing alignment: {}", e);
-            std::process::exit(1);
-        }
-    };
+    let mut alignment = Alignment::from_fasta_str(&fasta_content)
+        .map_err(|e| format!("[!] Error parsing alignment: {}", e))?;
 
     println!(
         "[*] Ingested {} sequences across {} nucleotide sites.",
@@ -319,19 +321,12 @@ fn run(argv: &[String]) {
     };
 
     println!("[*] Executing end-to-end TRACE-5.0 pipeline...");
-    let dossier = match run_trace50(&alignment, &config) {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("[!] Pipeline execution failed: {}", e);
-            std::process::exit(1);
-        }
-    };
+    let dossier = run_trace50(&alignment, &config)
+        .map_err(|e| format!("[!] Pipeline execution failed: {}", e))?;
 
     // Ensure output directory exists
-    if let Err(e) = fs::create_dir_all(&args.out_dir) {
-        eprintln!("[!] Failed to create output directory: {}", e);
-        std::process::exit(1);
-    }
+    fs::create_dir_all(&args.out_dir)
+        .map_err(|e| format!("[!] Failed to create output directory: {}", e))?;
 
     // 1. Write full visualization JSON dossier
     let json_path = args
@@ -353,68 +348,8 @@ fn run(argv: &[String]) {
     }
 
     // 2. Write CSV outputs
-    let dyads_csv = args.out_dir.join("acute_transmission_dyads.csv");
-    let mut dyads_file = File::create(&dyads_csv).expect("Failed to create dyads CSV");
-    writeln!(dyads_file, "source,target,distance,delta_t_years,k_substitutions,bayes_factor,pep,q_value,p_adequacy,status").unwrap();
-    for e in &dossier.edges {
-        writeln!(
-            dyads_file,
-            "{},{},{:.5},{:.3},{:.2},{:.2},{:.6},{:.6},{:.5},{}",
-            e.source,
-            e.target,
-            e.distance,
-            e.delta_t_years,
-            e.k_substitutions,
-            e.bayes_factor,
-            e.pep,
-            e.q_value,
-            e.p_adequacy,
-            e.status
-        )
-        .unwrap();
-    }
-
-    let communities_csv = args.out_dir.join("autoclock_communities.csv");
-    let mut comm_file = File::create(&communities_csv).expect("Failed to create communities CSV");
-    writeln!(comm_file, "community_id,size,n_eff,clock_velocity_mu,se_mu,r_squared,tmrca,ci_tmrca_low,ci_tmrca_high,fieller_status,is_active,operational_tier").unwrap();
-    for c in &dossier.communities {
-        writeln!(
-            comm_file,
-            "{},{},{:.2},{:.6},{:.6},{:.4},{:.2},{:.2},{:.2},{},{},\"{}\"",
-            c.community_id,
-            c.size,
-            c.n_eff,
-            c.mu,
-            c.se_mu,
-            c.r_squared,
-            c.tmrca,
-            c.ci_mrca[0],
-            c.ci_mrca[1],
-            c.fieller_status,
-            c.is_active_outbreak,
-            c.operational_tier
-        )
-        .unwrap();
-    }
-
-    let nodes_csv = args.out_dir.join("patient_surveillance_assignments.csv");
-    let mut nodes_file = File::create(&nodes_csv).expect("Failed to create nodes CSV");
-    writeln!(nodes_file, "taxon_id,date,degree_static,degree_supported,cluster_static,cluster_supported,community_id,operational_tier").unwrap();
-    for n in &dossier.nodes {
-        writeln!(
-            nodes_file,
-            "{},{:.2},{},{},{},{},{},\"{}\"",
-            n.id,
-            n.date,
-            n.degree_static,
-            n.degree_supported,
-            n.cluster_id_static,
-            n.cluster_id_supported,
-            n.community_id,
-            n.operational_tier
-        )
-        .unwrap();
-    }
+    write_csv_outputs(&dossier, &args.out_dir)
+        .map_err(|e| format!("[!] Failed writing CSV outputs: {}", e))?;
 
     // Print summary KPIs
     println!("\n================================================================================");
@@ -504,4 +439,71 @@ fn run(argv: &[String]) {
         json_path.display()
     );
     println!("================================================================================\n");
+    Ok(())
+}
+
+/// Write the three tabular outputs. io errors propagate to `run` — this
+/// used to panic via expect()/unwrap(), which under a Python host would
+/// unwind into the interpreter rather than exit cleanly.
+fn write_csv_outputs(dossier: &VisualizationDossier, out_dir: &Path) -> std::io::Result<()> {
+    let dyads_csv = out_dir.join("acute_transmission_dyads.csv");
+    let mut dyads_file = File::create(&dyads_csv)?;
+    writeln!(dyads_file, "source,target,distance,delta_t_years,k_substitutions,bayes_factor,pep,q_value,p_adequacy,status")?;
+    for e in &dossier.edges {
+        writeln!(
+            dyads_file,
+            "{},{},{:.5},{:.3},{:.2},{:.2},{:.6},{:.6},{:.5},{}",
+            e.source,
+            e.target,
+            e.distance,
+            e.delta_t_years,
+            e.k_substitutions,
+            e.bayes_factor,
+            e.pep,
+            e.q_value,
+            e.p_adequacy,
+            e.status
+        )?;
+    }
+
+    let communities_csv = out_dir.join("autoclock_communities.csv");
+    let mut comm_file = File::create(&communities_csv)?;
+    writeln!(comm_file, "community_id,size,n_eff,clock_velocity_mu,se_mu,r_squared,tmrca,ci_tmrca_low,ci_tmrca_high,fieller_status,is_active,operational_tier")?;
+    for c in &dossier.communities {
+        writeln!(
+            comm_file,
+            "{},{},{:.2},{:.6},{:.6},{:.4},{:.2},{:.2},{:.2},{},{},\"{}\"",
+            c.community_id,
+            c.size,
+            c.n_eff,
+            c.mu,
+            c.se_mu,
+            c.r_squared,
+            c.tmrca,
+            c.ci_mrca[0],
+            c.ci_mrca[1],
+            c.fieller_status,
+            c.is_active_outbreak,
+            c.operational_tier
+        )?;
+    }
+
+    let nodes_csv = out_dir.join("patient_surveillance_assignments.csv");
+    let mut nodes_file = File::create(&nodes_csv)?;
+    writeln!(nodes_file, "taxon_id,date,degree_static,degree_supported,cluster_static,cluster_supported,community_id,operational_tier")?;
+    for n in &dossier.nodes {
+        writeln!(
+            nodes_file,
+            "{},{:.2},{},{},{},{},{},\"{}\"",
+            n.id,
+            n.date,
+            n.degree_static,
+            n.degree_supported,
+            n.cluster_id_static,
+            n.cluster_id_supported,
+            n.community_id,
+            n.operational_tier
+        )?;
+    }
+    Ok(())
 }

@@ -55,10 +55,19 @@ struct Args {
 
 /// Entry point forwarded by the `rhizaeon` Python console script. `argv`
 /// includes the program name at index 0 (clap `parse_from` semantics); clap
-/// prints and exits internally for --help/--version/usage errors, exactly
-/// as the standalone binary did. Returns a process exit code.
+/// reports --help/--version/usage errors via `try_parse_from` so a
+/// programmatic caller never has its process exited underneath it. The
+/// console script still sees the same exit codes (0 help, 2 usage) as the
+/// standalone binary. Returns a process exit code.
 pub fn cli_main(argv: Vec<String>) -> i32 {
-    match run(&argv) {
+    let args = match Args::try_parse_from(&argv) {
+        Ok(a) => a,
+        Err(e) => {
+            let _ = e.print();
+            return e.exit_code();
+        }
+    };
+    match run(args) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("Error: {}", e);
@@ -67,9 +76,7 @@ pub fn cli_main(argv: Vec<String>) -> i32 {
     }
 }
 
-fn run(argv: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse_from(argv);
-
+fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     println!("================================================================================");
     println!("  RHIZAEON PA-FF v2.1 (Native Rust Engine)");
     println!("  Phylo-Attention Force Field Recombination Scanner");
