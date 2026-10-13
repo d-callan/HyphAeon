@@ -7,12 +7,14 @@ on:
       - "rust/**"
       - "rhizaeon/native/**"
       - "trace50/native/**"
+      - "aeon-core/**"
       - ".github/workflows/rust.yml"
   pull_request:
     paths:
       - "rust/**"
       - "rhizaeon/native/**"
       - "trace50/native/**"
+      - "aeon-core/**"
       - ".github/workflows/rust.yml"
 
 env:
@@ -60,9 +62,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-      - name: build rhizaeon-wasm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: build + verify rhizaeon-wasm
         working-directory: rust/rhizaeon/crates/rhizaeon-wasm
-        run: wasm-pack build --target web
-      - name: build trace50-wasm
+        run: |
+          wasm-pack build --target web
+          node test_wasm.mjs
+      - name: build + verify trace50-wasm
         working-directory: rust/trace-5.0/crates/trace50-wasm
-        run: wasm-pack build --target web
+        run: |
+          wasm-pack build --target web
+          node test_wasm.mjs
