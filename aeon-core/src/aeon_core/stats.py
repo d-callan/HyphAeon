@@ -7,20 +7,16 @@ FDR q-values, and Cauchy Combination Test (CCT).
 These are used by the CLI (cmd_meme, cmd_busted), model_eval/_harness.py,
 hyphaeon/filter.py, hyphaeon/epistasis.py, and hyphaeon/phenotype.py.
 Centralizing them here ensures all call sites use the same formula.
+
+Canonical engine: aeon-manifold::stats (Rust), exposed via aeon_core._native.
+The extension is built unconditionally by maturin on any install of this
+package, so it is imported unconditionally — a missing extension means a
+broken install and should fail loudly rather than silently diverge.
 """
 
 import numpy as np
-from scipy.stats import chi2
 
-# Canonical engine: the same kernels implemented in aeon-manifold::stats
-# and exposed via the aeon_core._native extension module. When the
-# extension is present it is preferred so all deployments share one
-# implementation; the scipy formulas below remain as the
-# zero-extra-dependency fallback.
-try:
-    from aeon_core import _native as aeon_py
-except ImportError:
-    aeon_py = None
+from aeon_core import _native as aeon_py
 
 
 def pvals_from_lrt_meme(lrts: np.ndarray) -> np.ndarray:
@@ -34,13 +30,7 @@ def pvals_from_lrt_meme(lrts: np.ndarray) -> np.ndarray:
     This is the formula HyPhy MEME uses and the one HyphAeon's neural model
     is trained to mimic (training targets are MEME LRTs).
     """
-    if aeon_py is not None:
-        return np.asarray(aeon_py.pvals_from_lrt_meme(np.asarray(lrts, dtype=np.float64).tolist()))
-    pvals = np.full(len(lrts), 2.0 / 3.0, dtype=np.float64)
-    pos = lrts > 0.0
-    if np.any(pos):
-        pvals[pos] = (2.0 / 3.0) * (0.45 * chi2.sf(lrts[pos], df=1) + 0.55 * chi2.sf(lrts[pos], df=2))
-    return pvals
+    return np.asarray(aeon_py.pvals_from_lrt_meme(np.asarray(lrts, dtype=np.float64).tolist()))
 
 
 def pvals_from_lrt_self_liang(lrts: np.ndarray) -> np.ndarray:
@@ -52,13 +42,7 @@ def pvals_from_lrt_self_liang(lrts: np.ndarray) -> np.ndarray:
     (single-parameter counterfactual tests). Not appropriate for per-site
     MEME-style p-values — use pvals_from_lrt_meme for those.
     """
-    if aeon_py is not None:
-        return np.asarray(aeon_py.pvals_from_lrt_self_liang(np.asarray(lrts, dtype=np.float64).tolist()))
-    pvals = np.ones(len(lrts), dtype=np.float64)
-    pos = lrts > 0.0
-    if np.any(pos):
-        pvals[pos] = 0.5 * chi2.sf(lrts[pos], df=1)
-    return pvals
+    return np.asarray(aeon_py.pvals_from_lrt_self_liang(np.asarray(lrts, dtype=np.float64).tolist()))
 
 
 def benjamini_hochberg(pvals: np.ndarray) -> np.ndarray:
@@ -66,23 +50,7 @@ def benjamini_hochberg(pvals: np.ndarray) -> np.ndarray:
 
     Returns q-values clipped to [0, 1], same length as input.
     """
-    if aeon_py is not None:
-        return np.asarray(aeon_py.benjamini_hochberg(np.asarray(pvals, dtype=np.float64).tolist()))
-    n = len(pvals)
-    if n == 0:
-        return np.array([], dtype=np.float64)
-    sorted_idx = np.argsort(pvals)
-    sorted_p = pvals[sorted_idx]
-    qvals = np.zeros(n, dtype=np.float64)
-    min_q = 1.0
-    for i in range(n - 1, -1, -1):
-        q = sorted_p[i] * n / (i + 1)
-        if q < min_q:
-            min_q = q
-        qvals[i] = min_q
-    res = np.zeros(n, dtype=np.float64)
-    res[sorted_idx] = qvals
-    return np.clip(res, 0.0, 1.0)
+    return np.asarray(aeon_py.benjamini_hochberg(np.asarray(pvals, dtype=np.float64).tolist()))
 
 
 def cauchy_combination_p(pvals: np.ndarray) -> float:
@@ -92,11 +60,4 @@ def cauchy_combination_p(pvals: np.ndarray) -> float:
     Cauchy combination: tan((0.5 - p) * pi) averaged, then back-transformed.
     Robust to dependency among the input p-values.
     """
-    if aeon_py is not None:
-        return float(aeon_py.cauchy_combination_p(np.asarray(pvals, dtype=np.float64).tolist()))
-    if len(pvals) == 0:
-        return 1.0
-    p_clipped = np.clip(pvals, 1e-15, 1.0 - 1e-15)
-    t = np.mean(np.tan((0.5 - p_clipped) * np.pi))
-    p_cct = 0.5 - (np.arctan(t) / np.pi)
-    return float(np.clip(p_cct, 1e-15, 1.0))
+    return float(aeon_py.cauchy_combination_p(np.asarray(pvals, dtype=np.float64).tolist()))
