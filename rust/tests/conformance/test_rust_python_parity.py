@@ -131,7 +131,7 @@ def test_tn93_saturation_unified(tmp_path):
 
     Pre-W9 the Python `tn93` package capped unresolvable distances at its
     1.0 ceiling while the Rust closed-form estimator returned d=0.7535 for
-    this MASE pair. With Python delegating to aeon_py, the divergence is
+    this MASE pair. With Python delegating to aeon_core._native, the divergence is
     gone — both sides must agree on the finite estimator.
     """
     from aeon_core.dataset import compute_tn93_distance_matrix
