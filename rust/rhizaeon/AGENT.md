@@ -134,11 +134,13 @@ crates/
 │   └── tests/
 │       ├── empirical_benchmarks.rs                     # Integration test on KAL-153 & mtDNA
 │       └── simulated_scenarios.rs                      # Synthetic crossover, cassette, nulls
-│   └── src/bin/
-│       ├── rhizaeon.rs             # Clap-based CLI interface (`cli` feature, on by default)
-│       └── export_figure1_data.rs  # Benchmark data export binary
 └── rhizaeon-wasm/             # WebAssembly client-side library
     └── src/lib.rs             # wasm-bindgen bindings: scan_alignment, generate_dashboard
+
+# NOTE: the clap CLI (`rhizaeon`, `export_figure1_data`) no longer lives in
+# the rhizaeon crate — it sits in the `rhizaeon-native` PyO3 binding at
+# <repo>/rhizaeon/native and ships via `pip install rhizaeon`. The lib crate
+# stays clap-free so rhizaeon-wasm builds clean.
 tests/
 ├── empirical/                 # Real-world benchmark alignments & validation runner
 │   ├── data/                  # KAL-153 CRF02_AG, SARS-CoV-2 XBB, Human mtDNA

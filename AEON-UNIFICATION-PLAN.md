@@ -87,6 +87,24 @@ Return types: `ClockFit`/`SteveCommunity` → Python `dict` — use `pythonize` 
 
 ## Phase B — Collapse `-core`/`-cli` into one crate per product
 
+> **SUPERSEDED (Python-fronted CLI pivot, executed):** the `-core`/`-cli`
+> collapse itself happened (single `rhizaeon` and `trace50` crates), but the
+> user-facing binaries were then REMOVED from the lib crates entirely.
+> Instead of cargo binaries, each product got a thin Python sister package
+> mirroring `aeon-core`: `rhizaeon/` (native/ PyO3 crate `rhizaeon-native`
+> exposing `rhizaeon_cli` + `export_figure1_data`, console scripts
+> `rhizaeon`/`export_figure1_data`, PyPI name `rhizaeon`) and `trace50/`
+> (crate `trace50-native` exposing `trace50_cli`, console script `trace50`,
+> PyPI name `trace50`). The Python wrappers forward `sys.argv` verbatim to
+> the same clap parsers — CLI surface identical to the old binaries.
+> `conformance` stays as trace50's only Rust bin (dev/test driver).
+> Rationale: better UX, single PyPI publishing path (publish.yml handles
+> `rhizaeon-v*`/`trace50-v*` tags via the same maturin wheel matrix;
+> publish-crates.yml now covers only the shared lib crates).
+>
+> Remaining sections below describe the crate collapse mechanics that were
+> kept; the "ship as cargo bins" framing is superseded.
+
 Target: workspace members shrink from 8 → 7: `aeon-autoclock`, `aeon-manifold`, `aeon-py` (moved to `aeon-core/native` in Phase C), `rhizaeon`, `rhizaeon-wasm`, `trace50`, `trace50-wasm` (wasm crates stay separate).
 
 ### B1. `rhizaeon` crate

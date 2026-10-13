@@ -157,8 +157,21 @@ fn compute_local_jc_distance(
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
+/// Entry point forwarded by the `export_figure1_data` Python console
+/// script. `argv` includes the program name at index 0 (clap `parse_from`
+/// semantics). Returns a process exit code.
+pub fn fig1_export(argv: Vec<String>) -> i32 {
+    match run(&argv) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            1
+        }
+    }
+}
+
+fn run(argv: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse_from(argv);
 
     println!("================================================================================");
     println!("  RHIZAEON PA-FF: Authentic Figure 1 Trajectory & Force-Field Exporter");

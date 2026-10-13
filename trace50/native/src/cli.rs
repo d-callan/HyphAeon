@@ -221,8 +221,17 @@ fn parse_metadata_dates(
     Ok(map)
 }
 
-fn main() {
-    let args = CliArgs::parse();
+/// Entry point forwarded by the `trace50` Python console script. `argv`
+/// includes the program name at index 0 (clap `parse_from` semantics); clap
+/// prints and exits internally for --help/--version/usage errors, exactly
+/// as the standalone binary did. Returns a process exit code.
+pub fn cli_main(argv: Vec<String>) -> i32 {
+    run(&argv);
+    0
+}
+
+fn run(argv: &[String]) {
+    let args = CliArgs::parse_from(argv);
 
     println!("================================================================================");
     println!(" TRACE-5.0: Molecular Transmission Surveillance Engine (Rust Native)");

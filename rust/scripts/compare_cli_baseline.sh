@@ -23,18 +23,21 @@ REGEN=0
 RUN_DIR="$(mktemp -d)"
 trap 'rm -rf "$RUN_DIR"' EXIT
 
-RHIZ_BIN="$RUST_ROOT/target/release/rhizaeon"
-TRACE_BIN="$RUST_ROOT/target/release/trace50"
-if [ ! -x "$RHIZ_BIN" ] || [ ! -x "$TRACE_BIN" ]; then
-    echo "[*] Building release binaries..."
-    cargo build --release --manifest-path "$RUST_ROOT/Cargo.toml" \
-        --bin rhizaeon --bin trace50
+# CLIs ship via the rhizaeon/trace50 Python packages (maturin); run them
+# through `python3 -m` so the comparison needs no PATH assumptions.
+RHIZ_BIN=(python3 -m rhizaeon)
+TRACE_BIN=(python3 -m trace50)
+if ! python3 -c "import rhizaeon._native" 2>/dev/null || \
+   ! python3 -c "import trace50._native" 2>/dev/null; then
+    echo "[!] rhizaeon/trace50 Python packages not installed." >&2
+    echo "    Run: cd rhizaeon && maturin develop   (same for trace50/)" >&2
+    exit 1
 fi
 
 mkdir -p "$RUN_DIR/rhizaeon" "$RUN_DIR/trace50"
 
 echo "[*] rhizaeon -> $RUN_DIR/rhizaeon"
-"$RHIZ_BIN" \
+"${RHIZ_BIN[@]}" \
     --input "$RHIZ_ALN" \
     --output "$RUN_DIR/rhizaeon/rhiz.json" \
     --viz "$RUN_DIR/rhizaeon/rhiz_viz.json" \
@@ -42,7 +45,7 @@ echo "[*] rhizaeon -> $RUN_DIR/rhizaeon"
     > "$RUN_DIR/rhizaeon/rhiz_stdout.txt" 2>&1
 
 echo "[*] trace50 -> $RUN_DIR/trace50"
-"$TRACE_BIN" \
+"${TRACE_BIN[@]}" \
     --fasta "$TRACE_ALN" \
     --out-dir "$RUN_DIR/trace50" \
     > "$RUN_DIR/trace50/trace_stdout.txt" 2>&1

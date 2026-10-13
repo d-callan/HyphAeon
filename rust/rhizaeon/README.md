@@ -36,7 +36,7 @@ Run RhizAeon directly in your web browser with zero installation:
 - **Linear-Time Scaling (`O(NK)` vs. `O(N³)`):** Evaluates alignments against *K* ≤ 32 Buneman metric landmarks. Scans 128 full-length genomes (12 kb) in **1.16 seconds**, compared to ~9.2 minutes for 3SEQ (**~500x speedup**).
 - **Immune to Heterotachy & Hypermutation (FPR = 0.00%):** Private autapomorphic rate bursts (e.g. the Darren heterotachy trap) and localized hypermutation showers (e.g. APOBEC) are dissipated into a continuous `[ROOT]` sink token, preventing false-positive donor attribution.
 - **Multi-Way Mosaic Deconvolution:** Simultaneously detects multiple distinct parental donor cassettes across a recombinant chromosome without triplet truncation.
-- **Zero-Dependency Native Binary & WASM:** Compiled as a standalone, statically linked native binary (`rhizaeon`) and zero-overhead WebAssembly library for client-side execution directly in web browsers.
+- **Zero-Dependency Python CLI & WASM:** Ships as `pip install rhizaeon` — a compiled native extension with the full clap CLI — plus a zero-overhead WebAssembly library for client-side execution directly in web browsers.
 - **Interactive Visual Reporting:** Emits standalone, zero-dependency HTML dashboards (`--html`) featuring interactive trajectory manifold visualizations, restoring potential curves, and breakpoint locators.
 
 ---
@@ -58,15 +58,23 @@ Run RhizAeon directly in your web browser with zero installation:
 
 ## Installation & Build
 
-### 1. Build Native Rust CLI (Release Mode)
-Ensure you have the Rust toolchain installed ([rustup.rs](https://rustup.rs/)):
+### 1. Install the Python CLI (recommended)
+The `rhizaeon` command-line tool ships as a Python package with the native
+Rust engine compiled in via maturin:
 
 ```bash
-git clone https://github.com/veg/rhizaeon-code.git
-cd rhizaeon-code
-cargo build --release
+pip install rhizaeon
+rhizaeon --input alignment.fasta --output scan.json --html report.html
 ```
-The optimized binary will be placed at `target/release/rhizaeon`.
+
+For development from this monorepo (requires the Rust toolchain,
+[rustup.rs](https://rustup.rs/)):
+
+```bash
+git clone https://github.com/veg/HyphAeon.git
+cd HyphAeon/rhizaeon
+maturin develop          # builds + installs into the active Python env
+```
 
 ### 2. Build WebAssembly (WASM) Module
 Ensure you have `wasm-pack` installed (`cargo install wasm-pack`):
@@ -235,7 +243,7 @@ rhizaeon-code/
 ├── AGENT.md                      # Machine-readable specification for AI agents
 ├── LICENSE                       # MIT License
 ├── crates/
-│   ├── rhizaeon/                 # Core PA-FF v2.1 algorithmic kernel + CLI
+│   ├── rhizaeon/                 # Core PA-FF v2.1 algorithmic kernel (pure lib — the CLI ships via the `rhizaeon` Python package)
 │   │   ├── src/
 │   │   │   ├── engine.rs         # Scanner pipeline & candidate coordination
 │   │   │   ├── attention.rs      # Continuous Tree-RoPE cross-attention
@@ -245,9 +253,6 @@ rhizaeon-code/
 │   │   │   ├── due_diligence.rs  # Fisher's test & cycle adjudication
 │   │   │   ├── fasta.rs          # Fast alignment parser & IUPAC validator
 │   │   │   └── visualization.rs  # Interactive HTML & dossier generator
-│   │   ├── bin/
-│   │   │   ├── rhizaeon.rs       # Standalone CLI (`cli` feature, on by default)
-│   │   │   └── export_figure1_data.rs
 │   │   └── tests/
 │   │       ├── empirical_benchmarks.rs
 │   │       └── simulated_scenarios.rs

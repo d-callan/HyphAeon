@@ -1,0 +1,37 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "rhizaeon"
+version = "0.1.0"
+authors = [
+  { name="Sergei L. Kosakovsky Pond", email="spond@temple.edu" },
+]
+description = "RhizAeon PA-FF v2.1: Phylo-Attention Force Field Recombination Scanner"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+
+[project.scripts]
+rhizaeon = "rhizaeon.cli:main"
+export_figure1_data = "rhizaeon.cli:fig1_main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.maturin]
+python-source = "src"
+manifest-path = "native/Cargo.toml"
+module-name = "rhizaeon._native"
+bindings = "pyo3"
+
+[project.urls]
+"Homepage" = "https://github.com/veg/HyphAeon"
+"Bug Tracker" = "https://github.com/veg/HyphAeon/issues"

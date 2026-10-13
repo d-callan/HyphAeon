@@ -69,7 +69,7 @@ TRACE-5.0 is implemented in a pure, modern Rust workspace with zero C dependenci
 trace-5.0/
 ├── Cargo.toml                     # Workspace root manifest
 ├── crates/
-│   ├── trace50/                   # Algorithmic kernel + CLI (zero C-dependencies, pure Rust, WASM-safe)
+│   ├── trace50/                   # Algorithmic kernel (pure lib; CLI ships via the `trace50` Python package)
 │   │   ├── src/
 │   │   │   ├── math.rs            # Lanczos ln_gamma, incomplete upper gamma gammaincc, Poisson CDF, Jacobi eigensolver
 │   │   │   ├── tn93.rs            # Bitmask IUPAC ambiguous Tamura-Nei 93 pairwise distance & FASTA parser
@@ -81,8 +81,7 @@ trace-5.0/
 │   │   │   ├── visualization.rs   # Comprehensive Visualization Dossier JSON schema
 │   │   │   ├── pipeline.rs        # End-to-end execution orchestrator
 │   │   │   └── bin/
-│   │   │       ├── trace50.rs     # Native multi-platform CLI binary (`cli` feature, on by default)
-│   │   │       └── conformance.rs # Rust-side conformance harness binary
+│   │   │       └── conformance.rs # Rust-side conformance harness (dev/test driver, not a user CLI)
 │   │   └── tests/
 │   │       └── test_pipeline.rs   # Automated integration tests
 │   └── trace50-wasm/              # WebAssembly package for browsers, Node.js, and Observable Framework
@@ -93,22 +92,29 @@ trace-5.0/
 
 ---
 
-## 3. Quickstart: Native Standalone CLI
+## 3. Quickstart: Python CLI
 
-### Installation & Build
+### Installation
+The `trace50` command-line tool ships as a Python package with the native
+Rust engine compiled in via maturin:
+
 ```bash
-# Clone repository
-git clone https://github.com/veg/trace-5.0.git
-cd trace-5.0
-
-# Build optimized release binary
-cargo build --release --bin trace50
+pip install trace50
+trace50 --fasta alignment.fasta --meta attributes.csv --out-dir surveillance_results
 ```
-The compiled executable is located at `target/release/trace50`.
+
+For development from this monorepo (requires the Rust toolchain,
+[rustup.rs](https://rustup.rs/)):
+
+```bash
+git clone https://github.com/veg/HyphAeon.git
+cd HyphAeon/trace50
+maturin develop          # builds + installs into the active Python env
+```
 
 ### Running Transmission Surveillance
 ```bash
-./target/release/trace50 \
+trace50 \
   --fasta /path/to/alignment.fasta \
   --meta /path/to/metadata.csv \
   --id-col id \

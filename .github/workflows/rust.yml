@@ -5,10 +5,14 @@ on:
     branches: [main]
     paths:
       - "rust/**"
+      - "rhizaeon/native/**"
+      - "trace50/native/**"
       - ".github/workflows/rust.yml"
   pull_request:
     paths:
       - "rust/**"
+      - "rhizaeon/native/**"
+      - "trace50/native/**"
       - ".github/workflows/rust.yml"
 
 env:
@@ -33,7 +37,7 @@ jobs:
         run: cargo fmt --all -- --check
       - name: cargo test --workspace
         run: cargo test --workspace
-      - name: cargo build --release (CLI binaries)
+      - name: cargo build --release (libs + conformance driver)
         run: cargo build --release -p rhizaeon -p trace50
       - name: verify wasm dep graph stays clap-free
         run: |

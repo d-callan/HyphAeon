@@ -53,8 +53,22 @@ struct Args {
     no_compress_snps: bool,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
+/// Entry point forwarded by the `rhizaeon` Python console script. `argv`
+/// includes the program name at index 0 (clap `parse_from` semantics); clap
+/// prints and exits internally for --help/--version/usage errors, exactly
+/// as the standalone binary did. Returns a process exit code.
+pub fn cli_main(argv: Vec<String>) -> i32 {
+    match run(&argv) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            1
+        }
+    }
+}
+
+fn run(argv: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse_from(argv);
 
     println!("================================================================================");
     println!("  RHIZAEON PA-FF v2.1 (Native Rust Engine)");
