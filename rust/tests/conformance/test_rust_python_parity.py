@@ -14,18 +14,32 @@ criteria) each engine's current output is pinned as a golden so any drift —
 intentional or accidental — fails loudly during the Phase-2 refactor.
 
 Known intentional divergences (audited, NOT parity bugs — do not "fix"):
-  * Saturation ceilings and decimal-year regex coverage differ between the
-    Rust and Python TN93/date kernels.
+  * Date header conventions: Rust scans delimited tokens left-to-right and
+    the FIRST in-range token wins (any-precision decimal years accepted);
+    Python `parse_header_timestamp` prefers ISO/decimal regexes, requires
+    2-4 fractional digits, and adds domain formats the Rust kernel
+    deliberately lacks (Korber LANL strain names, ZR59 anchor, intra-host
+    WPI). Fractional-year conventions also differ: (month-1)/12 +
+    (day-1)/365.25 vs day-of-year (~4e-3 apart on ISO dates).
+  * `chronaeon.r0.extract_dates_from_fasta` resolves each token with the
+    canonical kernel but selects the LAST resolvable token: r0's domain is
+    Nextstrain-style headers (strain-designation year first, sampling date
+    last), where first-wins collapses every date to the designation year.
+  * trace50's pipeline imputes the median valid date for NaN headers
+    (2020.0 when none exist); chronaeon drops undated sequences.
+  * TN93 saturation is UNIFIED: the Python `tn93` package's 1.0 ceiling
+    diverged from the Rust closed-form estimator pre-W9; both sides now
+    share the kernel.
 
 AUTOCLOCK UNIFICATION (Phase A, canonical = Rust per Sergei 2026-10-13):
   chronaeon's fit_clock / recursive_spectral_autoclock delegate to
-  aeon_core._native -> aeon-autoclock whenever the extension is
-  importable, so both engines emit the same partitions and fit
-  statistics. The historical divergences (Bartlett n_eff df penalty vs
-  n - 2, relative- vs fixed-horizon tier taxonomies, n < 3 leaf field
-  zeroing, and the Welch-z cohesive stop vs the modularity/conductance
-  gate) survive only in the pure-Python fallback used when the extension
-  is absent — those paths are legacy, not canonical.
+  aeon_core._native -> aeon-autoclock, so both engines emit the same
+  partitions and fit statistics. The historical divergences (Bartlett
+  n_eff df penalty vs n - 2, relative- vs fixed-horizon tier taxonomies,
+  n < 3 leaf field zeroing, and the Welch-z cohesive stop vs the
+  modularity/conductance gate) lived only in the pure-Python fallback
+  bodies, which were deleted in feat/phase2-dedup — _native is
+  hard-required and those paths no longer exist.
 """
 
 import json
@@ -114,10 +128,10 @@ def test_tn93_matrix_parity(fasta, tmp_path):
         err_msg=f"TN93 close-pair parity failed on {fasta.name}",
     )
 
-    # Moderately divergent pairs: observed gap is 1.01e-4 rel (outbreak,
-    # d~0.07) and 3.56e-4 rel (hcv, d~0.35) between the Rust closed-form
-    # estimator and the Python tn93 package. Pin with headroom; growth is a
-    # regression.
+    # Moderately divergent pairs: both engines share the aeon-manifold
+    # kernel now; residual diff is the conformance driver's float32 JSON
+    # serialization of the Rust matrix. rtol=5e-4 is pure headroom —
+    # growth is a regression.
     divergent = mask & ~close & (py_mat < 1.0)
     if divergent.any():
         np.testing.assert_allclose(
