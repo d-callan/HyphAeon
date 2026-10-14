@@ -34,7 +34,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 from scipy.linalg import eigh
-from sklearn.cluster import SpectralClustering, KMeans
+from sklearn.cluster import KMeans
 from sklearn.manifold import MDS
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
@@ -54,20 +54,17 @@ from .dating import (
     generate_time_decay_consensus_sequence,
     compute_time_decay_profile_divergences,
     generate_consensus_sequence,
-    compute_fieller_mrca_interval,
 )
 
 
 # The STEVE/AutoClock kernels are canonically implemented in Rust
-# (aeon-autoclock, bound via aeon_core._native). The Python bodies below
-# remain as the fallback for installs without the compiled extension; their
-# legacy semantics differ where the two engines historically diverged
-# (Bartlett n_eff df penalty, cohesive stopping criterion, n<3 leaf fields,
-# operational tier taxonomy). Canonical = Rust.
-try:
-    from aeon_core import _native as _native_ext
-except ImportError:
-    _native_ext = None
+# (aeon-autoclock, bound via aeon_core._native). chronaeon hard-depends on
+# hyphaeon-core, which builds this extension unconditionally — a missing
+# extension means a broken install and should fail loudly rather than
+# silently running the legacy Python semantics (Bartlett n_eff df penalty,
+# cohesive stopping criterion, n<3 leaf fields, tier taxonomy — the legacy
+# implementation remains in git history for reference).
+from aeon_core import _native as _native_ext
 
 
 def _steve_to_fit_dict(c: Dict[str, Any]) -> Dict[str, Any]:
@@ -167,82 +164,16 @@ def fit_clock(
         - span: temporal duration (years)
         - d0: mean root-to-sample distance
     """
-    if _native_ext is not None:
-        D_arr = np.asarray(D, dtype=np.float64)
-        raw = json.loads(
-            _native_ext.fit_clock_community(
-                np.asarray(sub_idx, dtype=np.int64).tolist(),
-                np.asarray(dates, dtype=np.float64).tolist(),
-                D_arr.ravel().tolist(),
-                int(D_arr.shape[0]),
-            )
+    D_arr = np.asarray(D, dtype=np.float64)
+    raw = json.loads(
+        _native_ext.fit_clock_community(
+            np.asarray(sub_idx, dtype=np.int64).tolist(),
+            np.asarray(dates, dtype=np.float64).tolist(),
+            D_arr.ravel().tolist(),
+            int(D_arr.shape[0]),
         )
-        return _steve_to_fit_dict(raw)
-
-    sub_idx = np.asarray(sub_idx)
-    n = len(sub_idx)
-    if n < 3:
-        t_val = float(dates[sub_idx].min()) if n > 0 else 0.0
-        return {
-            "n": n, "mu": 0.0, "se": 0.0, "r2": 0.0, "rss": 0.0, "tot_var": 0.0,
-            "aicc": 1e6, "tmrca": t_val, "ci_mrca": [t_val, t_val],
-            "fieller_status": "TOO_SMALL", "mean_dist": 0.0, "max_dist": 0.0,
-            "span": 0.0, "d0": 0.0
-        }
-
-    sub_dates = dates[sub_idx]
-    D_sub = D[np.ix_(sub_idx, sub_idx)]
-    span = float(sub_dates.max() - sub_dates.min())
-    nonzero = D_sub[D_sub > 0]
-    mean_d = float(nonzero.mean()) if len(nonzero) > 0 else 0.0
-    max_d = float(nonzero.max()) if len(nonzero) > 0 else 0.0
-
-    earliest_local = int(np.argmin(sub_dates))
-    dists = D_sub[earliest_local]
-
-    t_ref = float(np.mean(sub_dates))
-    x = sub_dates - t_ref
-    var_x = float(np.sum(x**2))
-    y = dists - float(np.mean(dists))
-    tot_var = float(np.sum(y**2))
-
-    if var_x < 1e-12:
-        t_val = float(sub_dates.min())
-        return {
-            "n": n, "mu": 0.0, "se": 0.0, "r2": 0.0, "rss": tot_var, "tot_var": tot_var,
-            "aicc": 1e6, "tmrca": t_val, "ci_mrca": [t_val, t_val],
-            "fieller_status": "ZERO_TIME_VAR", "mean_dist": mean_d, "max_dist": max_d,
-            "span": span, "d0": float(np.mean(dists))
-        }
-
-    mu = float(np.sum(x * y) / var_x)
-    d0 = float(np.mean(dists))
-    fitted = d0 + mu * x
-    rss = float(np.sum((dists - fitted)**2))
-    r2 = float(max(0.0, 1.0 - rss / max(1e-12, tot_var)))
-    df = n - 2
-    s2 = max(rss / max(df, 1), 1e-12)
-    se_mu = float(np.sqrt(s2 / var_x))
-
-    cov_beta = np.zeros((2, 2))
-    cov_beta[0, 0] = s2 / var_x
-    cov_beta[1, 1] = s2 / n
-
-    ci_mrca, fieller_info = compute_fieller_mrca_interval(
-        mu=mu, d0=d0, cov_beta=cov_beta, t_ref=t_ref, df=df, alpha=0.05, min_time=float(sub_dates.min())
     )
-    tmrca = float(t_ref - d0 / mu) if mu > 1e-12 else float(sub_dates.min())
-
-    loglik = -0.5 * n * (np.log(2.0 * np.pi * s2) + 1.0)
-    p = 3
-    aicc = -2.0 * loglik + 2.0 * p + (2.0 * p * (p + 1)) / max(n - p - 1, 1)
-
-    return {
-        "n": n, "mu": mu, "se": se_mu, "r2": r2, "rss": rss, "tot_var": tot_var,
-        "aicc": aicc, "tmrca": tmrca, "ci_mrca": ci_mrca,
-        "fieller_status": fieller_info.get("status", "UNKNOWN"),
-        "mean_dist": mean_d, "max_dist": max_d, "span": span, "d0": d0
-    }
+    return _steve_to_fit_dict(raw)
 
 
 def recursive_spectral_autoclock(
@@ -281,102 +212,28 @@ def recursive_spectral_autoclock(
     -------
     List of tuples: (sub_idx, fit, stop_reason, path)
     """
-    if _native_ext is not None and depth == 0 and path == "root":
-        D_arr = np.asarray(D, dtype=np.float64)
-        raw = json.loads(
-            _native_ext.recursive_spectral_autoclock(
-                np.asarray(sub_idx, dtype=np.int64).tolist(),
-                np.asarray(dates, dtype=np.float64).tolist(),
-                D_arr.ravel().tolist(),
-                int(D_arr.shape[0]),
-                min_size,
-                max_depth,
-                0.65,  # conductance_cut — the value the trace50 pipeline uses
-                is_ref=np.asarray(is_ref_array).tolist() if is_ref_array is not None else None,
-            )
-        )
-        return [
-            (
-                np.asarray(c["members"], dtype=np.int64),
-                _steve_to_fit_dict(c),
-                c["stop_reason"],
-                c["path"],
-            )
-            for c in raw
-        ]
-
-    sub_idx = np.asarray(sub_idx)
-    n = len(sub_idx)
-    fit_p = fit_clock(sub_idx, dates, D)
-
-    if depth >= max_depth:
-        return [(sub_idx, fit_p, f"max_depth_{depth}", path)]
-    if n < 2 * min_size:
-        return [(sub_idx, fit_p, f"min_size_floor_N{n}", path)]
-
-    D_sub = D[np.ix_(sub_idx, sub_idx)]
-    nonzero_d = D_sub[D_sub > 0]
-    if len(nonzero_d) == 0:
-        return [(sub_idx, fit_p, "identical_sequences", path)]
-
-    # Adaptive affinity bandwidth: 15th percentile of local subcommunity distances
-    sigma = max(float(np.percentile(nonzero_d, 15)), 0.005)
-    W = np.exp(- (D_sub**2) / (2.0 * (sigma**2)))
-    np.fill_diagonal(W, 0.0)
-
-    deg = W.sum(axis=1)
-    if (deg == 0).all():
-        return [(sub_idx, fit_p, "disconnected_graph", path)]
-
-    d_inv_sqrt = np.power(deg, -0.5, where=deg > 0)
-    d_inv_sqrt[deg == 0] = 0.0
-    L_sym = np.eye(n) - (d_inv_sqrt[:, None] * W * d_inv_sqrt[None, :])
-
-    try:
-        evals, evecs = eigh(L_sym, subset_by_index=[0, min(3, n - 1)])
-    except Exception:
-        return [(sub_idx, fit_p, "eigh_failure", path)]
-
-    if len(evals) < 2 or evals[1] > 0.999:
-        return [(sub_idx, fit_p, "homogeneous_spectral_manifold", path)]
-
-    fiedler = evecs[:, 1]
-
-    # Candidate splits: 2-means and median sweep cut
-    km = KMeans(n_clusters=2, random_state=42, n_init=10).fit(fiedler.reshape(-1, 1))
-    c0 = np.where(km.labels_ == 0)[0]
-    c1 = np.where(km.labels_ == 1)[0]
-
-    if len(c0) < min_size or len(c1) < min_size:
-        med = float(np.median(fiedler))
-        c0 = np.where(fiedler <= med)[0]
-        c1 = np.where(fiedler > med)[0]
-
-    if len(c0) < min_size or len(c1) < min_size:
-        return [(sub_idx, fit_p, "cannot_bisect_size_floor", path)]
-
-    fit_0 = fit_clock(sub_idx[c0], dates, D)
-    fit_1 = fit_clock(sub_idx[c1], dates, D)
-
-    # Cohesive leaf stopping criterion:
-    # If parent is already tight (mean dist < 1.5%), has a linear clock (R2 >= 0.20),
-    # and child rates are statistically indistinguishable (Welch z < 1.96), terminate recursion.
-    if fit_p["mean_dist"] < 0.015 and fit_p["r2"] >= 0.20 and fit_p["mu"] > 0:
-        se_diff = np.sqrt(fit_0["se"]**2 + fit_1["se"]**2)
-        z = abs(fit_0["mu"] - fit_1["mu"]) / max(se_diff, 1e-12)
-        if z < 1.96:
-            return [(sub_idx, fit_p, f"cohesive_clock_cluster_z{z:.2f}", path)]
-
-    return (
-        recursive_spectral_autoclock(
-            sub_idx[c0], dates, D, min_size=min_size, max_depth=max_depth,
-            depth=depth + 1, path=f"{path}.0", is_ref_array=is_ref_array
-        ) +
-        recursive_spectral_autoclock(
-            sub_idx[c1], dates, D, min_size=min_size, max_depth=max_depth,
-            depth=depth + 1, path=f"{path}.1", is_ref_array=is_ref_array
+    D_arr = np.asarray(D, dtype=np.float64)
+    raw = json.loads(
+        _native_ext.recursive_spectral_autoclock(
+            np.asarray(sub_idx, dtype=np.int64).tolist(),
+            np.asarray(dates, dtype=np.float64).tolist(),
+            D_arr.ravel().tolist(),
+            int(D_arr.shape[0]),
+            min_size,
+            max_depth,
+            0.65,  # conductance_cut — the value the trace50 pipeline uses
+            is_ref=np.asarray(is_ref_array).tolist() if is_ref_array is not None else None,
         )
     )
+    return [
+        (
+            np.asarray(c["members"], dtype=np.int64),
+            _steve_to_fit_dict(c),
+            c["stop_reason"],
+            c["path"],
+        )
+        for c in raw
+    ]
 
 
 def classify_community(
