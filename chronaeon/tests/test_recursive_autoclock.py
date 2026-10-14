@@ -19,7 +19,6 @@ from chronaeon.autoclock import (
     classify_community,
     classify_leaf_community,
 )
-from chronaeon.autoclock import _native_ext as _HAS_NATIVE_KERNEL
 
 
 def _generate_synthetic_epidemic_transmission_matrix():
@@ -203,18 +202,11 @@ class TestRecursiveSpectralAutoClock:
         members = sorted(m for leaf in leaves for m in leaf[0].tolist())
         assert members == list(range(n)), "leaves must cover all taxa"
 
-        if _HAS_NATIVE_KERNEL is not None:
-            # Canonical: the conductance gate passes the early-vs-late
-            # split; each child then reads as a homogeneous manifold.
-            assert len(leaves) == 2
-            for _, _, stop_reason, _ in leaves:
-                assert stop_reason == "homogeneous_spectral_manifold"
-        else:
-            # Legacy Python fallback: Welch-z cohesive stop at the parent.
-            assert len(leaves) == 1
-            sub_idx, fit, stop_reason, path = leaves[0]
-            assert "cohesive_clock_cluster" in stop_reason
-            assert len(sub_idx) == n
+        # Canonical kernel: the conductance gate passes the early-vs-late
+        # split; each child then reads as a homogeneous manifold.
+        assert len(leaves) == 2
+        for _, _, stop_reason, _ in leaves:
+            assert stop_reason == "homogeneous_spectral_manifold"
 
 
 class TestCommunityClassification:

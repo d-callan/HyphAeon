@@ -7,21 +7,18 @@ branch length validation, and HyPhy branch length estimation.
 """
 
 import os
-import sys
 import gzip
 import warnings
 import shutil
 import tempfile
 import subprocess
 import re
-import csv
 from io import StringIO
 from pathlib import Path
 from typing import Optional, Tuple, Dict, List, Any, Union
 import xml.etree.ElementTree as ET
 
 import numpy as np
-import scipy.stats as stats
 import torch
 from Bio import SeqIO, Phylo
 
@@ -29,6 +26,7 @@ from Bio import SeqIO, Phylo
 # on any install of this package — a missing extension means a broken
 # install and should fail loudly rather than silently diverge.
 from aeon_core import _native as aeon_py
+from aeon_core.temporal import parse_date_to_decimal
 
 GENETIC_CODE = {
     'TTT': 0, 'TTC': 1, 'TTA': 2, 'TTG': 3, 'TCT': 4, 'TCC': 5, 'TCA': 6, 'TCG': 7,
@@ -66,25 +64,15 @@ def get_aa_token(codon: str) -> int:
 
 
 def _parse_numeric_or_calendar_date(v_str: str) -> Optional[float]:
-    """Helper to parse decimal year or ISO calendar dates into float timestamps."""
+    """Parse a date attribute into a decimal year via the canonical
+    aeon_core.temporal parser. Historical contract preserved: unparseable
+    input returns None (not NaN). Note the canonical parser gates calendar
+    years to [1800, 2100] — out-of-range numerics are treated as missing."""
     if not v_str:
         return None
     s = str(v_str).strip().strip("'\"")
-    try:
-        return float(s)
-    except ValueError:
-        pass
-    # YYYY-MM-DD
-    m = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$', s)
-    if m:
-        y, mth, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        return float(y) + (mth - 1.0) / 12.0 + (day - 1.0) / 365.25
-    # YYYY-MM
-    m2 = re.match(r'^(\d{4})[-/](\d{1,2})$', s)
-    if m2:
-        y, mth = int(m2.group(1)), int(m2.group(2))
-        return float(y) + (mth - 0.5) / 12.0
-    return None
+    d = parse_date_to_decimal(s)
+    return None if np.isnan(d) else d
 
 
 def parse_beast_xml(filepath: Union[str, Path]) -> Dict[str, Any]:
