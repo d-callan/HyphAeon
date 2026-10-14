@@ -1,0 +1,36 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "trace50"
+version = "5.0.0"
+authors = [
+  { name="Sergei L. Kosakovsky Pond", email="spond@temple.edu" },
+]
+description = "TRACE-5.0: Dynamic Molecular Surveillance of Viral Transmission Networks"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+
+[project.scripts]
+trace50 = "trace50.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.maturin]
+python-source = "src"
+manifest-path = "native/Cargo.toml"
+module-name = "trace50._native"
+bindings = "pyo3"
+
+[project.urls]
+"Homepage" = "https://github.com/veg/HyphAeon"
+"Bug Tracker" = "https://github.com/veg/HyphAeon/issues"

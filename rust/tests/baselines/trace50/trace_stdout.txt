@@ -1,0 +1,37 @@
+================================================================================
+ TRACE-5.0: Molecular Transmission Surveillance Engine (Rust Native)
+================================================================================
+[*] Loading FASTA alignment from: /home/danielle/Documents/veg/HyphAeon/rust/tests/fixtures/pair_test.fasta
+[*] Ingested 2 sequences across 9719 nucleotide sites.
+[*] Executing end-to-end TRACE-5.0 pipeline...
+[+] Serializing full visualization dossier to: <OUT_DIR>/trace50/trace50_visualization_dossier.json
+
+================================================================================
+ OPERATIONAL SURVEILLANCE SCORECARD (KPIs)
+================================================================================
+ Total Sequences Evaluated:            2
+ Total Pairwise Comparisons:           1
+ Candidate Dyads Screened:             0
+ Clock Violations Purged (Wo Fat):     0
+ Supported Transmission Edges:         0 (FDR q <= 0.05)
+--------------------------------------------------------------------------------
+ Static Distance Benchmark (d <= 1.5%):
+   - Total Clusters:                   0
+   - Clustered Individuals:            0
+   - Giant Component Size:             1 patients
+ DANNO Calibrated Transmission Network:
+   - Total Clusters:                   0
+   - Clustered Individuals:            0
+   - Giant Component Size:             1 patients
+   - Giant Component Reduction:        0.0%
+--------------------------------------------------------------------------------
+ CHIN Macro-Scale Epidemiological Scaling:
+   - Active Transmitting Pool (N_act): inf [CI: inf - inf]
+   - Surveillance Sampling Fraction:   0.00%
+   - Borel Branching Decay (R^2):      0.0000
+--------------------------------------------------------------------------------
+ Resolved STEVE Communities:           1
+ Execution Time:                       0.000 seconds
+ Output Dossier:                       <OUT_DIR>/trace50/trace50_visualization_dossier.json
+================================================================================
+

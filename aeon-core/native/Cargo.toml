@@ -1,0 +1,16 @@
+[package]
+name = "aeon-py"
+version = "0.1.0"
+edition = "2021"
+publish = false
+workspace = "../../rust"
+
+[lib]
+name = "aeon_core_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+aeon-autoclock = { workspace = true }
+aeon-manifold = { workspace = true }
+serde_json = { workspace = true }
+pyo3 = { workspace = true, features = ["abi3-py38"] }

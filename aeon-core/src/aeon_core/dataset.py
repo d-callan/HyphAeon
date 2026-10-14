@@ -7,23 +7,26 @@ branch length validation, and HyPhy branch length estimation.
 """
 
 import os
-import sys
 import gzip
 import warnings
 import shutil
 import tempfile
 import subprocess
 import re
-import csv
 from io import StringIO
 from pathlib import Path
 from typing import Optional, Tuple, Dict, List, Any, Union
 import xml.etree.ElementTree as ET
 
 import numpy as np
-import scipy.stats as stats
 import torch
 from Bio import SeqIO, Phylo
+
+# Canonical Rust kernels (aeon-manifold), built unconditionally by maturin
+# on any install of this package — a missing extension means a broken
+# install and should fail loudly rather than silently diverge.
+from aeon_core import _native as aeon_py
+from aeon_core.temporal import parse_date_to_decimal
 
 GENETIC_CODE = {
     'TTT': 0, 'TTC': 1, 'TTA': 2, 'TTG': 3, 'TCT': 4, 'TCC': 5, 'TCA': 6, 'TCG': 7,
@@ -61,25 +64,15 @@ def get_aa_token(codon: str) -> int:
 
 
 def _parse_numeric_or_calendar_date(v_str: str) -> Optional[float]:
-    """Helper to parse decimal year or ISO calendar dates into float timestamps."""
+    """Parse a date attribute into a decimal year via the canonical
+    aeon_core.temporal parser. Historical contract preserved: unparseable
+    input returns None (not NaN). Note the canonical parser gates calendar
+    years to [1800, 2100] — out-of-range numerics are treated as missing."""
     if not v_str:
         return None
     s = str(v_str).strip().strip("'\"")
-    try:
-        return float(s)
-    except ValueError:
-        pass
-    # YYYY-MM-DD
-    m = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$', s)
-    if m:
-        y, mth, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        return float(y) + (mth - 1.0) / 12.0 + (day - 1.0) / 365.25
-    # YYYY-MM
-    m2 = re.match(r'^(\d{4})[-/](\d{1,2})$', s)
-    if m2:
-        y, mth = int(m2.group(1)), int(m2.group(2))
-        return float(y) + (mth - 0.5) / 12.0
-    return None
+    d = parse_date_to_decimal(s)
+    return None if np.isnan(d) else d
 
 
 def parse_beast_xml(filepath: Union[str, Path]) -> Dict[str, Any]:
@@ -299,27 +292,21 @@ def parse_alignment_sequences(filepath: str) -> Dict[str, str]:
             if seq_dict and len(seq_dict) >= int(first_tokens[0]):
                 return seq_dict
 
-    # 2. Fast direct FASTA format parsing
+    # 2. Fast direct FASTA format parsing — delegated to the canonical Rust
+    # tokenizer. Python-side glue preserves the historical contract:
+    #   - parsing stops at the first line starting with '(', 'tree ', or
+    #     'begin ' (alignment files with a trailing tree/NEXUS payload)
+    #   - record names are quote-stripped
+    #   - sequences are U->T translated (RNA input read as DNA)
     if full_text.strip().startswith('>'):
-        seq_dict = {}
-        curr_id = None
-        curr_chunks = []
-        for line in full_text.splitlines():
-            l_strip = line.strip()
-            if not l_strip:
-                continue
-            if l_strip.startswith('>'):
-                if curr_id is not None:
-                    seq_dict[curr_id] = "".join(curr_chunks).upper().replace('U', 'T')
-                curr_id = l_strip[1:].split()[0].strip("'\"")
-                curr_chunks = []
-            elif l_strip.startswith('(') or l_strip.lower().startswith('tree ') or l_strip.lower().startswith('begin '):
-                break
-            else:
-                curr_chunks.append(l_strip.replace(' ', ''))
-        if curr_id is not None:
-            seq_dict[curr_id] = "".join(curr_chunks).upper().replace('U', 'T')
-        return seq_dict
+        stop = len(full_text)
+        m = re.search(r'^\s*(?:\(|tree |begin )', full_text, re.IGNORECASE | re.MULTILINE)
+        if m:
+            stop = m.start()
+        return {
+            name.strip("'\""): seq.decode('utf-8').replace('U', 'T')
+            for name, seq in aeon_py.fasta_tokenize(full_text[:stop])
+        }
 
     # NEXUS format parsing
     clean_nexus_text = re.sub(r'\[[^\]]*\]', '', full_text)
@@ -698,14 +685,14 @@ def compute_tn93_distance_matrix(
     threshold: float = 100.0
 ) -> np.ndarray:
     """
-    Computes pairwise Tamura-Nei 93 (TN93) genetic distance matrix directly from sequences.
-    Prefers the high-speed compiled 'tn93' C binary if available in PATH, falling back
-    to the Python 'tn93' package (from tn93.tn93 import TN93).
+    Computes pairwise Tamura-Nei 93 (TN93) genetic distance matrix directly
+    from sequences via the canonical Rust kernel (aeon_core._native).
+    Pairs with no valid comparison sites are imputed to the maximum observed
+    distance (floored at 1.0), never treated as identical.
 
-    threshold: Distance cutoff for TN93 reporting. Set to a high value (default 100.0) so that
-    no divergent pairwise distances are prematurely omitted from deep alignments. If the installed
-    tn93 binary strictly bounds distance to [0, 1] (e.g. stock <= v1.0.15), it automatically retries
-    with threshold=1.0.
+    fa_path, threshold: retained for signature compatibility; ignored by the
+    native kernel, which always reports every pair. '*' encodes as mask 0
+    (site skipped), equivalent to the old binary-path '*' -> '-' sanitize.
     """
     n = len(taxa)
     dist_mat = np.full((n, n), -1.0, dtype=np.float32)
@@ -713,88 +700,19 @@ def compute_tn93_distance_matrix(
     if n <= 1:
         return dist_mat
 
-    taxa_idx = {t: i for i, t in enumerate(taxa)}
-    tn93_bin = shutil.which("tn93")
-    used_binary = False
-
-    if tn93_bin:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_fa = os.path.join(tmpdir, "subset.fa")
-            out_csv = os.path.join(tmpdir, "distances.csv")
-            with open(tmp_fa, "w") as f:
-                for t in taxa:
-                    # Sanitize non-standard gap/missing characters (e.g. LANL MASE '*' -> '-')
-                    s_clean = seq_dict[t].replace('*', '-')
-                    f.write(f">{t}\n{s_clean}\n")
-            
-            # Call tn93 with higher threshold so divergent pairs are not omitted
-            cmd = [tn93_bin, "-t", f"{threshold:.1f}", "-l", "1", "-q", "-o", out_csv, tmp_fa]
-            binary_success = False
-            try:
-                subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                binary_success = True
-            except subprocess.CalledProcessError:
-                if threshold > 1.0:
-                    # Stock tn93 binaries (<= v1.0.15) enforce distance threshold in [0, 1].
-                    # Gracefully retry with threshold 1.0 (the maximum allowed by stock builds).
-                    cmd_fallback = [tn93_bin, "-t", "1.0", "-l", "1", "-q", "-o", out_csv, tmp_fa]
-                    try:
-                        subprocess.run(cmd_fallback, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                        binary_success = True
-                    except Exception as e:
-                        print(f"[!] Warning: tn93 binary execution failed ({e}); falling back to Python TN93.")
-            except Exception as e:
-                print(f"[!] Warning: tn93 binary execution failed ({e}); falling back to Python TN93.")
-
-            if binary_success and os.path.exists(out_csv) and os.path.getsize(out_csv) > 0:
-                # Vectorized parse of the tn93 pairwise CSV (O(pairs) Python loop -> numpy scatter).
-                import pandas as pd
-                df = pd.read_csv(out_csv, usecols=["ID1", "ID2", "Distance"], dtype={"ID1": str, "ID2": str})
-                ii = df["ID1"].map(taxa_idx).to_numpy(dtype="float64")
-                jj = df["ID2"].map(taxa_idx).to_numpy(dtype="float64")
-                dd = pd.to_numeric(df["Distance"], errors="coerce").to_numpy()
-                valid = ~(np.isnan(ii) | np.isnan(jj) | np.isnan(dd))
-                ii = ii[valid].astype(np.intp)
-                jj = jj[valid].astype(np.intp)
-                dd = dd[valid].astype(np.float32)
-                dist_mat[ii, jj] = dd
-                dist_mat[jj, ii] = dd
-                used_binary = True
-
-    if not used_binary:
-        try:
-            from tn93.tn93 import TN93
-            tn = TN93()
-            for i in range(n):
-                for j in range(i + 1, n):
-                    counts = tn.get_counts(seq_dict[taxa[i]], seq_dict[taxa[j]], "resolve")
-                    nuc_freq = tn.get_nucleotide_frequency(counts)
-                    try:
-                        d = tn.calculate_distance(counts, nuc_freq)
-                    except (ValueError, OverflowError):
-                        # TN93 can throw math domain errors on very short or
-                        # saturated sequences (e.g. log of a negative number);
-                        # treat as a maximally distant pair.
-                        d = 1.0
-                    if d is None or d == "-" or d < 0 or np.isnan(d):
-                        d = 1.0
-                    d = float(d)
-                    dist_mat[i, j] = d
-                    dist_mat[j, i] = d
-        except ImportError:
-            raise ImportError(
-                "The 'tn93' tool or python package is required to skip the tree and compute TN93 distances. "
-                "Please install it via 'pip install tn93' or 'pip install hyphaeon-core[tn93]' "
-                "(or install the tn93 binary from https://github.com/veg/tn93)."
-            )
+    flat = aeon_py.tn93_distance_matrix(
+        [seq_dict[t].encode("utf-8") for t in taxa]
+    )
+    dist_mat = np.asarray(flat, dtype=np.float32).reshape(n, n)
 
     # Impute missing off-diagonal distances (vectorized).
     # Identical sequences (distance == 0.0) are preserved.
-    # Any negative entry (< 0.0) represents a divergent pair whose distance
-    # exceeded the threshold or was omitted -> impute with max observed distance or 1.0.
+    # Missing means NaN from the kernel (pair with zero valid comparison
+    # sites) -> impute with the maximum observed distance, floored at 1.0.
     np.fill_diagonal(dist_mat, 0.0)
-    missing = (dist_mat < 0.0)
-    max_d = float(dist_mat.max()) if dist_mat.max() > 0 else 1.0
+    missing = ~(dist_mat >= 0.0)
+    observed = dist_mat[~missing]
+    max_d = float(observed.max()) if observed.size else 0.0
     dist_mat[missing] = max(1.0, max_d)
     np.fill_diagonal(dist_mat, 0.0)
     return dist_mat
@@ -817,90 +735,23 @@ def compute_tn93_cross_distance_matrix(
     if n == 0 or m == 0:
         return dist_mat
 
-    taxa_idx = {t: i for i, t in enumerate(taxa_all)}
-    lm_idx = {t: j for j, t in enumerate(taxa_landmarks)}
-    tn93_bin = shutil.which("tn93")
-    used_binary = False
-
-    if tn93_bin:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_all = os.path.join(tmpdir, "all.fa")
-            tmp_lm = os.path.join(tmpdir, "landmarks.fa")
-            out_csv = os.path.join(tmpdir, "cross_distances.csv")
-
-            with open(tmp_all, "w") as f:
-                for t in taxa_all:
-                    s_clean = seq_dict[t].replace('*', '-')
-                    f.write(f">{t}\n{s_clean}\n")
-            with open(tmp_lm, "w") as f:
-                for t in taxa_landmarks:
-                    s_clean = seq_dict[t].replace('*', '-')
-                    f.write(f">{t}\n{s_clean}\n")
-
-            cmd = [tn93_bin, "-s", tmp_lm, "-t", f"{threshold:.1f}", "-l", "1", "-q", "-o", out_csv, tmp_all]
-            binary_success = False
-            try:
-                subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                binary_success = True
-            except subprocess.CalledProcessError:
-                if threshold > 1.0:
-                    cmd_fallback = [tn93_bin, "-s", tmp_lm, "-t", "1.0", "-l", "1", "-q", "-o", out_csv, tmp_all]
-                    try:
-                        subprocess.run(cmd_fallback, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                        binary_success = True
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-            if binary_success and os.path.exists(out_csv) and os.path.getsize(out_csv) > 0:
-                import pandas as pd
-                chunksize = 2_000_000
-                for chunk in pd.read_csv(out_csv, usecols=["ID1", "ID2", "Distance"], dtype={"ID1": str, "ID2": str}, chunksize=chunksize):
-                    ii = chunk["ID1"].map(taxa_idx).to_numpy(dtype="float64")
-                    jj = chunk["ID2"].map(lm_idx).to_numpy(dtype="float64")
-                    dd = pd.to_numeric(chunk["Distance"], errors="coerce").to_numpy()
-                    valid = ~(np.isnan(ii) | np.isnan(jj) | np.isnan(dd))
-                    ii = ii[valid].astype(np.intp)
-                    jj = jj[valid].astype(np.intp)
-                    dd = dd[valid].astype(np.float32)
-                    dist_mat[ii, jj] = dd
-                used_binary = True
-
-    if not used_binary:
-        try:
-            from tn93.tn93 import TN93
-            tn = TN93()
-            for j, lm in enumerate(taxa_landmarks):
-                seq_lm = seq_dict[lm]
-                for i, t in enumerate(taxa_all):
-                    if t == lm:
-                        dist_mat[i, j] = 0.0
-                        continue
-                    counts = tn.get_counts(seq_dict[t], seq_lm, "resolve")
-                    nuc_freq = tn.get_nucleotide_frequency(counts)
-                    try:
-                        d = tn.calculate_distance(counts, nuc_freq)
-                    except (ValueError, OverflowError):
-                        d = 1.0
-                    if d is None or d == "-" or d < 0 or np.isnan(d):
-                        d = 1.0
-                    dist_mat[i, j] = float(d)
-        except ImportError:
-            raise ImportError(
-                "The 'tn93' tool or python package is required to compute TN93 distances. "
-                "Please install it via 'pip install tn93' or 'pip install hyphaeon-core[tn93]' "
-                "(or install the tn93 binary from https://github.com/veg/tn93)."
-            )
+    flat = aeon_py.tn93_cross_distance_matrix(
+        [seq_dict[t].encode("utf-8") for t in taxa_all],
+        [seq_dict[t].encode("utf-8") for t in taxa_landmarks],
+    )
+    dist_mat = np.asarray(flat, dtype=np.float32).reshape(n, m)
 
     # Fill self-distances
+    taxa_idx = {t: i for i, t in enumerate(taxa_all)}
     for j, lm in enumerate(taxa_landmarks):
         if lm in taxa_idx:
             dist_mat[taxa_idx[lm], j] = 0.0
 
-    # Impute missing entries
-    missing = (dist_mat < 0.0)
-    max_d = float(dist_mat.max()) if dist_mat.max() > 0 else 1.0
+    # Impute missing entries: NaN (kernel path, zero valid comparison sites)
+    # -> max observed distance, floored at 1.0.
+    missing = ~(dist_mat >= 0.0)
+    observed = dist_mat[~missing]
+    max_d = float(observed.max()) if observed.size else 0.0
     dist_mat[missing] = max(1.0, max_d)
     for j, lm in enumerate(taxa_landmarks):
         if lm in taxa_idx:

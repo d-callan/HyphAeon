@@ -42,6 +42,10 @@ import numpy as np
 import pandas as pd
 import scipy.stats as stats
 
+# Canonical Rust kernels (aeon-manifold), built unconditionally by maturin
+# on any install of hyphaeon-core — a missing extension means a broken
+# install and should fail loudly rather than silently diverge.
+from aeon_core import _native as aeon_py
 from aeon_core.dataset import parse_alignment_sequences
 from aeon_core.temporal import parse_date_to_decimal, extract_date_from_string
 from .dating import run_ols_dating, compute_fieller_mrca_interval
@@ -54,128 +58,37 @@ def compute_vector_tn93(
 ) -> np.ndarray:
     """
     Computes Tamura-Nei 93 (TN93) genetic distances from a single query sequence
-    to a list of M reference sequences.
-    Prefers the compiled 'tn93' binary when available, falling back to a vectorized
-    NumPy implementation.
+    to a list of M reference sequences via the canonical Rust kernel
+    (aeon_core._native).
+
+    Pairs with fewer than 50 shared unambiguous (A/C/G/T/U) sites — or zero
+    valid comparison sites under the kernel's IUPAC union-mask counting —
+    report 1.0, matching the historical QC floor. seq_names is retained for
+    signature compatibility; unused by the native path.
     """
     m = len(ref_seqs)
     if m == 0:
         return np.array([], dtype=np.float64)
 
-    tn93_bin = shutil.which("tn93")
-    if tn93_bin and m >= 64:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            q_fa = os.path.join(tmpdir, "query.fa")
-            ref_fa = os.path.join(tmpdir, "refs.fa")
-            out_csv = os.path.join(tmpdir, "dists.csv")
+    flat = aeon_py.tn93_cross_distance_matrix(
+        [query_seq.encode("utf-8")],
+        [r.encode("utf-8") for r in ref_seqs],
+    )
+    dists = np.asarray(flat, dtype=np.float64)
+    dists[~np.isfinite(dists) | (dists < 0)] = 1.0
 
-            with open(q_fa, "w") as f:
-                f.write(f">QUERY\n{query_seq}\n")
-            with open(ref_fa, "w") as f:
-                for idx, r in enumerate(ref_seqs):
-                    name = seq_names[idx] if seq_names else f"REF_{idx}"
-                    f.write(f">{name}\n{r}\n")
-
-            cmd = [tn93_bin, "-s", ref_fa, "-t", "1.0", "-l", "50", "-q", "-o", out_csv, q_fa]
-            try:
-                subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                if os.path.exists(out_csv) and os.path.getsize(out_csv) > 0:
-                    df = pd.read_csv(out_csv, usecols=["ID1", "ID2", "Distance"])
-                    ref_name_map = {name: idx for idx, name in enumerate(seq_names)} if seq_names else {f"REF_{idx}": idx for idx in range(m)}
-                    dists = np.full(m, 1.0, dtype=np.float64)
-                    for _, row in df.iterrows():
-                        r_name = row["ID2"] if row["ID1"] == "QUERY" else row["ID1"]
-                        if r_name in ref_name_map:
-                            dists[ref_name_map[r_name]] = float(row["Distance"])
-                    return dists
-            except Exception:
-                pass
-
-    # Fast Vectorized NumPy Fallback
-    q_chars = np.frombuffer(query_seq.upper().encode('ascii'), dtype=np.uint8)
-    L = len(q_chars)
-
-    # Encode: A=1, C=2, G=3, T=4, others=0
-    lut = np.zeros(256, dtype=np.uint8)
-    lut[ord('A')] = 1
-    lut[ord('C')] = 2
-    lut[ord('G')] = 3
-    lut[ord('T')] = 4
-    lut[ord('U')] = 4  # Treat U as T
-
-    q_enc = lut[q_chars]
-    is_q_valid = (q_enc > 0)
-
-    dists = np.zeros(m, dtype=np.float64)
-
-    for i in range(m):
-        r_str = ref_seqs[i].upper()
-        if len(r_str) != L:
-            # Length mismatch; truncate or pad
-            min_len = min(L, len(r_str))
-            r_chars = np.frombuffer(r_str[:min_len].encode('ascii'), dtype=np.uint8)
-            r_enc = np.zeros(L, dtype=np.uint8)
-            r_enc[:min_len] = lut[r_chars]
-        else:
-            r_chars = np.frombuffer(r_str.encode('ascii'), dtype=np.uint8)
-            r_enc = lut[r_chars]
-
-        valid = is_q_valid & (r_enc > 0)
-        tot_valid = int(np.sum(valid))
-
-        if tot_valid < 50:
+    # Historical >=50 shared unambiguous-site floor: shorter overlaps report
+    # 1.0 rather than a noisy short-overlap distance.
+    unambig = np.zeros(256, dtype=bool)
+    for c in "ACGTU":
+        unambig[ord(c)] = True
+    q_ok = unambig[np.frombuffer(query_seq.upper().encode("utf-8"), dtype=np.uint8)]
+    L = len(q_ok)
+    for i, r in enumerate(ref_seqs):
+        r_ok = unambig[np.frombuffer(r.upper().encode("utf-8"), dtype=np.uint8)]
+        min_len = min(L, len(r_ok))
+        if int(np.count_nonzero(q_ok[:min_len] & r_ok[:min_len])) < 50:
             dists[i] = 1.0
-            continue
-
-        q_v = q_enc[valid]
-        r_v = r_enc[valid]
-
-        diff = (q_v != r_v)
-        tot_diff = np.sum(diff)
-
-        if tot_diff == 0:
-            dists[i] = 0.0
-            continue
-
-        # Transitions: (A<->G: 1<->3) or (C<->T: 2<->4)
-        is_ag = ((q_v == 1) & (r_v == 3)) | ((q_v == 3) & (r_v == 1))
-        is_ct = ((q_v == 2) & (r_v == 4)) | ((q_v == 4) & (r_v == 2))
-        transversions = diff & (~is_ag) & (~is_ct)
-
-        P1 = float(np.sum(is_ag)) / tot_valid
-        P2 = float(np.sum(is_ct)) / tot_valid
-        Q = float(np.sum(transversions)) / tot_valid
-
-        # Base frequencies across valid sites of the pair
-        fA = (np.sum(q_v == 1) + np.sum(r_v == 1)) / (2.0 * tot_valid)
-        fC = (np.sum(q_v == 2) + np.sum(r_v == 2)) / (2.0 * tot_valid)
-        fG = (np.sum(q_v == 3) + np.sum(r_v == 3)) / (2.0 * tot_valid)
-        fT = (np.sum(q_v == 4) + np.sum(r_v == 4)) / (2.0 * tot_valid)
-
-        fR = fA + fG
-        fY = fC + fT
-
-        if fR <= 1e-6 or fY <= 1e-6 or fA <= 1e-6 or fG <= 1e-6 or fC <= 1e-6 or fT <= 1e-6:
-            # Fallback to simple Hamming p-distance
-            dists[i] = float(tot_diff) / tot_valid
-            continue
-
-        a1 = (fA * fG) / fR
-        a2 = (fC * fT) / fY
-
-        arg1 = 1.0 - (P1 / (2.0 * a1)) - (Q / (2.0 * fR))
-        arg2 = 1.0 - (P2 / (2.0 * a2)) - (Q / (2.0 * fY))
-        arg3 = 1.0 - (Q / (2.0 * fR * fY))
-
-        if arg1 <= 0.0 or arg2 <= 0.0 or arg3 <= 0.0:
-            # Saturated pair
-            dists[i] = 1.0
-        else:
-            d = (-2.0 * a1 * math.log(arg1)
-                 - 2.0 * a2 * math.log(arg2)
-                 - 2.0 * (fR * fY - a1 * fY - a2 * fR) * math.log(arg3))
-            dists[i] = float(max(0.0, d))
-
     return dists
 
 

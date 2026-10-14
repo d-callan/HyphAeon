@@ -1,0 +1,86 @@
+name: publish-crates
+
+# Tag-driven crates.io publishing for the shared kernel crates.
+# aeon-autoclock depends on aeon-manifold, so push aeon-manifold-v* first,
+# wait for this workflow to go green, then aeon-autoclock-v*. The
+# dependent job polls `cargo search` and fails fast after a timeout
+# rather than silently succeeding — if it times out, publish the shared
+# crate tag and re-run.
+#
+# The product crates (rhizaeon, trace50) are NOT published here: their
+# user-facing CLI ships as Python packages via publish.yml on PyPI, so
+# rhizaeon-v*/trace50-v* tags belong to that workflow.
+#
+# Requires secret CARGO_REGISTRY_TOKEN (crates.io API token, publish scope
+# for all listed crates). crates.io OIDC trusted publishing is the
+# token-free alternative if configured on the registry side later.
+on:
+  push:
+    tags:
+      - "aeon-autoclock-v*"
+      - "aeon-manifold-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: cargo publish ${{ matrix.crate }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - crate: aeon-manifold
+            tag_prefix: aeon-manifold-v
+            toml: rust/libs/aeon-manifold/Cargo.toml
+            wait_for: ""
+          - crate: aeon-autoclock
+            tag_prefix: aeon-autoclock-v
+            toml: rust/libs/aeon-autoclock/Cargo.toml
+            wait_for: aeon-manifold
+    # Each matrix leg fires on every tag push; only the leg matching the
+    # pushed tag does any work.
+    if: startsWith(github.ref, format('refs/tags/{0}', matrix.tag_prefix))
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify tag matches crate version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          TAG_VERSION=${TAG##*-v}
+          PKG_VERSION=$(python -c "import tomllib; print(tomllib.load(open('${{ matrix.toml }}','rb'))['package']['version'])")
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Tag version '$TAG_VERSION' != Cargo.toml version '$PKG_VERSION' for ${{ matrix.crate }}"
+            exit 1
+          fi
+      - name: Wait for shared deps on crates.io
+        if: matrix.wait_for != ''
+        working-directory: rust
+        run: |
+          # wait_for is a space-separated list; each entry is a
+          # workspace.dependencies key whose version must be live.
+          for dep in ${{ matrix.wait_for }}; do
+            REQ=$(python -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['dependencies']['$dep']['version'])")
+            echo "Waiting for $dep $REQ on crates.io..."
+            live=0
+            for i in $(seq 1 60); do
+              if cargo search "$dep" --limit 1 2>/dev/null | grep -q "\"$REQ\""; then
+                echo "$dep $REQ is live"; live=1; break
+              fi
+              sleep 10
+            done
+            if [ "$live" -ne 1 ]; then
+              echo "::error::$dep $REQ not on crates.io after 10 min — push its tag first"
+              exit 1
+            fi
+          done
+      - name: cargo publish --dry-run
+        working-directory: rust
+        run: cargo publish -p ${{ matrix.crate }} --dry-run --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - name: cargo publish
+        working-directory: rust
+        run: cargo publish -p ${{ matrix.crate }} --token ${{ secrets.CARGO_REGISTRY_TOKEN }}

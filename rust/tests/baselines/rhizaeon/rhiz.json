@@ -1,0 +1,125 @@
+{
+  "events": [
+    {
+      "candidate_idx": 0,
+      "candidate_name": "R",
+      "d_flank_donor": 0.11770802487414865,
+      "d_flank_home": 0.06174119040568552,
+      "d_tract_donor": 0.0566902876198416,
+      "d_tract_home": 0.11879949979157982,
+      "donor_idx": 1,
+      "donor_name": "A",
+      "event_id": 1,
+      "home_idx": 2,
+      "home_name": "B",
+      "is_crossover": true,
+      "is_ghost_donor": false,
+      "is_verified": true,
+      "isolates": [
+        "R"
+      ],
+      "p_fisher": 2.140439661741939e-55,
+      "s_informative": 199,
+      "tract_length": 2780,
+      "u1": 1,
+      "u1_continuous": 1.0,
+      "u2": 2780,
+      "u2_continuous": 2780.0,
+      "z_phys": 7.152365223407794
+    },
+    {
+      "candidate_idx": 0,
+      "candidate_name": "R",
+      "d_flank_donor": 0.10191387559808612,
+      "d_flank_home": 0.0687799043062201,
+      "d_tract_donor": 0.09962168978562422,
+      "d_tract_home": 0.1601513240857503,
+      "donor_idx": 1,
+      "donor_name": "A",
+      "event_id": 2,
+      "home_idx": 2,
+      "home_name": "B",
+      "is_crossover": false,
+      "is_ghost_donor": false,
+      "is_verified": true,
+      "isolates": [
+        "R"
+      ],
+      "p_fisher": 3.8169842164983985e-14,
+      "s_informative": 79,
+      "tract_length": 883,
+      "u1": 8756,
+      "u1_continuous": 8756.0,
+      "u2": 9638,
+      "u2_continuous": 9638.0,
+      "z_phys": 10.125928676610927
+    }
+  ],
+  "informative_sites": 1554,
+  "is_non_recombinant_h0": false,
+  "length": 9953,
+  "num_taxa": 9,
+  "screening": {
+    "candidate_recombinant_indices": [
+      0,
+      1,
+      2,
+      3,
+      6,
+      7,
+      8
+    ],
+    "clonal_backbone_indices": [],
+    "gamma_root": [
+      0.03306046592297712,
+      0.020093026091339273,
+      0.03383028012265686,
+      0.031602801703846564,
+      0.04127757852235454,
+      0.04159900553781907,
+      0.05580716465732187,
+      0.01987997991265321,
+      0.031834605835135636
+    ],
+    "ghost_candidate_indices": [],
+    "is_non_recombinant_h0": false,
+    "median_v_cont": 155.85377858178697,
+    "r_root": [
+      0.051482824370473926,
+      0.048864668802341374,
+      0.04035308926434961,
+      0.07971799850211637,
+      0.27193709666121246,
+      0.32397552350610537,
+      0.1097408569706341,
+      0.03521920256031088,
+      0.12613122894235806
+    ],
+    "rate_burst_indices": [
+      4,
+      5
+    ],
+    "v_cont": [
+      785.7552876092216,
+      155.85377858178697,
+      1194.1592049706592,
+      681.2580694640001,
+      241.69759896806812,
+      31.329603600302143,
+      144.80576750649743,
+      91.99096028335552,
+      78.74049517884576
+    ],
+    "v_root": [
+      42.648570325896785,
+      8.007002812526014,
+      50.21431576024731,
+      59.012921770382825,
+      90.27591301788718,
+      15.01428584404021,
+      17.849981260938712,
+      3.3581185203259363,
+      11.36513370585096
+    ]
+  }
+}

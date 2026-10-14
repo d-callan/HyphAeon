@@ -26,6 +26,8 @@ def parse_date_to_decimal(val: Any, time_units: str = "years") -> float:
       - Partial ISO: "2021-04" or "2021-04-XX" -> 2021.2868 (mid-month)
       - Year only: "2021" or "2021-XX-XX" -> 2021.5 (mid-year)
       - Slash formatted: "2021/04/15" -> 2021.2868
+      - Non-year-first: "15/04/2021" (DD/MM/YYYY, tried first), "04/15/2021"
+        (MM/DD/YYYY), "04/2021" (MM/YYYY -> mid-month)
     Non-calendar (time_units in {'generations','days','arbitrary'}):
       - any non-negative number, or the first number embedded in a string
         ("gen_5000" -> 5000.0). No [1800,2100] gate.
@@ -94,6 +96,37 @@ def parse_date_to_decimal(val: Any, time_units: str = "years") -> float:
             return float(year + (dt - start_of_year).days / days_in_year)
         except Exception:
             return np.nan
+
+    # Non-year-first formats (coverage inherited from r0.parse_calendar_date):
+    # 'DD/MM/YYYY', 'MM/DD/YYYY', and 'MM/YYYY' ('/' normalized to '-' above).
+    # Ambiguous D/M orders keep the historical r0 precedence: day-first is
+    # attempted before month-first.
+    def _frac(year: int, month: int, day: int) -> float:
+        dt = datetime.date(year, month, min(day, 28 if month == 2 else 30))
+        start = datetime.date(year, 1, 1)
+        days_in_year = 366 if (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)) else 365
+        return float(year + (dt - start).days / days_in_year)
+
+    if (
+        len(parts) == 3
+        and all(p.isdigit() for p in parts)
+        and len(parts[2]) == 4
+        and 1800 <= int(parts[2]) <= 2100
+    ):
+        d0, m0, y0 = int(parts[0]), int(parts[1]), int(parts[2])
+        for day, month in ((d0, m0), (m0, d0)):  # DD/MM/YYYY, then MM/DD/YYYY
+            if 1 <= month <= 12 and 1 <= day <= 31:
+                return _frac(y0, month, day)
+
+    if (
+        len(parts) == 2
+        and all(p.isdigit() for p in parts)
+        and len(parts[1]) == 4
+        and 1800 <= int(parts[1]) <= 2100
+    ):
+        month, year = int(parts[0]), int(parts[1])
+        if 1 <= month <= 12:
+            return _frac(year, month, 15)  # mid-month, canonical convention
 
     return np.nan
 

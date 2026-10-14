@@ -6,14 +6,21 @@ on:
       - "hyphaeon-core-v*"
       - "hyphaeon-v*"
       - "chronaeon-v*"
+      - "rhizaeon-v*"
+      - "trace50-v*"
 
 permissions:
   contents: read
   id-token: write  # mints the OIDC token gh-action-pypi-publish exchanges with PyPI
 
 jobs:
-  publish:
+  verify:
+    name: Resolve tag -> package dir, assert version match
     runs-on: ubuntu-latest
+    outputs:
+      dir: ${{ steps.pkg.outputs.dir }}
+      tag_version: ${{ steps.pkg.outputs.tag_version }}
+      native: ${{ steps.pkg.outputs.native }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -23,32 +30,113 @@ jobs:
         id: pkg
         run: |
           TAG=${GITHUB_REF#refs/tags/}
+          NATIVE=false
           if [[ "$TAG" == hyphaeon-core-v* ]]; then
-            echo "dir=aeon-core" >> $GITHUB_OUTPUT
+            DIR=aeon-core
+            NATIVE=true
+          elif [[ "$TAG" == rhizaeon-v* ]]; then
+            DIR=rhizaeon
+            NATIVE=true
+          elif [[ "$TAG" == trace50-v* ]]; then
+            DIR=trace50
+            NATIVE=true
           elif [[ "$TAG" == hyphaeon-v* ]]; then
-            echo "dir=hyphaeon" >> $GITHUB_OUTPUT
+            DIR=hyphaeon
           elif [[ "$TAG" == chronaeon-v* ]]; then
-            echo "dir=chronaeon" >> $GITHUB_OUTPUT
+            DIR=chronaeon
+          else
+            echo "::error::Unrecognized tag '$TAG'"; exit 1
           fi
+          echo "dir=$DIR" >> $GITHUB_OUTPUT
           echo "tag_version=${TAG##*-v}" >> $GITHUB_OUTPUT
+          echo "native=$NATIVE" >> $GITHUB_OUTPUT
       - name: Verify tag matches pyproject version
         run: |
-          cd ${{ steps.pkg.outputs.dir }}
-          PKG_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          PKG_VERSION=$(python -c "import tomllib; print(tomllib.load(open('${{ steps.pkg.outputs.dir }}/pyproject.toml','rb'))['project']['version'])")
           if [ "$PKG_VERSION" != "${{ steps.pkg.outputs.tag_version }}" ]; then
             echo "::error::Tag version '${{ steps.pkg.outputs.tag_version }}' does not match pyproject.toml version '$PKG_VERSION'"
             exit 1
           fi
+
+  # hyphaeon-core, rhizaeon, and trace50 ship compiled extensions: one abi3
+  # wheel per platform covers all Python >= 3.8. Windows included per
+  # AEON-UNIFICATION-PLAN C4 (pure-Python installs today work on Windows;
+  # dropping the leg would regress pip install there).
+  wheels:
+    name: abi3 wheel (${{ matrix.platform }})
+    needs: verify
+    if: needs.verify.outputs.native == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-latest, ubuntu-24.04-arm, macos-13, macos-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: ${{ needs.verify.outputs.dir }}
+          args: --release --out dist
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.platform }}
+          path: ${{ needs.verify.outputs.dir }}/dist/
+
+  # No sdist job: the binding manifests live outside the rust workspace
+  # root (rhizaeon/native, trace50/native, aeon-core/native), so
+  # `maturin sdist` cannot strip the workspace prefix and workspace path
+  # deps can't be vendored anyway. The abi3 wheel matrix covers all
+  # tier-1 platforms; other users build from the repo with maturin.
+
+  publish-native:
+    name: twine check + PyPI upload (native: ${{ needs.verify.outputs.dir }})
+    needs: [verify, wheels]
+    if: needs.verify.outputs.native == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*"
+          path: ${{ needs.verify.outputs.dir }}/dist
+          merge-multiple: true
+      - name: twine check
+        run: |
+          pip install twine
+          ls -la ${{ needs.verify.outputs.dir }}/dist
+          twine check ${{ needs.verify.outputs.dir }}/dist/*
+      - name: Upload to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: ${{ needs.verify.outputs.dir }}/dist
+        # Publishes via OIDC trusted publishing — no PYPI_API_TOKEN secret.
+        # rhizaeon/trace50 need trusted publishers registered for this repo +
+        # workflow filename on their PyPI projects before first release.
+
+  publish-pure:
+    name: build + PyPI upload (hyphaeon / chronaeon)
+    needs: verify
+    if: needs.verify.outputs.native == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - name: Build and check distribution
         run: |
           pip install build twine
-          cd ${{ steps.pkg.outputs.dir }}
+          cd ${{ needs.verify.outputs.dir }}
           python -m build
           twine check dist/*
       - name: Upload to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: ${{ steps.pkg.outputs.dir }}/dist
+          packages-dir: ${{ needs.verify.outputs.dir }}/dist
         # Publishes via OIDC trusted publishing — no PYPI_API_TOKEN secret.
         # Requires a trusted publisher registered on each PyPI project for
         # this repo + workflow filename (done 2026-10-07).

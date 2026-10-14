@@ -1,0 +1,77 @@
+name: Rust workspace
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "rust/**"
+      - "rhizaeon/native/**"
+      - "trace50/native/**"
+      - "aeon-core/**"
+      - ".github/workflows/rust.yml"
+  pull_request:
+    paths:
+      - "rust/**"
+      - "rhizaeon/native/**"
+      - "trace50/native/**"
+      - "aeon-core/**"
+      - ".github/workflows/rust.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test + build (host target)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+      - name: cargo test --workspace
+        run: cargo test --workspace
+      - name: cargo build --release (libs, bindings, conformance driver)
+        run: cargo build --release -p rhizaeon -p trace50 -p rhizaeon-native -p trace50-native
+      - name: verify wasm dep graph stays clap-free
+        run: |
+          for p in rhizaeon-wasm trace50-wasm; do
+            cargo tree -p "$p" -e normal | grep -q '^.*clap' && { echo "clap leaked into $p"; exit 1; }
+          done
+          echo "wasm dep trees are clap-free"
+
+  wasm:
+    name: wasm-pack build --target web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack@0.15.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: build + verify rhizaeon-wasm
+        working-directory: rust/rhizaeon/crates/rhizaeon-wasm
+        run: |
+          wasm-pack build --target web
+          node test_wasm.mjs
+      - name: build + verify trace50-wasm
+        working-directory: rust/trace-5.0/crates/trace50-wasm
+        run: |
+          wasm-pack build --target web
+          node test_wasm.mjs

@@ -1,0 +1,11 @@
+[package]
+name = "aeon-manifold"
+version = "0.1.0"
+edition = "2021"
+authors = ["Sergei L. Kosakovsky Pond", "Antigravity AI Engine"]
+description = "Shared math/stats kernel for the Aeon engine family (RhizAeon, TRACE-5.0)"
+license = "MIT"
+repository = "https://github.com/veg/HyphAeon"
+homepage = "https://github.com/veg/HyphAeon"
+
+[dependencies]

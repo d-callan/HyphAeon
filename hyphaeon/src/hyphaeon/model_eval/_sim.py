@@ -153,16 +153,15 @@ def purge_stop_codons(fa_path, seed=0):
 
     Returns a new fasta path (does not modify the input file).
     """
-    from Bio import SeqIO
-
     STOP_CODONS = {"TAA", "TAG", "TGA"}
     SENSE_CODONS = [a + b + c
                     for a in "TCAG" for b in "TCAG" for c in "TCAG"
                     if a + b + c not in STOP_CODONS]
 
+    from aeon_core.dataset import parse_alignment_sequences
+
     rng = np.random.default_rng(seed)
-    recs = list(SeqIO.parse(fa_path, "fasta"))
-    seqs = {r.id: list(str(r.seq)) for r in recs}
+    seqs = {k: list(v) for k, v in parse_alignment_sequences(fa_path).items()}
     taxa = list(seqs.keys())
 
     seq_len = len(seqs[taxa[0]])
@@ -203,13 +202,12 @@ def inject_selection(fa_path, nwk_path, n_taxa, n_codons,
     Returns (modified_fasta_path, set_of_selected_site_indices,
              n_selected_taxa_actual).
     """
-    from Bio import SeqIO
     from Bio import Phylo
     import os
+    from aeon_core.dataset import parse_alignment_sequences
 
     rng = np.random.default_rng(seed)
-    recs = list(SeqIO.parse(fa_path, "fasta"))
-    seqs = {r.id: list(str(r.seq)) for r in recs}
+    seqs = {k: list(v) for k, v in parse_alignment_sequences(fa_path).items()}
     taxa = list(seqs.keys())
     taxa_set = set(taxa)
 

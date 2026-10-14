@@ -1,0 +1,132 @@
+{
+  "borel_spectrum": [],
+  "clusters": [],
+  "communities": [
+    {
+      "aicc": 1000000.0,
+      "ci_mrca": [
+        2001.0,
+        2001.0
+      ],
+      "ci_mu": [
+        0.0,
+        0.0
+      ],
+      "community_id": 1,
+      "d0": 0.0,
+      "fieller_status": "TOO_SMALL",
+      "is_active_outbreak": false,
+      "max_pairwise_dist": 0.7535070140280562,
+      "mean_pairwise_dist": 0.7535070140280562,
+      "members": [
+        0,
+        1
+      ],
+      "mu": 0.0,
+      "n_eff": 2.0,
+      "operational_tier": "Contemporaneous Acute Dyad",
+      "path": "root",
+      "r_squared": 0.0,
+      "rss": 0.0,
+      "se_mu": 0.0,
+      "size": 2,
+      "stop_reason": "dyad_node",
+      "time_span_years": 0.0,
+      "tmrca": 2001.0,
+      "tot_var": 0.0
+    }
+  ],
+  "edges": [],
+  "engine": "TRACE-5.0 (Rust Kernel)",
+  "kpi": {
+    "candidate_pairs_screened": 0,
+    "certified_transmission_edges": 0,
+    "danno_network": {
+      "clustered_individuals": 0,
+      "max_cluster_size": 1,
+      "total_clusters": 0
+    },
+    "giant_component_reduction_pct": 0.0,
+    "inferred_active_pool_ci": [
+      null,
+      null
+    ],
+    "inferred_active_transmitting_pool": null,
+    "inferred_surveillance_sampling_fraction_pct": 0.0,
+    "physical_clock_violations_purged": 0,
+    "static_network": {
+      "clustered_individuals": 0,
+      "max_cluster_size": 1,
+      "total_clusters": 0
+    },
+    "supported_transmission_edges": 0,
+    "total_pairwise_comparisons": 1,
+    "total_sequences": 2
+  },
+  "macro_scaling": {
+    "active_population": {
+      "ci_lower": null,
+      "ci_upper": null,
+      "n_act": null,
+      "r0": 1.5,
+      "relative_error": null
+    },
+    "borel_decay": {
+      "max_cluster_size": 0,
+      "n_clusters": 0,
+      "n_megaclusters": 0,
+      "p_value": 1.0,
+      "r_squared": 0.0,
+      "rejects_uniform_sampling": false,
+      "slope": 0.0
+    },
+    "composite_parameter_theta": 0.0,
+    "surveillance_coverage_rho": 0.0
+  },
+  "metadata": {
+    "date_max": 2001.0,
+    "date_min": 2001.0,
+    "num_sequences": 2,
+    "parameters": {
+      "alpha_adequacy": 0.05,
+      "fdr_threshold": 0.05,
+      "mu": 0.002,
+      "omega": 2.0,
+      "r0": 1.5,
+      "static_distance_threshold": 0.015,
+      "tau_bar": 1.0
+    },
+    "seq_len": 9719,
+    "time_span_years": 0.0
+  },
+  "nodes": [
+    {
+      "cluster_id_certified": 0,
+      "cluster_id_static": 0,
+      "cluster_id_supported": 0,
+      "community_id": 1,
+      "date": 2001.0,
+      "degree_certified": 0,
+      "degree_static": 0,
+      "degree_supported": 0,
+      "id": "HXB2",
+      "index": 0,
+      "operational_tier": "Contemporaneous Acute Dyad"
+    },
+    {
+      "cluster_id_certified": 0,
+      "cluster_id_static": 0,
+      "cluster_id_supported": 0,
+      "community_id": 1,
+      "date": 2001.0,
+      "degree_certified": 0,
+      "degree_static": 0,
+      "degree_supported": 0,
+      "id": "MH352627|10001|2001|USA",
+      "index": 1,
+      "operational_tier": "Contemporaneous Acute Dyad"
+    }
+  ],
+  "phase_space_points": [],
+  "schema_version": "5.0.0"
+}

@@ -1,0 +1,22 @@
+[package]
+name = "trace50"
+version = "5.0.0"
+edition = "2021"
+authors = ["Sergei L. Kosakovsky Pond", "Antigravity AI Engine"]
+description = "High-performance algorithmic kernel for TRACE-5.0: Dynamic Molecular Surveillance of Viral Transmission Networks"
+license = "MIT"
+repository = "https://github.com/veg/HyphAeon"
+homepage = "https://github.com/veg/HyphAeon"
+
+# User-facing CLI ships via the `trace50` Python package (trace50/native),
+# not as a cargo bin — keeps the lib clap-free for the wasm build.
+[dependencies]
+aeon-autoclock.workspace = true
+aeon-manifold.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# Dev/test driver for the cross-language conformance suite — not a user CLI.
+[[bin]]
+name = "conformance"
+path = "src/bin/conformance.rs"

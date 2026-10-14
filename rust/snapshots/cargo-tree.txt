@@ -1,0 +1,106 @@
+aeon-manifold v0.1.0 (/home/danielle/Documents/veg/HyphAeon/rust/libs/aeon-manifold)
+
+rhizaeon-cli v0.1.0 (/home/danielle/Documents/veg/HyphAeon/rust/rhizaeon/crates/rhizaeon-cli)
+├── clap v4.6.7
+│   ├── clap_builder v4.6.7
+│   │   ├── anstream v1.0.0
+│   │   │   ├── anstyle v1.0.14
+│   │   │   ├── anstyle-parse v1.0.0
+│   │   │   │   └── utf8parse v0.2.2
+│   │   │   ├── anstyle-query v1.1.5
+│   │   │   ├── colorchoice v1.0.5
+│   │   │   ├── is_terminal_polyfill v1.70.2
+│   │   │   └── utf8parse v0.2.2
+│   │   ├── anstyle v1.0.14
+│   │   ├── clap_lex v1.1.1
+│   │   └── strsim v0.11.1
+│   └── clap_derive v4.6.7 (proc-macro)
+│       ├── heck v0.5.0
+│       ├── proc-macro2 v1.0.107
+│       │   └── unicode-ident v1.0.26
+│       ├── quote v1.0.47
+│       │   └── proc-macro2 v1.0.107 (*)
+│       └── syn v3.0.7
+│           ├── proc-macro2 v1.0.107 (*)
+│           ├── quote v1.0.47 (*)
+│           └── unicode-ident v1.0.26
+├── rayon v1.12.0
+│   ├── either v1.19.0
+│   └── rayon-core v1.13.0
+│       ├── crossbeam-deque v0.8.8
+│       │   ├── crossbeam-epoch v0.9.21
+│       │   │   └── crossbeam-utils v0.8.23
+│       │   └── crossbeam-utils v0.8.23
+│       └── crossbeam-utils v0.8.23
+├── rhizaeon-core v0.1.0 (/home/danielle/Documents/veg/HyphAeon/rust/rhizaeon/crates/rhizaeon-core)
+│   ├── aeon-manifold v0.1.0 (/home/danielle/Documents/veg/HyphAeon/rust/libs/aeon-manifold)
+│   ├── serde v1.0.229
+│   │   ├── serde_core v1.0.229
+│   │   └── serde_derive v1.0.229 (proc-macro)
+│   │       ├── proc-macro2 v1.0.107 (*)
+│   │       ├── quote v1.0.47 (*)
+│   │       └── syn v3.0.7 (*)
+│   └── serde_json v1.0.151
+│       ├── itoa v1.0.18
+│       ├── memchr v2.8.3
+│       ├── serde_core v1.0.229
+│       └── zmij v1.0.23
+├── serde v1.0.229 (*)
+└── serde_json v1.0.151 (*)
+
+rhizaeon-core v0.1.0 (/home/danielle/Documents/veg/HyphAeon/rust/rhizaeon/crates/rhizaeon-core) (*)
+
+rhizaeon-wasm v0.1.0 (/home/danielle/Documents/veg/HyphAeon/rust/rhizaeon/crates/rhizaeon-wasm)
+├── console_error_panic_hook v0.1.7
+│   ├── cfg-if v1.0.5
+│   └── wasm-bindgen v0.2.129
+│       ├── cfg-if v1.0.5
+│       ├── once_cell v1.21.4
+│       ├── wasm-bindgen-macro v0.2.129 (proc-macro)
+│       │   ├── quote v1.0.47 (*)
+│       │   └── wasm-bindgen-macro-support v0.2.129
+│       │       ├── bumpalo v3.20.3
+│       │       ├── proc-macro2 v1.0.107 (*)
+│       │       ├── quote v1.0.47 (*)
+│       │       ├── syn v3.0.7 (*)
+│       │       └── wasm-bindgen-shared v0.2.129
+│       │           └── unicode-ident v1.0.26
+│       └── wasm-bindgen-shared v0.2.129 (*)
+│       [build-dependencies]
+│       └── rustversion v1.0.23 (proc-macro)
+├── js-sys v0.3.106
+│   ├── cfg-if v1.0.5
+│   ├── futures-util v0.3.34
+│   │   ├── futures-core v0.3.34
+│   │   ├── futures-task v0.3.34
+│   │   ├── pin-project-lite v0.2.17
+│   │   └── slab v0.4.12
+│   └── wasm-bindgen v0.2.129 (*)
+├── rhizaeon-core v0.1.0 (/home/danielle/Documents/veg/HyphAeon/rust/rhizaeon/crates/rhizaeon-core) (*)
+├── serde v1.0.229 (*)
+├── serde-wasm-bindgen v0.6.5
+│   ├── js-sys v0.3.106 (*)
+│   ├── serde v1.0.229 (*)
+│   └── wasm-bindgen v0.2.129 (*)
+├── serde_json v1.0.151 (*)
+└── wasm-bindgen v0.2.129 (*)
+
+trace50-cli v5.0.0 (/home/danielle/Documents/veg/HyphAeon/rust/trace-5.0/crates/trace50-cli)
+├── clap v4.6.7 (*)
+├── serde v1.0.229 (*)
+├── serde_json v1.0.151 (*)
+└── trace50-core v5.0.0 (/home/danielle/Documents/veg/HyphAeon/rust/trace-5.0/crates/trace50-core)
+    ├── aeon-manifold v0.1.0 (/home/danielle/Documents/veg/HyphAeon/rust/libs/aeon-manifold)
+    ├── serde v1.0.229 (*)
+    └── serde_json v1.0.151 (*)
+
+trace50-core v5.0.0 (/home/danielle/Documents/veg/HyphAeon/rust/trace-5.0/crates/trace50-core) (*)
+
+trace50-wasm v5.0.0 (/home/danielle/Documents/veg/HyphAeon/rust/trace-5.0/crates/trace50-wasm)
+├── console_error_panic_hook v0.1.7 (*)
+├── js-sys v0.3.106 (*)
+├── serde v1.0.229 (*)
+├── serde-wasm-bindgen v0.6.5 (*)
+├── serde_json v1.0.151 (*)
+├── trace50-core v5.0.0 (/home/danielle/Documents/veg/HyphAeon/rust/trace-5.0/crates/trace50-core) (*)
+└── wasm-bindgen v0.2.129 (*)

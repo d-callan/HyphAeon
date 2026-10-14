@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "hyphaeon-core"
@@ -29,11 +29,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-tn93 = ["tn93>=1.2.0"]
 dev = ["pytest>=7.0"]
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.maturin]
+python-source = "src"
+manifest-path = "native/Cargo.toml"
+module-name = "aeon_core._native"
+bindings = "pyo3"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

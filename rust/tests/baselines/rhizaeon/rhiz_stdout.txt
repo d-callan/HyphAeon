@@ -1,0 +1,25 @@
+================================================================================
+  RHIZAEON PA-FF v2.1 (Native Rust Engine)
+  Phylo-Attention Force Field Recombination Scanner
+================================================================================
+  Input alignment: "/home/danielle/Documents/veg/HyphAeon/rust/rhizaeon/tests/empirical/data/hiv1_kal153_crf02_ag.fasta"
+  Landmarks (K):   16
+  Significance:    alpha = 0.05
+  SNP Compression: AUTO (Trigger if L > 50kb or density < 0.10)
+--------------------------------------------------------------------------------
+  Alignment loaded: 9 taxa, 9953 bp (parsed in X.XXms)
+  Scan completed in X.XXms (X.XXms)
+  Informative sites: 1554
+  Candidate taxa screened: 7
+  Verified events found:   2
+--------------------------------------------------------------------------------
+  STATUS: Verified Recombination Events (|E| = 2)
+
+Recombinant          Home Parent     Donor Parent    Tract (bp)   Length     p-Fisher     Z-Score   
+-----------------------------------------------------------------------------------------------
+R                    B               A               1-2780       2780       2.14e-55     7.15      
+R                    B               A               8756-9638    883        3.82e-14     10.13     
+================================================================================
+  Summary JSON written to: "<OUT_DIR>/rhizaeon/rhiz.json"
+  Visualization Dossier JSON written to: "<OUT_DIR>/rhizaeon/rhiz_viz.json"
+  Standalone HTML Dashboard written to:  "<OUT_DIR>/rhizaeon/rhiz.html"

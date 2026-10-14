@@ -23,12 +23,17 @@ Key Theoretical Innovations:
 import os
 import sys
 import json
-from datetime import datetime
+import re
+import warnings
 from typing import Dict, List, Tuple, Optional, Any, Union
 
 import numpy as np
-from Bio import Phylo, SeqIO
+from Bio import Phylo
 from scipy.optimize import minimize_scalar, minimize
+
+from aeon_core import _native
+from aeon_core.dataset import parse_alignment_sequences
+from aeon_core.temporal import parse_date_to_decimal
 
 # ==============================================================================
 # Canonical Pathogen Generation Time Presets
@@ -101,62 +106,65 @@ PATHOGEN_PRESETS: Dict[str, Dict[str, Any]] = {
 def parse_calendar_date(date_str: Any) -> Optional[float]:
     """
     Parses arbitrary date formats into decimal calendar years (e.g. 2009.332).
-    Supports decimal floats, ISO 'YYYY-MM-DD', 'DD/MM/YYYY', and pipe/underscore tokens.
+
+    Delegates to ``aeon_core.temporal.parse_date_to_decimal`` (the canonical
+    parser, which covers ISO, decimal years, DD/MM/YYYY, MM/DD/YYYY, and
+    MM/YYYY). Historical r0 contracts preserved: numeric inputs pass through
+    ungated, and unparseable input returns ``None`` rather than NaN.
     """
     if date_str is None:
         return None
     if isinstance(date_str, (int, float)):
         return float(date_str)
-    
+
     s = str(date_str).strip().strip("'\"")
-    # Try parsing direct float
-    try:
-        val = float(s)
-        if 1800.0 <= val <= 2100.0:
-            return val
-    except ValueError:
-        pass
-
-    # Common calendar string formats
-    formats = [
-        "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d",
-        "%Y-%m", "%m/%Y", "%Y"
-    ]
-    for fmt in formats:
-        try:
-            dt = datetime.strptime(s, fmt)
-            year = dt.year
-            start_of_year = datetime(year, 1, 1)
-            end_of_year = datetime(year + 1, 1, 1)
-            frac = (dt - start_of_year).total_seconds() / (end_of_year - start_of_year).total_seconds()
-            return year + frac
-        except ValueError:
-            pass
-
-    return None
+    d = parse_date_to_decimal(s)
+    return None if np.isnan(d) else d
 
 
 def extract_dates_from_fasta(fasta_path: str) -> Dict[str, float]:
     """
     Extracts collection dates from FASTA header records.
-    Checks delimiter tokens (pipe '|', underscore '_', slash '/').
+
+    Token resolution reuses the canonical Rust kernel
+    (``aeon_core._native.parse_date_from_header`` applied per token):
+    the header is split on '|', '_', '/', and space, and a token resolves
+    when it is a numeric year in [1950, 2035] or ISO YYYY-MM[-DD].
+
+    Selection is LAST-resolvable-wins, a deliberate divergence from the
+    Rust first-token-wins convention: r0's input domain is Nextstrain-
+    style headers (``A/Ontario/304434/2009|geo|297|2009.814``) where the
+    strain designation embeds a bare year and the *sampling* date is the
+    trailing decimal. First-wins would quantize every date to its
+    designation year (the bundled H1N1 benchmark collapses to a zero date
+    range and the coalescent fit degenerates). A header carrying more
+    than one resolvable date token is ambiguous — the last is used and a
+    single warning is emitted per file listing the affected records.
     """
     dates = {}
-    for record in SeqIO.parse(fasta_path, "fasta"):
-        full_id = record.id.strip().strip("'\"")
-        # Try pipe delimiter
-        parts = full_id.split("|")
-        d_val = parse_calendar_date(parts[-1])
-        if d_val is None and len(parts) > 1:
-            d_val = parse_calendar_date(parts[-2])
-            
-        # Try underscore delimiter
-        if d_val is None:
-            parts_us = full_id.split("_")
-            d_val = parse_calendar_date(parts_us[-1])
-            
-        if d_val is not None:
-            dates[full_id] = d_val
+    ambiguous = []
+    # Canonical parser yields first-token record ids (same as SeqIO record.id)
+    for full_id in parse_alignment_sequences(str(fasta_path)):
+        full_id = full_id.strip().strip("'\"")
+        resolved = [
+            (t, d) for t in re.split(r'[|_/ ]', full_id)
+            if np.isfinite(d := _native.parse_date_from_header(t))
+        ]
+        if not resolved:
+            continue
+        if len(resolved) > 1:
+            ambiguous.append((full_id, resolved))
+        dates[full_id] = resolved[-1][1]
+
+    if ambiguous:
+        examples = "; ".join(
+            f"{h}: using {rs[-1][0]} (ignored {', '.join(t for t, _ in rs[:-1])})"
+            for h, rs in ambiguous[:5]
+        )
+        warnings.warn(
+            f"{len(ambiguous)} FASTA header(s) contain multiple resolvable date "
+            f"tokens; the last wins (sampling date convention). Examples: {examples}"
+        )
     return dates
 
 

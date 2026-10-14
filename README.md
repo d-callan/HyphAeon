@@ -19,16 +19,22 @@
 
 ## 📦 Monorepo Structure
 
-This repository is organized as a monorepo with three installable packages:
+This repository is organized as a monorepo with five installable packages and a
+shared Rust workspace:
 
 | Package | Description | Install |
 | :--- | :--- | :--- |
-| **`aeon-core`** | Shared model, dataset, inference, weights, stats, and IO infrastructure | `pip install hyphaeon-core` |
+| **`aeon-core`** | Shared model, dataset, inference, weights, stats, and IO infrastructure (ships a compiled Rust extension, `aeon_core._native`) | `pip install hyphaeon-core` |
 | **`hyphaeon`** | Site-level selection inference, epistasis, phenotype association, disease prediction | `pip install hyphaeon` |
 | **`chronaeon`** | Molecular clock dating, phylodynamics, phylogeography, genomic surveillance | `pip install chronaeon` |
+| **`rhizaeon`** | Spectral recombination detection — manifold-based mosaic inference, dossier + standalone HTML reports | `pip install rhizaeon` |
+| **`trace50`** | Molecular transmission network deconvolution — DANNO Bayes factors, clock adequacy, STEVE autoclock communities | `pip install trace50` |
 
-`aeon-core` is the shared foundation. Both `hyphaeon` and `chronaeon` depend on it
-and pull it in automatically when installed. Example datasets are shared from the
+`aeon-core` is the shared foundation for `hyphaeon` and `chronaeon`. `rhizaeon`
+and `trace50` are Rust engines wrapped as Python packages (PyO3/maturin); their
+crates live in the `rust/` workspace alongside the shared `aeon-manifold` and
+`aeon-autoclock` libraries and the `*-wasm` browser bundles
+(`wasm-pack build --target web`). Example datasets are shared from the
 root `examples/` directory; chronaeon-specific examples live in `chronaeon/examples/`.
 
 ---
@@ -100,11 +106,20 @@ development environment from a fresh clone:
 pip install -e aeon-core -e hyphaeon -e chronaeon
 ```
 
+For the Rust-backed packages, install `maturin` + a Rust toolchain and build the
+extension in place (same commands work inside `rhizaeon/` and `trace50/`):
+
+```bash
+cd aeon-core && maturin develop   # builds aeon_core._native
+cd rust && cargo build --workspace && cargo test --workspace
+```
+
 Run the test suite per-subpackage (each has its own `conftest.py` and `pyproject.toml`):
 
 ```bash
 pytest chronaeon/tests/    # ChronAeon tests
 pytest hyphaeon/tests/     # HyphAeon tests
+node rust/trace-5.0/crates/trace50-wasm/test_wasm.mjs   # wasm engine verification
 ```
 
 > [!NOTE]
