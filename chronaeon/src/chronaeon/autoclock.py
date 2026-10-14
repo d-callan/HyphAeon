@@ -20,12 +20,9 @@ Mathematical Pipeline:
 Author: Sergei L. Kosakovsky Pond & DeepMind Antigravity Pair Programmer
 """
 
-import os
 import sys
 import time
 import json
-import shutil
-import tempfile
 import warnings
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple, Union
@@ -344,7 +341,6 @@ def detect_contemporaneous_dyads(
     Returns:
         (dyads_df, taxa_dyad_map)
     """
-    import subprocess
     import networkx as nx
 
     n = len(taxa)
@@ -378,32 +374,20 @@ def detect_contemporaneous_dyads(
         ii, jj = np.where(np.triu(adj, k=1))
         for i, j in zip(ii, jj):
             dyad_pairs.append((taxa[i], taxa[j], float(D_computed[i, j]), float(dt_days[i, j])))
-    else:
-        # Out-of-core screening using tn93 binary
-        tn93_bin = shutil.which("tn93")
-        if tn93_bin and seq_dict is not None:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                tmp_fa = os.path.join(tmpdir, "dyad_in.fa")
-                out_csv = os.path.join(tmpdir, "dyad_out.csv")
-                with open(tmp_fa, "w") as f:
-                    for t in taxa:
-                        s_clean = seq_dict[t].replace("*", "-")
-                        f.write(f">{t}\n{s_clean}\n")
-                try:
-                    subprocess.run(
-                        [tn93_bin, "-t", f"{dyad_max_dist:.4f}", "-l", "1", "-q", "-o", out_csv, tmp_fa],
-                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                    )
-                    if os.path.exists(out_csv) and os.path.getsize(out_csv) > 0:
-                        df_p = pd.read_csv(out_csv, usecols=["ID1", "ID2", "Distance"], dtype={"ID1": str, "ID2": str})
-                        df_p["d1"] = df_p["ID1"].map(dates_map)
-                        df_p["d2"] = df_p["ID2"].map(dates_map)
-                        df_p["dt"] = (df_p["d1"] - df_p["d2"]).abs() * 365.25
-                        filt = df_p[df_p["dt"] <= dyad_max_days]
-                        for _, row in filt.iterrows():
-                            dyad_pairs.append((str(row["ID1"]), str(row["ID2"]), float(row["Distance"]), float(row["dt"])))
-                except Exception:
-                    pass
+    elif seq_dict is not None:
+        # Out-of-core screening via the canonical TN93 kernel, chunked over
+        # column blocks so peak memory stays O(N * block) instead of O(N^2).
+        block = 512
+        for b0 in range(0, n, block):
+            blk_idx = np.arange(b0, min(b0 + block, n))
+            blk_taxa = [taxa[j] for j in blk_idx]
+            D_blk = compute_tn93_cross_distance_matrix(seq_dict, taxa, blk_taxa)
+            dt_blk = np.abs(dates[:, None] - dates[None, blk_idx]) * 365.25
+            adj = get_admissible_mask(D_blk, dt_blk)
+            adj &= np.arange(n)[:, None] < blk_idx[None, :]  # unordered pairs once
+            ii, jj = np.where(adj)
+            for a, b in zip(ii, jj):
+                dyad_pairs.append((taxa[a], blk_taxa[b], float(D_blk[a, b]), float(dt_blk[a, b])))
 
     if not dyad_pairs:
         return pd.DataFrame(columns=[

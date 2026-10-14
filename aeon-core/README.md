@@ -14,8 +14,8 @@ Prebuilt wheels (abi3, one per platform covering all Python >= 3.8) ship a
 compiled Rust extension at `aeon_core._native` providing the canonical TN93
 distance and statistical kernels. Installing from the sdist instead requires a
 Rust toolchain (`rustup` recommended) — maturin compiles `native/` at install
-time. If neither the extension nor the `tn93` binary is available, TN93-backed
-functions raise `ImportError` with instructions.
+time. The extension is required for TN93-backed functions — a missing
+extension means a broken install and raises `ImportError` at module load.
 
 ## Components
 

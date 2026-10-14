@@ -29,7 +29,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-tn93 = ["tn93>=1.2.0"]
 dev = ["pytest>=7.0"]
 
 [tool.maturin]
