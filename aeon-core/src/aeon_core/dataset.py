@@ -292,27 +292,21 @@ def parse_alignment_sequences(filepath: str) -> Dict[str, str]:
             if seq_dict and len(seq_dict) >= int(first_tokens[0]):
                 return seq_dict
 
-    # 2. Fast direct FASTA format parsing
+    # 2. Fast direct FASTA format parsing — delegated to the canonical Rust
+    # tokenizer. Python-side glue preserves the historical contract:
+    #   - parsing stops at the first line starting with '(', 'tree ', or
+    #     'begin ' (alignment files with a trailing tree/NEXUS payload)
+    #   - record names are quote-stripped
+    #   - sequences are U->T translated (RNA input read as DNA)
     if full_text.strip().startswith('>'):
-        seq_dict = {}
-        curr_id = None
-        curr_chunks = []
-        for line in full_text.splitlines():
-            l_strip = line.strip()
-            if not l_strip:
-                continue
-            if l_strip.startswith('>'):
-                if curr_id is not None:
-                    seq_dict[curr_id] = "".join(curr_chunks).upper().replace('U', 'T')
-                curr_id = l_strip[1:].split()[0].strip("'\"")
-                curr_chunks = []
-            elif l_strip.startswith('(') or l_strip.lower().startswith('tree ') or l_strip.lower().startswith('begin '):
-                break
-            else:
-                curr_chunks.append(l_strip.replace(' ', ''))
-        if curr_id is not None:
-            seq_dict[curr_id] = "".join(curr_chunks).upper().replace('U', 'T')
-        return seq_dict
+        stop = len(full_text)
+        m = re.search(r'^\s*(?:\(|tree |begin )', full_text, re.IGNORECASE | re.MULTILINE)
+        if m:
+            stop = m.start()
+        return {
+            name.strip("'\""): seq.decode('utf-8').replace('U', 'T')
+            for name, seq in aeon_py.fasta_tokenize(full_text[:stop])
+        }
 
     # NEXUS format parsing
     clean_nexus_text = re.sub(r'\[[^\]]*\]', '', full_text)
