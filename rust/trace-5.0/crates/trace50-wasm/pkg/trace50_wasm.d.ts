@@ -20,7 +20,9 @@ export function compute_info_danno_score(seq_a: string, seq_b: string, delta_t: 
 
 /**
  * Calculates the analytical Tamura-Nei 93 (TN93) pairwise genetic distance
- * between two nucleotide sequences with IUPAC ambiguity resolution.
+ * between two nucleotide sequences, as `tn93 -t 1.0 -a RMYSKB`.
+ * Returns NaN when the sequences share 100 or fewer non-gap sites or the
+ * distance exceeds 1.0 (pairs tn93 would not report).
  */
 export function compute_tn93(seq_a: string, seq_b: string): number;
 
