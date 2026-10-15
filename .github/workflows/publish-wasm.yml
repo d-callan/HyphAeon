@@ -51,11 +51,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack@0.15.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Install wasm-pack
-        run: cargo install wasm-pack --locked
       - name: Resolve tag and assert version match
         id: pkg
         env:
@@ -100,7 +104,12 @@ jobs:
           The bundle is verified by the crate's \`test_wasm.mjs\` smoke test
           before this release is created.
           EOF
-          gh release create "$TAG" "$ASSET" \
-            --repo "${{ github.repository }}" \
-            --title "${{ matrix.pkg }} ${TAG_VERSION} wasm bundle" \
-            --notes-file /tmp/release-notes.md
+          # Idempotent: create the release if missing, then (re)upload the
+          # asset so a re-run of this job doesn't fail on a pre-existing release.
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "${{ matrix.pkg }} ${TAG_VERSION} wasm bundle" \
+              --notes-file /tmp/release-notes.md
+          fi
+          gh release upload "$TAG" "$ASSET" --clobber --repo "${{ github.repository }}"
