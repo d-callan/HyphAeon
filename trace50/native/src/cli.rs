@@ -188,13 +188,13 @@ fn parse_metadata_dates(
 /// unavailable", which the pipeline and `calibrate_from_data` both skip. A
 /// thresholded edge list therefore yields a truncated background, so pass the
 /// full matrix when the background is to be calibrated from it.
-fn load_distance_csv(
-    path: &Path,
-    headers: &[String],
-) -> Result<(Vec<f64>, usize, usize), String> {
+fn load_distance_csv(path: &Path, headers: &[String]) -> Result<(Vec<f64>, usize, usize), String> {
     let n = headers.len();
-    let index: std::collections::HashMap<&str, usize> =
-        headers.iter().enumerate().map(|(i, h)| (h.as_str(), i)).collect();
+    let index: std::collections::HashMap<&str, usize> = headers
+        .iter()
+        .enumerate()
+        .map(|(i, h)| (h.as_str(), i))
+        .collect();
 
     let file = File::open(path).map_err(|e| e.to_string())?;
     let mut m = vec![f64::NAN; n * n];
@@ -210,7 +210,10 @@ fn load_distance_csv(
         if line.is_empty() {
             continue;
         }
-        let f: Vec<&str> = line.split(',').map(|s| s.trim().trim_matches('"')).collect();
+        let f: Vec<&str> = line
+            .split(',')
+            .map(|s| s.trim().trim_matches('"'))
+            .collect();
         if f.len() < 3 {
             continue;
         }
@@ -343,14 +346,20 @@ fn run(args: CliArgs) -> Result<(), Box<dyn std::error::Error>> {
     if num_undated == alignment.num_sequences() {
         return Err("[!] ERROR: no sequence has a parseable collection date (from --meta or the FASTA headers). DANNO needs a sampling interval for every pair and cannot run.".into());
     } else if num_undated > 0 {
-        eprintln!("================================================================================");
+        eprintln!(
+            "================================================================================"
+        );
         eprintln!(
             "[!] WARNING: {} of {} sequences have NO collection date. They are EXCLUDED from",
             num_undated,
             alignment.num_sequences()
         );
-        eprintln!("[!] DANNO, the static network, AutoClock and CHIN (not imputed); as in run_danno.py.");
-        eprintln!("================================================================================");
+        eprintln!(
+            "[!] DANNO, the static network, AutoClock and CHIN (not imputed); as in run_danno.py."
+        );
+        eprintln!(
+            "================================================================================"
+        );
     } else {
         println!(
             "[*] Collection dates: all {} sequences dated.",
@@ -397,12 +406,9 @@ fn run(args: CliArgs) -> Result<(), Box<dyn std::error::Error>> {
                 Some(m)
             }
             Err(e) => {
-                return Err(format!(
-                    "[!] Failed to load --distances {}: {}",
-                    path.display(),
-                    e
-                )
-                .into());
+                return Err(
+                    format!("[!] Failed to load --distances {}: {}", path.display(), e).into(),
+                );
             }
         },
     };
@@ -521,7 +527,9 @@ fn run(args: CliArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
     match dossier.kpi.inferred_surveillance_sampling_fraction_pct {
         Some(pct) => println!("   - Surveillance Sampling Fraction:   {:.2}%", pct),
-        None => println!("   - Surveillance Sampling Fraction:   not estimable (N_act not estimable)"),
+        None => {
+            println!("   - Surveillance Sampling Fraction:   not estimable (N_act not estimable)")
+        }
     }
     println!(
         "   - Borel Branching Decay (R^2):      {:.4}",
