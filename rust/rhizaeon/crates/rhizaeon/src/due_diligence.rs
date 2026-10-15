@@ -5,6 +5,7 @@ pub struct SequenceDueDiligence {
     pub poisson_floor: usize,
     pub alpha: f64,
     pub stringency: f64,
+    pub d_sister: Option<f64>,
     log_factorials: Vec<f64>,
 }
 
@@ -27,12 +28,18 @@ impl SequenceDueDiligence {
             poisson_floor,
             alpha,
             stringency: 1.0,
+            d_sister: None,
             log_factorials: log_facts,
         }
     }
 
     pub fn with_stringency(mut self, stringency: f64) -> Self {
         self.stringency = stringency;
+        self
+    }
+
+    pub fn with_d_sister(mut self, d_sister: f64) -> Self {
+        self.d_sister = Some(d_sister);
         self
     }
 
@@ -144,7 +151,9 @@ impl SequenceDueDiligence {
                 return None;
             }
             // Co-recombinant sister taxa or candidate's own sister cannot serve as donor
-            let (d_sister, _) = crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
+            let d_sister = self.d_sister.unwrap_or_else(|| {
+                crate::landmarks::compute_scale_invariant_distance_thresholds(aln).0
+            });
             let d_cd = crate::landmarks::compute_pairwise_distance(aln, cand_idx, dg);
             let d_hd = crate::landmarks::compute_pairwise_distance(aln, home_global, dg);
             if d_cd < d_sister || d_hd < d_sister {

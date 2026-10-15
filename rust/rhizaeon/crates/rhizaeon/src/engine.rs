@@ -146,7 +146,7 @@ impl RhizAeonEngine {
         let effective_k = if self.target_landmarks == 16 {
             self.target_landmarks.max(n / 2).min(32).min(n)
         } else {
-            self.target_landmarks.max(2).min(n)
+            self.target_landmarks.max(2).min(n).min(127)
         };
         let landmarks = select_landmarks(&aln, effective_k);
 
@@ -187,10 +187,12 @@ impl RhizAeonEngine {
         let num_channels = landmarks.num_landmarks + 1;
 
         // 6. Pass 2 Polishing & Pass 3 Due Diligence on candidates
+        let (d_sister, _) = crate::landmarks::compute_scale_invariant_distance_thresholds(&aln);
         let resolver = TrajectoryParentalResolver::new().with_stringency(self.tier2_stringency);
         let polisher = CumulativeTrajectoryPolisher::new().with_stringency(self.tier2_stringency);
         let due_diligence = SequenceDueDiligence::new(self.poisson_floor, self.alpha, 100_000)
-            .with_stringency(self.tier3_stringency);
+            .with_stringency(self.tier3_stringency)
+            .with_d_sister(d_sister);
 
         let mut verified_events = Vec::new();
 
@@ -746,8 +748,6 @@ fn group_ancestral_events(
                     } else {
                         1.0
                     };
-                    let (_d_sister, d_clade) =
-                        crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
                     if dist_tr_c < dist_tr_h && dist_tr_h > dist_fl_h && dist_fl_h < d_clade {
                         g.isolates.push(t_name.clone());
                     }
