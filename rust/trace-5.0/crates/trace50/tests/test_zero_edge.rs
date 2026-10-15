@@ -15,7 +15,8 @@ const CONTROL_RHO_PY: f64 = 0.6666666666666666;
 fn fixture_dossier() -> trace50::VisualizationDossier {
     let fasta = include_str!("fixtures/zero_edge/static_only.fasta");
     let alignment = Alignment::from_fasta_str(fasta).expect("fixture parses");
-    run_trace50(&alignment, &Trace50Config::default()).expect("pipeline runs with zero supported edges")
+    run_trace50(&alignment, &Trace50Config::default())
+        .expect("pipeline runs with zero supported edges")
 }
 
 #[test]
@@ -38,9 +39,15 @@ fn test_zero_edge_refuses_n_act_and_reduction() {
     assert_eq!(d.kpi.giant_component_reduction_pct, None);
     assert_eq!(d.kpi.inferred_active_transmitting_pool, None);
     assert_eq!(d.kpi.inferred_active_pool_ci, None);
-    assert_eq!(d.kpi.inferred_active_pool_status, N_ACT_NOT_ESTIMABLE_NO_EDGES);
+    assert_eq!(
+        d.kpi.inferred_active_pool_status,
+        N_ACT_NOT_ESTIMABLE_NO_EDGES
+    );
     assert!(d.macro_scaling.active_population.is_none());
-    assert_eq!(d.macro_scaling.active_population_status, N_ACT_NOT_ESTIMABLE_NO_EDGES);
+    assert_eq!(
+        d.macro_scaling.active_population_status,
+        N_ACT_NOT_ESTIMABLE_NO_EDGES
+    );
     assert!(d.macro_scaling.bayesian_mcmc.is_none());
     // rho = n / N_act is refused with N_act, not reported as 0%
     assert_eq!(d.kpi.inferred_surveillance_sampling_fraction_pct, None);
@@ -73,15 +80,32 @@ fn test_supported_edges_keep_estimates() {
     assert_eq!(d.kpi.inferred_active_pool_status, "estimated");
     let n_act = d.kpi.inferred_active_transmitting_pool.unwrap();
     let ci = d.kpi.inferred_active_pool_ci.unwrap();
-    for (got, want) in [(n_act, 9.0), (ci[0], 2.902692757565392), (ci[1], 27.905123540507965)] {
-        assert!((got - want).abs() <= 1e-8 * want, "{} vs python {}", got, want);
+    for (got, want) in [
+        (n_act, 9.0),
+        (ci[0], 2.902692757565392),
+        (ci[1], 27.905123540507965),
+    ] {
+        assert!(
+            (got - want).abs() <= 1e-8 * want,
+            "{} vs python {}",
+            got,
+            want
+        );
     }
     assert!(d.macro_scaling.active_population.is_some());
     // rho from the Python ChinEstimator(1.5).estimate_sampling_fraction(6, 3)
     // (phase2/verifier-fixes/c_rho/chin_rho_oracle.json)
     let rho = d.macro_scaling.surveillance_coverage_rho.unwrap();
-    assert!((rho - CONTROL_RHO_PY).abs() <= 1e-12, "rho {} vs python {}", rho, CONTROL_RHO_PY);
-    assert_eq!(d.kpi.inferred_surveillance_sampling_fraction_pct, Some(rho * 100.0));
+    assert!(
+        (rho - CONTROL_RHO_PY).abs() <= 1e-12,
+        "rho {} vs python {}",
+        rho,
+        CONTROL_RHO_PY
+    );
+    assert_eq!(
+        d.kpi.inferred_surveillance_sampling_fraction_pct,
+        Some(rho * 100.0)
+    );
 }
 
 /// The control dates span 0.5 yr, so run_danno.py keeps t_span = max(span, 1.0)
@@ -104,9 +128,16 @@ fn test_short_span_bayes_factors_match_python() {
         let e = d
             .edges
             .iter()
-            .find(|e| (e.source == f[0] && e.target == f[1]) || (e.source == f[1] && e.target == f[0]))
+            .find(|e| {
+                (e.source == f[0] && e.target == f[1]) || (e.source == f[1] && e.target == f[0])
+            })
             .expect("oracle edge present in dossier");
-        assert!((e.bayes_factor - want).abs() <= 1e-4 * want, "BF {} vs python {}", e.bayes_factor, want);
+        assert!(
+            (e.bayes_factor - want).abs() <= 1e-4 * want,
+            "BF {} vs python {}",
+            e.bayes_factor,
+            want
+        );
         n += 1;
     }
     assert_eq!(n, 3);

@@ -20,7 +20,10 @@ fn oracle() -> Value {
 fn test_effective_len_matches_run_danno() {
     let o = oracle();
     let aln = Alignment::from_fasta_str(FASTA).unwrap();
-    assert_eq!(aln.effective_len as u64, o["effective_len"].as_u64().unwrap());
+    assert_eq!(
+        aln.effective_len as u64,
+        o["effective_len"].as_u64().unwrap()
+    );
     assert_eq!(aln.seq_len as u64, o["alignment_width"].as_u64().unwrap());
     assert_ne!(aln.effective_len, aln.seq_len);
 }
@@ -41,9 +44,19 @@ fn test_bayes_factor_at_effective_len_matches_python() {
         f("bg_mean_dist"),
         f("bg_var_dist"),
     );
-    for (name, got) in [("p_trans", est.p_trans), ("p_bg", est.p_bg), ("r_bg", est.r_bg)] {
+    for (name, got) in [
+        ("p_trans", est.p_trans),
+        ("p_bg", est.p_bg),
+        ("r_bg", est.r_bg),
+    ] {
         let want = o[name].as_f64().unwrap();
-        assert!((got - want).abs() <= 1e-9 * want.abs(), "{}: rust {} python {}", name, got, want);
+        assert!(
+            (got - want).abs() <= 1e-9 * want.abs(),
+            "{}: rust {} python {}",
+            name,
+            got,
+            want
+        );
     }
     let cases = o["cases"].as_array().unwrap();
     assert!(cases.len() >= 6);
@@ -88,13 +101,18 @@ fn test_pipeline_uses_effective_len_and_override() {
     m[1] = d;
     m[n] = d;
     for (cfg_len, want_l) in [(None, l), (Some(1000usize), 1000usize)] {
-        let cfg = Trace50Config { seq_len: cfg_len, ..Trace50Config::default() };
+        let cfg = Trace50Config {
+            seq_len: cfg_len,
+            ..Trace50Config::default()
+        };
         let dossier = run_trace50_with_matrix(&aln, &cfg, Some(m.clone())).unwrap();
         assert_eq!(dossier.metadata.seq_len, want_l);
         let e = dossier
             .edges
             .iter()
-            .find(|e| (e.source_idx, e.target_idx) == (0, 1) || (e.source_idx, e.target_idx) == (1, 0))
+            .find(|e| {
+                (e.source_idx, e.target_idx) == (0, 1) || (e.source_idx, e.target_idx) == (1, 0)
+            })
             .expect("static pair missing from dossier");
         assert!((e.k_substitutions - d * want_l as f64).abs() < 1e-12);
     }

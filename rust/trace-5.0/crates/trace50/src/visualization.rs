@@ -3,9 +3,9 @@
 //! Generates comprehensive, self-contained JSON documents designed for interactive
 //! visualization across Observable Framework, D3.js, Cytoscape, and WebAssembly dashboards.
 
-use serde::{Deserialize, Serialize};
 use crate::autoclock::SteveCommunity;
 use crate::chin::{ActivePopulationEstimate, BorelDecayResult, ChinBayesianResult};
+use serde::{Deserialize, Serialize};
 
 /// Master visualization dossier containing all network, phylogenetic, and epidemiological outputs.
 #[derive(Debug, Clone, Serialize, Deserialize)]

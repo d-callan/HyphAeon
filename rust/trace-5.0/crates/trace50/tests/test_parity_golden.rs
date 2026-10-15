@@ -17,7 +17,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
-use trace50::{run_trace50, run_trace50_with_matrix, Alignment, DannoEstimator, Trace50Config, VisualizationDossier};
+use trace50::{
+    run_trace50, run_trace50_with_matrix, Alignment, DannoEstimator, Trace50Config,
+    VisualizationDossier,
+};
 
 const FASTA: &str = include_str!("fixtures/parity/subset.fasta");
 const META: &str = include_str!("fixtures/parity/meta.csv");
@@ -67,7 +70,10 @@ fn golden_pairs(aln: &Alignment) -> BTreeMap<Pair, f64> {
     for line in DISTANCES.lines().skip(1) {
         let f: Vec<&str> = line.split(',').collect();
         let (i, j): (usize, usize) = (f[0].parse().unwrap(), f[1].parse().unwrap());
-        out.insert(pair(&aln.headers[i], &aln.headers[j]), f[2].parse::<f64>().unwrap());
+        out.insert(
+            pair(&aln.headers[i], &aln.headers[j]),
+            f[2].parse::<f64>().unwrap(),
+        );
     }
     out
 }
@@ -93,12 +99,21 @@ fn golden_partition(g: &Value, key: &str) -> Partition {
         .as_array()
         .unwrap()
         .iter()
-        .map(|c| c.as_array().unwrap().iter().map(|x| x.as_str().unwrap().to_string()).collect())
+        .map(|c| {
+            c.as_array()
+                .unwrap()
+                .iter()
+                .map(|x| x.as_str().unwrap().to_string())
+                .collect()
+        })
         .collect()
 }
 
 /// Partition of the nodes with a nonzero cluster label, as sets of IDs.
-fn dossier_partition(d: &VisualizationDossier, label: impl Fn(&trace50::visualization::DossierNode) -> usize) -> Partition {
+fn dossier_partition(
+    d: &VisualizationDossier,
+    label: impl Fn(&trace50::visualization::DossierNode) -> usize,
+) -> Partition {
     let mut by: BTreeMap<usize, BTreeSet<String>> = BTreeMap::new();
     for node in &d.nodes {
         let c = label(node);
@@ -131,10 +146,24 @@ fn config(g: &Value) -> Trace50Config {
 fn parity_alignment_length_and_dates() {
     let g = golden();
     let aln = alignment();
-    assert_eq!(aln.num_sequences() as u64, g["n_sequences"].as_u64().unwrap());
-    assert_eq!(aln.seq_len as u64, g["alignment_width"].as_u64().unwrap(), "alignment width");
-    assert_eq!(aln.effective_len as u64, g["seq_len"].as_u64().unwrap(), "default L (median non-gap)");
-    assert_ne!(aln.effective_len, aln.seq_len, "fixture must distinguish L from the width");
+    assert_eq!(
+        aln.num_sequences() as u64,
+        g["n_sequences"].as_u64().unwrap()
+    );
+    assert_eq!(
+        aln.seq_len as u64,
+        g["alignment_width"].as_u64().unwrap(),
+        "alignment width"
+    );
+    assert_eq!(
+        aln.effective_len as u64,
+        g["seq_len"].as_u64().unwrap(),
+        "default L (median non-gap)"
+    );
+    assert_ne!(
+        aln.effective_len, aln.seq_len,
+        "fixture must distinguish L from the width"
+    );
 
     // meta.csv holds run_danno.parse_date of each header
     let meta: BTreeMap<&str, f64> = META
@@ -148,7 +177,13 @@ fn parity_alignment_length_and_dates() {
     assert_eq!(meta.len(), aln.num_sequences());
     for (h, &d) in aln.headers.iter().zip(&aln.dates) {
         let want = meta[h.as_str()];
-        assert!((d - want).abs() <= 1e-12, "date of {}: rust {} python {}", h, d, want);
+        assert!(
+            (d - want).abs() <= 1e-12,
+            "date of {}: rust {} python {}",
+            h,
+            d,
+            want
+        );
     }
 }
 
@@ -188,8 +223,17 @@ fn parity_internal_tn93_matches_tn93_binary() {
             worst = (diff, Some(k.clone()));
         }
     }
-    assert!(worst.0 <= TN93_ABS_TOL, "max |d_rust - d_tn93| = {} at {:?}", worst.0, worst.1);
-    eprintln!("[parity] internal TN93: {} pairs = tn93 pair set; max |d_rust - d_tn93| {:.3e}", got.len(), worst.0);
+    assert!(
+        worst.0 <= TN93_ABS_TOL,
+        "max |d_rust - d_tn93| = {} at {:?}",
+        worst.0,
+        worst.1
+    );
+    eprintln!(
+        "[parity] internal TN93: {} pairs = tn93 pair set; max |d_rust - d_tn93| {:.3e}",
+        got.len(),
+        worst.0
+    );
 }
 
 #[test]
@@ -204,7 +248,11 @@ fn parity_background_calibration() {
 
     for (label, matrix, tol) in [
         ("golden distances", golden_matrix(n), EXACT_REL_TOL),
-        ("internal TN93", aln.compute_distance_matrix(), INTERNAL_REL_TOL),
+        (
+            "internal TN93",
+            aln.compute_distance_matrix(),
+            INTERNAL_REL_TOL,
+        ),
     ] {
         let mut est = DannoEstimator::new(
             aln.effective_len,
@@ -217,9 +265,27 @@ fn parity_background_calibration() {
             0.0004,
         );
         est.calibrate_from_data(&matrix, n, &aln.dates);
-        assert!(rel_close(est.p_bg, want_p, tol), "{}: p_bg rust {} python {}", label, est.p_bg, want_p);
-        assert!(rel_close(est.r_bg, want_r, tol), "{}: r_bg rust {} python {}", label, est.r_bg, want_r);
-        assert!(rel_close(est.t_span, want_t, EXACT_REL_TOL), "{}: t_span rust {} python {}", label, est.t_span, want_t);
+        assert!(
+            rel_close(est.p_bg, want_p, tol),
+            "{}: p_bg rust {} python {}",
+            label,
+            est.p_bg,
+            want_p
+        );
+        assert!(
+            rel_close(est.r_bg, want_r, tol),
+            "{}: r_bg rust {} python {}",
+            label,
+            est.r_bg,
+            want_r
+        );
+        assert!(
+            rel_close(est.t_span, want_t, EXACT_REL_TOL),
+            "{}: t_span rust {} python {}",
+            label,
+            est.t_span,
+            want_t
+        );
         eprintln!(
             "[parity] calibration ({}): p_bg rel dev {:.3e}, r_bg rel dev {:.3e}",
             label,
@@ -233,15 +299,30 @@ fn parity_background_calibration() {
 fn assert_pipeline_matches_golden(label: &str, d: &VisualizationDossier, tol: f64) {
     let g = golden();
 
-    assert_eq!(d.metadata.seq_len as u64, g["seq_len"].as_u64().unwrap(), "{}: L used", label);
-    assert_eq!(d.metadata.alignment_width as u64, g["alignment_width"].as_u64().unwrap(), "{}: width", label);
+    assert_eq!(
+        d.metadata.seq_len as u64,
+        g["seq_len"].as_u64().unwrap(),
+        "{}: L used",
+        label
+    );
+    assert_eq!(
+        d.metadata.alignment_width as u64,
+        g["alignment_width"].as_u64().unwrap(),
+        "{}: width",
+        label
+    );
 
     // supported edge set, then BF / PEP / q per edge
     let want: BTreeMap<Pair, &Value> = g["supported_edges"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|e| (pair(e["id1"].as_str().unwrap(), e["id2"].as_str().unwrap()), e))
+        .map(|e| {
+            (
+                pair(e["id1"].as_str().unwrap(), e["id2"].as_str().unwrap()),
+                e,
+            )
+        })
         .collect();
     let got: BTreeMap<Pair, _> = d
         .edges
@@ -260,29 +341,72 @@ fn assert_pipeline_matches_golden(label: &str, d: &VisualizationDossier, tol: f6
         got_keys.difference(&want_keys).collect::<Vec<_>>(),
         want_keys.difference(&got_keys).collect::<Vec<_>>()
     );
-    assert_eq!(d.kpi.supported_transmission_edges, want.len(), "{}: KPI edge count", label);
+    assert_eq!(
+        d.kpi.supported_transmission_edges,
+        want.len(),
+        "{}: KPI edge count",
+        label
+    );
     let mut worst_rel = 0.0f64;
     for (k, w) in &want {
         let e = got[k];
         let wdt = w["delta_t"].as_f64().unwrap();
-        assert!((e.delta_t_years - wdt).abs() <= 1e-9, "{}: {:?} delta_t rust {} python {}", label, k, e.delta_t_years, wdt);
-        for (name, gv) in [("bayes_factor", e.bayes_factor), ("pep", e.pep), ("q_value", e.q_value)] {
+        assert!(
+            (e.delta_t_years - wdt).abs() <= 1e-9,
+            "{}: {:?} delta_t rust {} python {}",
+            label,
+            k,
+            e.delta_t_years,
+            wdt
+        );
+        for (name, gv) in [
+            ("bayes_factor", e.bayes_factor),
+            ("pep", e.pep),
+            ("q_value", e.q_value),
+        ] {
             let wv = w[name].as_f64().unwrap();
-            assert!(rel_close(gv, wv, tol), "{}: {:?} {} rust {} python {}", label, k, name, gv, wv);
+            assert!(
+                rel_close(gv, wv, tol),
+                "{}: {:?} {} rust {} python {}",
+                label,
+                k,
+                name,
+                gv,
+                wv
+            );
             worst_rel = worst_rel.max(((gv - wv) / wv).abs());
         }
     }
-    eprintln!("[parity] {}: {} supported edges match; max relative BF/PEP/q deviation {:.3e}", label, want.len(), worst_rel);
+    eprintln!(
+        "[parity] {}: {} supported edges match; max relative BF/PEP/q deviation {:.3e}",
+        label,
+        want.len(),
+        worst_rel
+    );
 
     // partitions
     let danno = dossier_partition(d, |n| n.cluster_id_supported);
-    assert_eq!(danno, golden_partition(&g, "danno_partition"), "{}: DANNO cluster partition", label);
+    assert_eq!(
+        danno,
+        golden_partition(&g, "danno_partition"),
+        "{}: DANNO cluster partition",
+        label
+    );
     let stat = dossier_partition(d, |n| n.cluster_id_static);
-    assert_eq!(stat, golden_partition(&g, "static_partition"), "{}: static 1.5% partition", label);
+    assert_eq!(
+        stat,
+        golden_partition(&g, "static_partition"),
+        "{}: static 1.5% partition",
+        label
+    );
 
     // CHIN
     let c = &g["chin"];
-    let ap = d.macro_scaling.active_population.as_ref().expect("N_act estimable");
+    let ap = d
+        .macro_scaling
+        .active_population
+        .as_ref()
+        .expect("N_act estimable");
     let wa = &c["active_population"];
     for (name, gv, key) in [
         ("N_act", ap.n_act, "N_act"),
@@ -291,17 +415,50 @@ fn assert_pipeline_matches_golden(label: &str, d: &VisualizationDossier, tol: f6
         ("relative_error", ap.relative_error, "relative_error"),
     ] {
         let wv = wa[key].as_f64().unwrap();
-        assert!(rel_close(gv, wv, EXACT_REL_TOL), "{}: CHIN {} rust {} python {}", label, name, gv, wv);
+        assert!(
+            rel_close(gv, wv, EXACT_REL_TOL),
+            "{}: CHIN {} rust {} python {}",
+            label,
+            name,
+            gv,
+            wv
+        );
     }
     let b = &d.macro_scaling.borel_decay;
     let wb = &c["borel"];
-    for (name, gv) in [("slope", b.slope), ("r_squared", b.r_squared), ("p_value", b.p_value)] {
+    for (name, gv) in [
+        ("slope", b.slope),
+        ("r_squared", b.r_squared),
+        ("p_value", b.p_value),
+    ] {
         let wv = wb[name].as_f64().unwrap();
-        assert!(rel_close(gv, wv, EXACT_REL_TOL), "{}: Borel {} rust {} python {}", label, name, gv, wv);
+        assert!(
+            rel_close(gv, wv, EXACT_REL_TOL),
+            "{}: Borel {} rust {} python {}",
+            label,
+            name,
+            gv,
+            wv
+        );
     }
-    assert_eq!(b.n_clusters as u64, wb["n_clusters"].as_u64().unwrap(), "{}: Borel n_clusters", label);
-    assert_eq!(b.n_megaclusters as u64, wb["n_megaclusters"].as_u64().unwrap(), "{}: Borel n_megaclusters", label);
-    assert_eq!(b.rejects_uniform_sampling, wb["rejects_uniform_sampling"].as_bool().unwrap(), "{}: Borel rejects", label);
+    assert_eq!(
+        b.n_clusters as u64,
+        wb["n_clusters"].as_u64().unwrap(),
+        "{}: Borel n_clusters",
+        label
+    );
+    assert_eq!(
+        b.n_megaclusters as u64,
+        wb["n_megaclusters"].as_u64().unwrap(),
+        "{}: Borel n_megaclusters",
+        label
+    );
+    assert_eq!(
+        b.rejects_uniform_sampling,
+        wb["rejects_uniform_sampling"].as_bool().unwrap(),
+        "{}: Borel rejects",
+        label
+    );
 }
 
 #[test]

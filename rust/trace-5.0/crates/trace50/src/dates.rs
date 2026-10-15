@@ -92,7 +92,10 @@ fn month_from_abbr(s: &str) -> Option<u32> {
         return None;
     }
     let up = s.to_ascii_uppercase();
-    MONTH_ABBR.iter().position(|&a| a == up).map(|i| i as u32 + 1)
+    MONTH_ABBR
+        .iter()
+        .position(|&a| a == up)
+        .map(|i| i as u32 + 1)
 }
 
 /// Perez-Losada / DC header: `B.US.2013.DC1000_0131022_PR_RT.MF455515`.
@@ -106,7 +109,11 @@ pub fn parse_dc(header: &str) -> Option<f64> {
     if parts.len() < 4 {
         return None;
     }
-    let year: i64 = if is_19_20_year(parts[2]) { parts[2].parse().ok()? } else { return None };
+    let year: i64 = if is_19_20_year(parts[2]) {
+        parts[2].parse().ok()?
+    } else {
+        return None;
+    };
 
     // re.search(r'_0(\d{6})(?:_|$)', parts[3]): leftmost match
     let f = parts[3].as_bytes();
@@ -115,7 +122,9 @@ pub fn parse_dc(header: &str) -> Option<f64> {
         if p + 8 > f.len() {
             break;
         }
-        if f[p] == b'_' && f[p + 1] == b'0' && f[p + 2..p + 8].iter().all(|b| b.is_ascii_digit())
+        if f[p] == b'_'
+            && f[p + 1] == b'0'
+            && f[p + 2..p + 8].iter().all(|b| b.is_ascii_digit())
             && (p + 8 == f.len() || f[p + 8] == b'_')
         {
             block = Some(&parts[3][p + 2..p + 8]);
@@ -140,7 +149,9 @@ fn looks_like_dc(header: &str) -> bool {
     let parts: Vec<&str> = header.splitn(4, '.').collect();
     parts.len() == 4
         && !parts[0].is_empty()
-        && parts[0].bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        && parts[0]
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
         && parts[1].len() == 2
         && parts[1].bytes().all(|b| b.is_ascii_uppercase())
         && is_19_20_year(parts[2])
@@ -174,7 +185,8 @@ pub fn parse_underscore_year(header: &str) -> Option<f64> {
             fe += 1;
         }
         // \d{1,2} followed by the boundary: a longer digit run never matches
-        if (1..=2).contains(&(fe - fs)) && boundary_after(header, fe) && (1980..=2030).contains(&y) {
+        if (1..=2).contains(&(fe - fs)) && boundary_after(header, fe) && (1980..=2030).contains(&y)
+        {
             let frac: f64 = format!("0.{}", &header[fs..fe]).parse().ok()?;
             return Some(y as f64 + frac);
         }
@@ -208,20 +220,33 @@ pub fn parse_date_value(raw: &str) -> Option<f64> {
     let f: Vec<&str> = s.split('-').collect();
     match f.as_slice() {
         // DD-Mon-YYYY
-        [d, mon, y] if (1..=2).contains(&d.len()) && all_digits(d) && y.len() == 4 && all_digits(y)
-            && mon.len() == 3 && mon.bytes().all(|b| b.is_ascii_alphabetic()) =>
+        [d, mon, y]
+            if (1..=2).contains(&d.len())
+                && all_digits(d)
+                && y.len() == 4
+                && all_digits(y)
+                && mon.len() == 3
+                && mon.bytes().all(|b| b.is_ascii_alphabetic()) =>
         {
             ymd_to_decimal(y.parse().ok()?, month_from_abbr(mon)?, d.parse().ok()?)
         }
         // Mon-YYYY
-        [mon, y] if mon.len() == 3 && mon.bytes().all(|b| b.is_ascii_alphabetic())
-            && y.len() == 4 && all_digits(y) =>
+        [mon, y]
+            if mon.len() == 3
+                && mon.bytes().all(|b| b.is_ascii_alphabetic())
+                && y.len() == 4
+                && all_digits(y) =>
         {
             ym_to_decimal(y.parse().ok()?, month_from_abbr(mon)?)
         }
         // YYYY-MM-DD
-        [y, m, d] if y.len() == 4 && all_digits(y) && m.len() == 2 && all_digits(m)
-            && d.len() == 2 && all_digits(d) =>
+        [y, m, d]
+            if y.len() == 4
+                && all_digits(y)
+                && m.len() == 2
+                && all_digits(m)
+                && d.len() == 2
+                && all_digits(d) =>
         {
             ymd_to_decimal(y.parse().ok()?, m.parse().ok()?, d.parse().ok()?)
         }

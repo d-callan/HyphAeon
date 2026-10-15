@@ -13,7 +13,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
-use trace50::{run_trace50, run_trace50_with_matrix, Alignment, Trace50Config, VisualizationDossier};
+use trace50::{
+    run_trace50, run_trace50_with_matrix, Alignment, Trace50Config, VisualizationDossier,
+};
 
 const FASTA: &str = include_str!("fixtures/parity_undated/subset_undated.fasta");
 const GOLDEN: &str = include_str!("fixtures/parity_undated/golden.json");
@@ -61,11 +63,20 @@ fn partition(v: &Value) -> Partition {
     v.as_array()
         .unwrap()
         .iter()
-        .map(|c| c.as_array().unwrap().iter().map(|x| x.as_str().unwrap().to_string()).collect())
+        .map(|c| {
+            c.as_array()
+                .unwrap()
+                .iter()
+                .map(|x| x.as_str().unwrap().to_string())
+                .collect()
+        })
         .collect()
 }
 
-fn dossier_partition(d: &VisualizationDossier, label: impl Fn(&trace50::visualization::DossierNode) -> usize) -> Partition {
+fn dossier_partition(
+    d: &VisualizationDossier,
+    label: impl Fn(&trace50::visualization::DossierNode) -> usize,
+) -> Partition {
     let mut by: BTreeMap<usize, BTreeSet<String>> = BTreeMap::new();
     for node in &d.nodes {
         let c = label(node);
@@ -98,13 +109,31 @@ fn assert_matches(label: &str, d: &VisualizationDossier) {
     let g: Value = serde_json::from_str(GOLDEN).unwrap();
     let undated = g["renamed"]["to"].as_str().unwrap();
 
-    assert_eq!(d.metadata.num_sequences as u64, g["n_sequences"].as_u64().unwrap());
-    assert_eq!((d.metadata.num_sequences - d.metadata.num_undated) as u64, g["n_dated"].as_u64().unwrap(), "{}: dated", label);
-    assert_eq!(d.metadata.seq_len as u64, g["seq_len"].as_u64().unwrap(), "{}: L", label);
+    assert_eq!(
+        d.metadata.num_sequences as u64,
+        g["n_sequences"].as_u64().unwrap()
+    );
+    assert_eq!(
+        (d.metadata.num_sequences - d.metadata.num_undated) as u64,
+        g["n_dated"].as_u64().unwrap(),
+        "{}: dated",
+        label
+    );
+    assert_eq!(
+        d.metadata.seq_len as u64,
+        g["seq_len"].as_u64().unwrap(),
+        "{}: L",
+        label
+    );
 
     // no edge of any kind touches the undated sequence
     for e in &d.edges {
-        assert!(e.source != undated && e.target != undated, "{}: edge {:?} touches the undated sequence", label, (&e.source, &e.target, &e.status));
+        assert!(
+            e.source != undated && e.target != undated,
+            "{}: edge {:?} touches the undated sequence",
+            label,
+            (&e.source, &e.target, &e.status)
+        );
     }
 
     let want: BTreeSet<Pair> = g["supported_edges"]
@@ -121,25 +150,78 @@ fn assert_matches(label: &str, d: &VisualizationDossier) {
         .collect();
     assert_eq!(got, want, "{}: supported edge set", label);
 
-    assert_eq!(dossier_partition(d, |n| n.cluster_id_supported), partition(&g["danno_partition"]), "{}: DANNO partition", label);
+    assert_eq!(
+        dossier_partition(d, |n| n.cluster_id_supported),
+        partition(&g["danno_partition"]),
+        "{}: DANNO partition",
+        label
+    );
     let want_static = partition(&g["static_partition_on_dated_subset"]);
-    assert_eq!(dossier_partition(d, |n| n.cluster_id_static), want_static, "{}: static partition on the dated subset", label);
+    assert_eq!(
+        dossier_partition(d, |n| n.cluster_id_static),
+        want_static,
+        "{}: static partition on the dated subset",
+        label
+    );
     let s = &d.kpi.static_network;
-    assert_eq!(s.total_clusters, want_static.len(), "{}: static clusters", label);
-    assert_eq!(s.clustered_individuals, want_static.iter().map(|c| c.len()).sum::<usize>(), "{}: static clustered", label);
-    assert_eq!(s.max_cluster_size, want_static.iter().map(|c| c.len()).max().unwrap(), "{}: static giant", label);
+    assert_eq!(
+        s.total_clusters,
+        want_static.len(),
+        "{}: static clusters",
+        label
+    );
+    assert_eq!(
+        s.clustered_individuals,
+        want_static.iter().map(|c| c.len()).sum::<usize>(),
+        "{}: static clustered",
+        label
+    );
+    assert_eq!(
+        s.max_cluster_size,
+        want_static.iter().map(|c| c.len()).max().unwrap(),
+        "{}: static giant",
+        label
+    );
 
     let c = &g["chin"];
-    let ap = d.macro_scaling.active_population.as_ref().expect("N_act estimable");
+    let ap = d
+        .macro_scaling
+        .active_population
+        .as_ref()
+        .expect("N_act estimable");
     let wa = &c["active_population"];
-    for (name, gv) in [("N_act", ap.n_act), ("ci_lower", ap.ci_lower), ("ci_upper", ap.ci_upper)] {
+    for (name, gv) in [
+        ("N_act", ap.n_act),
+        ("ci_lower", ap.ci_lower),
+        ("ci_upper", ap.ci_upper),
+    ] {
         let wv = wa[name].as_f64().unwrap();
-        assert!(rel_close(gv, wv, EXACT_REL_TOL), "{}: CHIN {} rust {} python {}", label, name, gv, wv);
+        assert!(
+            rel_close(gv, wv, EXACT_REL_TOL),
+            "{}: CHIN {} rust {} python {}",
+            label,
+            name,
+            gv,
+            wv
+        );
     }
     let theta = d.macro_scaling.composite_parameter_theta;
-    assert!(rel_close(theta, c["theta"].as_f64().unwrap(), EXACT_REL_TOL), "{}: theta {}", label, theta);
-    let rho = d.macro_scaling.surveillance_coverage_rho.expect("rho estimable");
-    assert!(rel_close(rho, c["rho"].as_f64().unwrap(), EXACT_REL_TOL), "{}: rho {}", label, rho);
+    assert!(
+        rel_close(theta, c["theta"].as_f64().unwrap(), EXACT_REL_TOL),
+        "{}: theta {}",
+        label,
+        theta
+    );
+    let rho = d
+        .macro_scaling
+        .surveillance_coverage_rho
+        .expect("rho estimable");
+    assert!(
+        rel_close(rho, c["rho"].as_f64().unwrap(), EXACT_REL_TOL),
+        "{}: rho {}",
+        label,
+        rho
+    );
 }
 
 #[test]

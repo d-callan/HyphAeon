@@ -71,10 +71,23 @@ const TN93_RESOLUTIONS: [[bool; 4]; 18] = [
 
 /// `resolutionsCount` in tn93_shared.cc: weight given to each resolution.
 const TN93_RESOLUTION_COUNT: [f64; 18] = [
-    1.0, 1.0, 1.0, 1.0, 1.0,
-    0.5, 0.5, 0.5, 0.5, 0.5, 0.5,
-    1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0,
-    0.25, 0.25,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    0.5,
+    0.5,
+    0.5,
+    0.5,
+    0.5,
+    0.5,
+    1.0 / 3.0,
+    1.0 / 3.0,
+    1.0 / 3.0,
+    1.0 / 3.0,
+    0.25,
+    0.25,
     0.0,
 ];
 
@@ -296,7 +309,12 @@ fn tn93_distance_range(
     let freq_sum = nuc_freq[0] + nuc_freq[1] + nuc_freq[2] + nuc_freq[3];
     let scale = 2.0 / freq_sum;
     let auxd = 1.0 / freq_sum;
-    let nuc_f = [nuc_freq[0] * auxd, nuc_freq[1] * auxd, nuc_freq[2] * auxd, nuc_freq[3] * auxd];
+    let nuc_f = [
+        nuc_freq[0] * auxd,
+        nuc_freq[1] * auxd,
+        nuc_freq[2] * auxd,
+        nuc_freq[3] * auxd,
+    ];
     let f_r = nuc_f[0] + nuc_f[2];
     let f_y = nuc_f[1] + nuc_f[3];
     let use_k2p = nuc_freq.iter().any(|&f| f == 0.0);
@@ -304,7 +322,8 @@ fn tn93_distance_range(
     let ag = (float_counts[0][2] + float_counts[2][0]) * scale;
     let ct = (float_counts[1][3] + float_counts[3][1]) * scale;
     let tv = 1.0
-        - ((float_counts[0][0] + float_counts[1][1] + float_counts[2][2] + float_counts[3][3]) * scale
+        - ((float_counts[0][0] + float_counts[1][1] + float_counts[2][2] + float_counts[3][3])
+            * scale
             + ag
             + ct);
 
@@ -320,7 +339,8 @@ fn tn93_distance_range(
     } else {
         let k1 = 2.0 * nuc_f[0] * nuc_f[2] / f_r;
         let k2 = 2.0 * nuc_f[1] * nuc_f[3] / f_y;
-        let k3 = 2.0 * (f_r * f_y - nuc_f[0] * nuc_f[2] * f_y / f_r - nuc_f[1] * nuc_f[3] * f_r / f_y);
+        let k3 =
+            2.0 * (f_r * f_y - nuc_f[0] * nuc_f[2] * f_y / f_r - nuc_f[1] * nuc_f[3] * f_r / f_y);
         let a = 1.0 - ag / k1 - 0.5 * tv / f_r;
         let c = 1.0 - ct / k2 - 0.5 * tv / f_y;
         let t = 1.0 - 0.5 * tv / f_y / f_r;
@@ -344,7 +364,12 @@ fn non_gap_span(s: &[u8]) -> Option<(usize, usize)> {
 /// Raw tn93 distance between two tn93-code sequences (see
 /// [`char_to_tn93_code`]): `None` if they share `min_overlap` or fewer
 /// non-gap sites, else the distance, possibly [`TN93_SATURATED`].
-pub fn tn93_distance(s1: &[u8], s2: &[u8], mode: &AmbiguityMode, min_overlap: usize) -> Option<f64> {
+pub fn tn93_distance(
+    s1: &[u8],
+    s2: &[u8],
+    mode: &AmbiguityMode,
+    min_overlap: usize,
+) -> Option<f64> {
     let n = s1.len().min(s2.len());
     let (lo, hi) = if matches!(mode, AmbiguityMode::GapMismatch) {
         // a gap opposite a base counts here, so every column is visited
@@ -538,7 +563,11 @@ impl Alignment {
 
     /// Full symmetric pairwise TN93 matrix with an explicit ambiguity mode and
     /// a progress callback `on_progress(done_pairs, total_pairs, fraction)`.
-    pub fn compute_distance_matrix_with_mode_and_progress<F>(&self, mode: &AmbiguityMode, mut on_progress: F) -> Vec<f64>
+    pub fn compute_distance_matrix_with_mode_and_progress<F>(
+        &self,
+        mode: &AmbiguityMode,
+        mut on_progress: F,
+    ) -> Vec<f64>
     where
         F: FnMut(usize, usize, f64),
     {
@@ -550,7 +579,8 @@ impl Alignment {
 
         for i in 0..n {
             for j in (i + 1)..n {
-                let dist = compute_pairwise_tn93(&self.encoded_tn93[i], &self.encoded_tn93[j], mode);
+                let dist =
+                    compute_pairwise_tn93(&self.encoded_tn93[i], &self.encoded_tn93[j], mode);
                 matrix[i * n + j] = dist;
                 matrix[j * n + i] = dist;
                 done_pairs += 1;
@@ -591,14 +621,25 @@ mod tests {
 
     #[test]
     fn test_ambiguity_mode_parse() {
-        assert_eq!(AmbiguityMode::parse("resolve").unwrap(), AmbiguityMode::Resolve);
-        assert_eq!(AmbiguityMode::parse("average").unwrap(), AmbiguityMode::Average);
+        assert_eq!(
+            AmbiguityMode::parse("resolve").unwrap(),
+            AmbiguityMode::Resolve
+        );
+        assert_eq!(
+            AmbiguityMode::parse("average").unwrap(),
+            AmbiguityMode::Average
+        );
         assert!(AmbiguityMode::parse("").is_err());
         let m = AmbiguityMode::default();
         assert_eq!(m, AmbiguityMode::parse("rmyskb").unwrap());
         for (code, &ch) in TN93_ALPHABET.iter().enumerate() {
             assert_eq!(char_to_tn93_code(ch) as usize, code);
-            assert_eq!(m.resolves(code as u8), b"RMYSKB".contains(&ch), "{}", ch as char);
+            assert_eq!(
+                m.resolves(code as u8),
+                b"RMYSKB".contains(&ch),
+                "{}",
+                ch as char
+            );
         }
     }
 

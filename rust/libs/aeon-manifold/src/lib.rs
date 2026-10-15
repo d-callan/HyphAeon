@@ -325,7 +325,9 @@ fn betainc_with_complement(a: f64, b: f64, x: f64, xc: f64) -> f64 {
     if x < (a + 1.0) / (a + b + 2.0) {
         (ln_front.exp() * beta_cf(a, b, x) / a).max(0.0).min(1.0)
     } else {
-        (1.0 - ln_front.exp() * beta_cf(b, a, xc) / b).max(0.0).min(1.0)
+        (1.0 - ln_front.exp() * beta_cf(b, a, xc) / b)
+            .max(0.0)
+            .min(1.0)
     }
 }
 

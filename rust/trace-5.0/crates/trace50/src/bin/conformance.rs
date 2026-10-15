@@ -67,15 +67,10 @@ fn main() {
     let dates_raw: Vec<f64> = dates.iter().map(|d| d.unwrap_or(f64::NAN)).collect();
     let dated: Vec<usize> = (0..n).filter(|&i| dates_raw[i].is_finite()).collect();
     let communities = recursive_autoclock_deconvolution(
-        &dated,
-        &dates_raw,
-        &d_matrix,
-        n,
-        3,  // min_cluster_size (pipeline default)
+        &dated, &dates_raw, &d_matrix, n, 3,  // min_cluster_size (pipeline default)
         10, // max_recursion_depth (pipeline default)
         0,  // depth
-        "root",
-        0.65, // conductance_cut (pipeline value)
+        "root", 0.65, // conductance_cut (pipeline value)
     );
 
     let dump = ConformanceDump {

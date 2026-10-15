@@ -27,7 +27,12 @@ fn test_header_dates_match_run_danno() {
         let got = parse_date_from_header(h);
         match expected(row) {
             Some(e) => assert_eq!(got, e, "header {:?} ({})", h, row["rule"]),
-            None => assert!(got.is_nan(), "header {:?}: expected undated, got {}", h, got),
+            None => assert!(
+                got.is_nan(),
+                "header {:?}: expected undated, got {}",
+                h,
+                got
+            ),
         }
     }
 }
@@ -37,7 +42,13 @@ fn test_metadata_dates_match_fetch_dates() {
     let o = oracle();
     for row in o["meta"].as_array().unwrap() {
         let s = row["input"].as_str().unwrap();
-        assert_eq!(parse_date_value(s), expected(row), "value {:?} ({})", s, row["rule"]);
+        assert_eq!(
+            parse_date_value(s),
+            expected(row),
+            "value {:?} ({})",
+            s,
+            row["rule"]
+        );
     }
 }
 
@@ -83,11 +94,23 @@ fn test_undated_sequences_excluded_not_imputed() {
         let mut s = base.clone();
         for p in 0..(k as usize * 3) {
             let pos = (p * 37 + k as usize * 11) % s.len();
-            s[pos] = match s[pos] { b'A' => b'G', b'G' => b'A', b'C' => b'T', _ => b'C' };
+            s[pos] = match s[pos] {
+                b'A' => b'G',
+                b'G' => b'A',
+                b'C' => b'T',
+                _ => b'C',
+            };
         }
         seqs.push(String::from_utf8(s).unwrap());
     }
-    let dated_headers = ["s0_2010.1", "s1_2010.4", "s2_2011.2", "s3_2011.9", "s4_2012.3", "s5_2012.8"];
+    let dated_headers = [
+        "s0_2010.1",
+        "s1_2010.4",
+        "s2_2011.2",
+        "s3_2011.9",
+        "s4_2012.3",
+        "s5_2012.8",
+    ];
     let mut with_undated = String::new();
     let mut only_dated = String::new();
     for (i, h) in dated_headers.iter().enumerate() {
@@ -99,7 +122,11 @@ fn test_undated_sequences_excluded_not_imputed() {
     }
     with_undated += &format!(">u1\n{}\n", seqs[7]);
 
-    let cfg = Trace50Config { max_delta_t: 5.0, seq_len: Some(200), ..Trace50Config::default() };
+    let cfg = Trace50Config {
+        max_delta_t: 5.0,
+        seq_len: Some(200),
+        ..Trace50Config::default()
+    };
     let a = Alignment::from_fasta_str(&with_undated).unwrap();
     let b = Alignment::from_fasta_str(&only_dated).unwrap();
     assert_eq!(a.dates.iter().filter(|d| d.is_nan()).count(), 2);
@@ -114,8 +141,13 @@ fn test_undated_sequences_excluded_not_imputed() {
             .edges
             .iter()
             .map(|e| {
-                (e.source.clone(), e.target.clone(), format!("{:e}", e.bayes_factor),
-                 format!("{:e}", e.q_value), e.status.clone())
+                (
+                    e.source.clone(),
+                    e.target.clone(),
+                    format!("{:e}", e.bayes_factor),
+                    format!("{:e}", e.q_value),
+                    e.status.clone(),
+                )
             })
             .collect();
         v.sort();
@@ -124,15 +156,28 @@ fn test_undated_sequences_excluded_not_imputed() {
     assert!(!scored(&db).is_empty());
     assert_eq!(scored(&da), scored(&db));
     for e in &da.edges {
-        assert!(!e.source.starts_with('u') && !e.target.starts_with('u'), "{:?}", (&e.source, &e.target, &e.status));
+        assert!(
+            !e.source.starts_with('u') && !e.target.starts_with('u'),
+            "{:?}",
+            (&e.source, &e.target, &e.status)
+        );
     }
     assert_eq!(
         serde_json::to_value(&da.kpi.static_network).unwrap(),
         serde_json::to_value(&db.kpi.static_network).unwrap()
     );
-    assert_eq!(da.kpi.giant_component_reduction_pct, db.kpi.giant_component_reduction_pct);
-    assert_eq!(da.kpi.inferred_active_transmitting_pool, db.kpi.inferred_active_transmitting_pool);
-    assert_eq!(da.macro_scaling.surveillance_coverage_rho, db.macro_scaling.surveillance_coverage_rho);
+    assert_eq!(
+        da.kpi.giant_component_reduction_pct,
+        db.kpi.giant_component_reduction_pct
+    );
+    assert_eq!(
+        da.kpi.inferred_active_transmitting_pool,
+        db.kpi.inferred_active_transmitting_pool
+    );
+    assert_eq!(
+        da.macro_scaling.surveillance_coverage_rho,
+        db.macro_scaling.surveillance_coverage_rho
+    );
     for node in &da.nodes {
         assert_eq!(node.id.starts_with('u'), node.date.is_nan());
     }

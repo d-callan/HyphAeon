@@ -12,11 +12,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Reason reported when N_act is refused because no edge is supported (E_obs = 0).
-pub const N_ACT_NOT_ESTIMABLE_NO_EDGES: &str =
-    "not estimable: zero supported edges (E_obs = 0)";
+pub const N_ACT_NOT_ESTIMABLE_NO_EDGES: &str = "not estimable: zero supported edges (E_obs = 0)";
 /// Reason reported when N_act is refused because there are no samples (n = 0).
-pub const N_ACT_NOT_ESTIMABLE_NO_SAMPLES: &str =
-    "not estimable: no sequences (n = 0)";
+pub const N_ACT_NOT_ESTIMABLE_NO_SAMPLES: &str = "not estimable: no sequences (n = 0)";
 
 /// Active transmitting population and surveillance coverage estimates.
 #[derive(Debug, Clone, Serialize, Deserialize)]

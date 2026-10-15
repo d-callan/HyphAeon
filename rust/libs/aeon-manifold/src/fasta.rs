@@ -55,11 +55,7 @@ pub fn tokenize_fasta(input: &str) -> Result<Vec<FastaRecord>, String> {
                 records.push(rec);
             }
             let defline = rest.trim().to_string();
-            let name = defline
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .to_string();
+            let name = defline.split_whitespace().next().unwrap_or("").to_string();
             current = Some(FastaRecord {
                 name,
                 defline,
