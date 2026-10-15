@@ -24,12 +24,14 @@ export function init_panic_hook() {
  * @param {string} fasta_str
  * @param {number | null} [target_landmarks]
  * @param {boolean | null} [compress_snps]
+ * @param {number | null} [tier2_stringency]
+ * @param {number | null} [tier3_stringency]
  * @returns {any}
  */
-export function scan_fasta(fasta_str, target_landmarks, compress_snps) {
+export function scan_fasta(fasta_str, target_landmarks, compress_snps, tier2_stringency, tier3_stringency) {
     const ptr0 = passStringToWasm0(fasta_str, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.scan_fasta(ptr0, len0, isLikeNone(target_landmarks) ? Number.MAX_SAFE_INTEGER : (target_landmarks) >>> 0, isLikeNone(compress_snps) ? 0xFFFFFF : compress_snps ? 1 : 0);
+    const ret = wasm.scan_fasta(ptr0, len0, isLikeNone(target_landmarks) ? Number.MAX_SAFE_INTEGER : (target_landmarks) >>> 0, isLikeNone(compress_snps) ? 0xFFFFFF : compress_snps ? 1 : 0, !isLikeNone(tier2_stringency), isLikeNone(tier2_stringency) ? 0 : tier2_stringency, !isLikeNone(tier3_stringency), isLikeNone(tier3_stringency) ? 0 : tier3_stringency);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -42,14 +44,16 @@ export function scan_fasta(fasta_str, target_landmarks, compress_snps) {
  * @param {string | null} [title]
  * @param {number | null} [target_landmarks]
  * @param {boolean | null} [compress_snps]
+ * @param {number | null} [tier2_stringency]
+ * @param {number | null} [tier3_stringency]
  * @returns {any}
  */
-export function scan_fasta_dossier(fasta_str, title, target_landmarks, compress_snps) {
+export function scan_fasta_dossier(fasta_str, title, target_landmarks, compress_snps, tier2_stringency, tier3_stringency) {
     const ptr0 = passStringToWasm0(fasta_str, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     var ptr1 = isLikeNone(title) ? 0 : passStringToWasm0(title, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     var len1 = WASM_VECTOR_LEN;
-    const ret = wasm.scan_fasta_dossier(ptr0, len0, ptr1, len1, isLikeNone(target_landmarks) ? Number.MAX_SAFE_INTEGER : (target_landmarks) >>> 0, isLikeNone(compress_snps) ? 0xFFFFFF : compress_snps ? 1 : 0);
+    const ret = wasm.scan_fasta_dossier(ptr0, len0, ptr1, len1, isLikeNone(target_landmarks) ? Number.MAX_SAFE_INTEGER : (target_landmarks) >>> 0, isLikeNone(compress_snps) ? 0xFFFFFF : compress_snps ? 1 : 0, !isLikeNone(tier2_stringency), isLikeNone(tier2_stringency) ? 0 : tier2_stringency, !isLikeNone(tier3_stringency), isLikeNone(tier3_stringency) ? 0 : tier3_stringency);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -62,9 +66,11 @@ export function scan_fasta_dossier(fasta_str, title, target_landmarks, compress_
  * @param {string | null} [title]
  * @param {number | null} [target_landmarks]
  * @param {boolean | null} [compress_snps]
+ * @param {number | null} [tier2_stringency]
+ * @param {number | null} [tier3_stringency]
  * @returns {string}
  */
-export function scan_fasta_dossier_json(fasta_str, title, target_landmarks, compress_snps) {
+export function scan_fasta_dossier_json(fasta_str, title, target_landmarks, compress_snps, tier2_stringency, tier3_stringency) {
     let deferred4_0;
     let deferred4_1;
     try {
@@ -72,7 +78,7 @@ export function scan_fasta_dossier_json(fasta_str, title, target_landmarks, comp
         const len0 = WASM_VECTOR_LEN;
         var ptr1 = isLikeNone(title) ? 0 : passStringToWasm0(title, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         var len1 = WASM_VECTOR_LEN;
-        const ret = wasm.scan_fasta_dossier_json(ptr0, len0, ptr1, len1, isLikeNone(target_landmarks) ? Number.MAX_SAFE_INTEGER : (target_landmarks) >>> 0, isLikeNone(compress_snps) ? 0xFFFFFF : compress_snps ? 1 : 0);
+        const ret = wasm.scan_fasta_dossier_json(ptr0, len0, ptr1, len1, isLikeNone(target_landmarks) ? Number.MAX_SAFE_INTEGER : (target_landmarks) >>> 0, isLikeNone(compress_snps) ? 0xFFFFFF : compress_snps ? 1 : 0, !isLikeNone(tier2_stringency), isLikeNone(tier2_stringency) ? 0 : tier2_stringency, !isLikeNone(tier3_stringency), isLikeNone(tier3_stringency) ? 0 : tier3_stringency);
         var ptr3 = ret[0];
         var len3 = ret[1];
         if (ret[3]) {
@@ -93,9 +99,11 @@ export function scan_fasta_dossier_json(fasta_str, title, target_landmarks, comp
  * @param {string | null} [title]
  * @param {number | null} [target_landmarks]
  * @param {boolean | null} [compress_snps]
+ * @param {number | null} [tier2_stringency]
+ * @param {number | null} [tier3_stringency]
  * @returns {string}
  */
-export function scan_fasta_html(fasta_str, title, target_landmarks, compress_snps) {
+export function scan_fasta_html(fasta_str, title, target_landmarks, compress_snps, tier2_stringency, tier3_stringency) {
     let deferred4_0;
     let deferred4_1;
     try {
@@ -103,7 +111,7 @@ export function scan_fasta_html(fasta_str, title, target_landmarks, compress_snp
         const len0 = WASM_VECTOR_LEN;
         var ptr1 = isLikeNone(title) ? 0 : passStringToWasm0(title, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         var len1 = WASM_VECTOR_LEN;
-        const ret = wasm.scan_fasta_html(ptr0, len0, ptr1, len1, isLikeNone(target_landmarks) ? Number.MAX_SAFE_INTEGER : (target_landmarks) >>> 0, isLikeNone(compress_snps) ? 0xFFFFFF : compress_snps ? 1 : 0);
+        const ret = wasm.scan_fasta_html(ptr0, len0, ptr1, len1, isLikeNone(target_landmarks) ? Number.MAX_SAFE_INTEGER : (target_landmarks) >>> 0, isLikeNone(compress_snps) ? 0xFFFFFF : compress_snps ? 1 : 0, !isLikeNone(tier2_stringency), isLikeNone(tier2_stringency) ? 0 : tier2_stringency, !isLikeNone(tier3_stringency), isLikeNone(tier3_stringency) ? 0 : tier3_stringency);
         var ptr3 = ret[0];
         var len3 = ret[1];
         if (ret[3]) {
@@ -123,15 +131,17 @@ export function scan_fasta_html(fasta_str, title, target_landmarks, compress_snp
  * @param {string} fasta_str
  * @param {number | null} [target_landmarks]
  * @param {boolean | null} [compress_snps]
+ * @param {number | null} [tier2_stringency]
+ * @param {number | null} [tier3_stringency]
  * @returns {string}
  */
-export function scan_fasta_json(fasta_str, target_landmarks, compress_snps) {
+export function scan_fasta_json(fasta_str, target_landmarks, compress_snps, tier2_stringency, tier3_stringency) {
     let deferred3_0;
     let deferred3_1;
     try {
         const ptr0 = passStringToWasm0(fasta_str, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.scan_fasta_json(ptr0, len0, isLikeNone(target_landmarks) ? Number.MAX_SAFE_INTEGER : (target_landmarks) >>> 0, isLikeNone(compress_snps) ? 0xFFFFFF : compress_snps ? 1 : 0);
+        const ret = wasm.scan_fasta_json(ptr0, len0, isLikeNone(target_landmarks) ? Number.MAX_SAFE_INTEGER : (target_landmarks) >>> 0, isLikeNone(compress_snps) ? 0xFFFFFF : compress_snps ? 1 : 0, !isLikeNone(tier2_stringency), isLikeNone(tier2_stringency) ? 0 : tier2_stringency, !isLikeNone(tier3_stringency), isLikeNone(tier3_stringency) ? 0 : tier3_stringency);
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {

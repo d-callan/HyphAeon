@@ -4,6 +4,8 @@ use crate::types::{Alignment, LandmarkSet, PhysicalTract, RecombinationEvent};
 pub struct SequenceDueDiligence {
     pub poisson_floor: usize,
     pub alpha: f64,
+    pub stringency: f64,
+    pub d_sister: Option<f64>,
     log_factorials: Vec<f64>,
 }
 
@@ -25,8 +27,20 @@ impl SequenceDueDiligence {
         Self {
             poisson_floor,
             alpha,
+            stringency: 1.0,
+            d_sister: None,
             log_factorials: log_facts,
         }
+    }
+
+    pub fn with_stringency(mut self, stringency: f64) -> Self {
+        self.stringency = stringency;
+        self
+    }
+
+    pub fn with_d_sister(mut self, d_sister: f64) -> Self {
+        self.d_sister = Some(d_sister);
+        self
     }
 
     #[inline(always)]
@@ -90,7 +104,9 @@ impl SequenceDueDiligence {
         aln: &Alignment,
         _landmarks: &LandmarkSet,
         rate_burst_indices: &[usize],
+        candidate_indices: &[usize],
     ) -> Option<RecombinationEvent> {
+        let s3 = self.stringency.max(0.1);
         let cand_idx = parental.candidate_idx;
         let cand_name = aln.taxa[cand_idx].clone();
         let l = aln.length;
@@ -99,7 +115,12 @@ impl SequenceDueDiligence {
         let u2 = tract.u2_discrete;
         let tract_len = if u2 >= u1 { u2 - u1 + 1 } else { 0 };
 
-        if tract_len < 20 || !tract.is_physically_significant {
+        let min_len = if (s3 - 1.0).abs() < 1e-9 {
+            20
+        } else {
+            ((20.0 * s3).round() as usize).clamp(8, 150)
+        };
+        if tract_len < min_len || !tract.is_physically_significant {
             return None;
         }
 
@@ -114,6 +135,11 @@ impl SequenceDueDiligence {
             return None;
         }
 
+        // Candidate recombinants cannot serve as Home parental reference for ghost donors
+        if parental.is_ghost_donor && candidate_indices.contains(&home_global) {
+            return None;
+        }
+
         let cand_row = aln.row(cand_idx);
         let home_row = aln.row(home_global);
 
@@ -122,6 +148,15 @@ impl SequenceDueDiligence {
         } else if let Some(dg) = parental.donor_global_idx {
             // Autapomorphic rate burst lineages cannot serve as Donor parental reference
             if rate_burst_indices.contains(&dg) {
+                return None;
+            }
+            // Co-recombinant sister taxa or candidate's own sister cannot serve as donor
+            let d_sister = self.d_sister.unwrap_or_else(|| {
+                crate::landmarks::compute_scale_invariant_distance_thresholds(aln).0
+            });
+            let d_cd = crate::landmarks::compute_pairwise_distance(aln, cand_idx, dg);
+            let d_hd = crate::landmarks::compute_pairwise_distance(aln, home_global, dg);
+            if d_cd < d_sister || d_hd < d_sister {
                 return None;
             }
             (Some(aln.row(dg)), parental.donor_name.clone())
@@ -211,7 +246,12 @@ impl SequenceDueDiligence {
         }
 
         // Informative site floor check
-        if s_donor < self.poisson_floor {
+        let eff_poisson_floor = if (s3 - 1.0).abs() < 1e-9 {
+            self.poisson_floor
+        } else {
+            ((self.poisson_floor as f64 * s3).round() as usize).max(1)
+        };
+        if s_donor < eff_poisson_floor {
             return None;
         }
 
@@ -254,8 +294,6 @@ impl SequenceDueDiligence {
                 if (rho_priv_cand >= 0.50 && n_priv_cand >= 3)
                     || (aln.num_taxa >= 6 && rho_priv_home >= 0.50 && n_priv_home >= 3)
                 {
-                    // Heterotachy / autapomorphic rate burst:
-                    // Either candidate or home lineage underwent private terminal branch rate acceleration.
                     return None;
                 }
             }
@@ -297,8 +335,8 @@ impl SequenceDueDiligence {
         // If Home's private autapomorphy density in the tract jumps significantly above its flank
         // baseline (r_priv_tract >= r_priv_flank + 0.020 with n_priv >= 4), Home is an accelerated
         // lineage whose terminal mutations create a phantom mirror effect on innocent taxa.
-        // This check requires N >= 6 to ensure the tree has sufficient background taxa beyond the quartet.
-        if aln.num_taxa >= 6 {
+        // This check requires N >= 4.
+        if aln.num_taxa >= 4 {
             let mut n_priv_home_tract = 0usize;
             let mut valid_home_tract = 0usize;
             for u in s_idx..e_idx {
@@ -307,7 +345,7 @@ impl SequenceDueDiligence {
                     valid_home_tract += 1;
                     let mut is_priv = true;
                     for t_idx in 0..aln.num_taxa {
-                        if t_idx != home_global && aln.row(t_idx)[u] == rh {
+                        if t_idx != home_global && t_idx != cand_idx && aln.row(t_idx)[u] == rh {
                             is_priv = false;
                             break;
                         }
@@ -327,7 +365,8 @@ impl SequenceDueDiligence {
                         valid_home_flank += 1;
                         let mut is_priv = true;
                         for t_idx in 0..aln.num_taxa {
-                            if t_idx != home_global && aln.row(t_idx)[u] == rh {
+                            if t_idx != home_global && t_idx != cand_idx && aln.row(t_idx)[u] == rh
+                            {
                                 is_priv = false;
                                 break;
                             }
@@ -340,10 +379,24 @@ impl SequenceDueDiligence {
             }
 
             if valid_home_tract >= 20 && valid_home_flank >= 20 {
-                let r_priv_tract = (n_priv_home_tract as f64) / (valid_home_tract as f64);
-                let r_priv_flank = (n_priv_home_flank as f64) / (valid_home_flank as f64);
-                if (r_priv_tract >= r_priv_flank + 0.020) && n_priv_home_tract >= 4 {
-                    return None;
+                let n1 = valid_home_tract as f64;
+                let n2 = valid_home_flank as f64;
+                let x1 = n_priv_home_tract as f64;
+                let x2 = n_priv_home_flank as f64;
+                let p1 = x1 / n1;
+                let p2 = x2 / n2;
+                if p1 >= p2 + 0.020 && n_priv_home_tract >= 4 {
+                    let p_pool = (x1 + x2) / (n1 + n2);
+                    if p_pool > 0.0 && p_pool < 1.0 {
+                        let se_pool = (p_pool * (1.0 - p_pool) * (1.0 / n1 + 1.0 / n2)).sqrt();
+                        let z_stat = (p1 - p2) / se_pool.max(1e-9);
+                        let z_crit = crate::screener::normal_ppf(
+                            1.0 - self.alpha / (aln.num_taxa as f64).max(1.0),
+                        );
+                        if z_stat >= z_crit.max(2.326) {
+                            return None;
+                        }
+                    }
                 }
             }
 
@@ -358,7 +411,7 @@ impl SequenceDueDiligence {
                             valid_donor_tract += 1;
                             let mut is_priv = true;
                             for t_idx in 0..aln.num_taxa {
-                                if t_idx != dg && aln.row(t_idx)[u] == rd {
+                                if t_idx != dg && t_idx != cand_idx && aln.row(t_idx)[u] == rd {
                                     is_priv = false;
                                     break;
                                 }
@@ -378,7 +431,7 @@ impl SequenceDueDiligence {
                                 valid_donor_flank += 1;
                                 let mut is_priv = true;
                                 for t_idx in 0..aln.num_taxa {
-                                    if t_idx != dg && aln.row(t_idx)[u] == rd {
+                                    if t_idx != dg && t_idx != cand_idx && aln.row(t_idx)[u] == rd {
                                         is_priv = false;
                                         break;
                                     }
@@ -391,10 +444,25 @@ impl SequenceDueDiligence {
                     }
 
                     if valid_donor_tract >= 20 && valid_donor_flank >= 20 {
-                        let r_priv_tract = (n_priv_donor_tract as f64) / (valid_donor_tract as f64);
-                        let r_priv_flank = (n_priv_donor_flank as f64) / (valid_donor_flank as f64);
-                        if (r_priv_tract >= r_priv_flank + 0.020) && n_priv_donor_tract >= 4 {
-                            return None;
+                        let n1 = valid_donor_tract as f64;
+                        let n2 = valid_donor_flank as f64;
+                        let x1 = n_priv_donor_tract as f64;
+                        let x2 = n_priv_donor_flank as f64;
+                        let p1 = x1 / n1;
+                        let p2 = x2 / n2;
+                        if p1 >= p2 + 0.020 && n_priv_donor_tract >= 4 {
+                            let p_pool = (x1 + x2) / (n1 + n2);
+                            if p_pool > 0.0 && p_pool < 1.0 {
+                                let se_pool =
+                                    (p_pool * (1.0 - p_pool) * (1.0 / n1 + 1.0 / n2)).sqrt();
+                                let z_stat = (p1 - p2) / se_pool.max(1e-9);
+                                let z_crit = crate::screener::normal_ppf(
+                                    1.0 - self.alpha / (aln.num_taxa as f64).max(1.0),
+                                );
+                                if z_stat >= z_crit.max(2.326) {
+                                    return None;
+                                }
+                            }
                         }
                     }
                 }
@@ -423,11 +491,18 @@ impl SequenceDueDiligence {
 
         let p_fisher = self.fisher_exact_2x2(a, b, c, d);
 
-        // Bonferroni critical threshold over candidate triplets in alignment
-        let num_triplets = (((aln.num_taxa * (aln.num_taxa - 1) / 2)
-            * aln.num_taxa.saturating_sub(2).max(1))
-        .max(1)) as f64;
-        let p_crit = self.alpha / num_triplets;
+        // Bonferroni critical threshold over candidate triplets in alignment: alpha / binom(N, 3)
+        let num_triplets =
+            (((aln.num_taxa * aln.num_taxa.saturating_sub(1) * aln.num_taxa.saturating_sub(2)) / 6)
+                .max(1)) as f64;
+        let base_p_crit = self.alpha / num_triplets;
+        let p_crit = if (s3 - 1.0).abs() < 1e-9 {
+            base_p_crit
+        } else if s3 < 1.0 {
+            (base_p_crit * 10.0_f64.powf(4.0 * (1.0 - s3))).min(0.25)
+        } else {
+            base_p_crit * 10.0_f64.powf(-6.0 * (s3 - 1.0))
+        };
 
         let d_tract_donor = if valid_tract > 0 {
             (mismatch_tract_donor as f64) / (valid_tract as f64)
@@ -460,17 +535,19 @@ impl SequenceDueDiligence {
                 return None;
             }
 
-            // In genuine mosaicism, candidate departs from home parent in tract
-            if delta_home_recoil < -0.015 {
-                return None;
-            }
-
             let n_tr = valid_tract.max(1) as f64;
             let n_fl = valid_flank.max(1) as f64;
             let se_recoil = ((d_tract_donor * (1.0 - d_tract_donor) / n_tr)
                 + (d_flank_donor * (1.0 - d_flank_donor) / n_fl))
                 .sqrt();
-            let z_crit_recoil = crate::screener::normal_ppf(1.0 - self.alpha);
+            let z_crit_recoil_base = crate::screener::normal_ppf(1.0 - self.alpha);
+            let z_crit_recoil = z_crit_recoil_base * s3;
+
+            // In genuine mosaicism, candidate departs from home parent in tract
+            if delta_home_recoil < -(z_crit_recoil_base * se_recoil / s3).max(0.0) {
+                return None;
+            }
+
             if delta_net_recoil < (z_crit_recoil * se_recoil).max(0.0) {
                 return None;
             }
@@ -487,16 +564,26 @@ impl SequenceDueDiligence {
                 let mut best_outgroup = None;
                 let mut max_out_div = -1.0;
 
+                let d_hd =
+                    crate::landmarks::compute_pairwise_distance(aln, home_global, donor_global);
                 for o_idx in 0..aln.num_taxa {
-                    if o_idx != cand_idx && o_idx != home_global && o_idx != donor_global {
+                    if o_idx != cand_idx
+                        && o_idx != home_global
+                        && o_idx != donor_global
+                        && !candidate_indices.contains(&o_idx)
+                        && !rate_burst_indices.contains(&o_idx)
+                    {
                         let d_oh =
                             crate::landmarks::compute_pairwise_distance(aln, o_idx, home_global);
                         let d_od =
                             crate::landmarks::compute_pairwise_distance(aln, o_idx, donor_global);
-                        let sum_d = d_oh + d_od;
-                        if sum_d > max_out_div {
-                            max_out_div = sum_d;
-                            best_outgroup = Some(o_idx);
+                        // An authentic phylogenetic outgroup must be external to the {H, D} split:
+                        if d_oh >= 0.40 * d_hd && d_od >= 0.40 * d_hd {
+                            let sum_d = d_oh + d_od;
+                            if sum_d > max_out_div {
+                                max_out_div = sum_d;
+                                best_outgroup = Some(o_idx);
+                            }
                         }
                     }
                 }
@@ -577,25 +664,51 @@ impl SequenceDueDiligence {
                         let s2_fl = d_flank_donor + fl_oh;
                         let s3_fl = fl_ro + fl_hd;
 
-                        let topo_tr = if s1_tr <= s2_tr && s1_tr <= s3_tr {
-                            0
-                        } else if s2_tr <= s3_tr {
-                            1
+                        let z_crit_q_base = crate::screener::normal_ppf(1.0 - self.alpha);
+
+                        // Standard error of quartet split differences under neutral binomial sampling
+                        let se_fl = ((d_flank_home * (1.0 - d_flank_home) / (v_fl_o as f64))
+                            + (d_flank_donor * (1.0 - d_flank_donor) / (v_fl_o as f64))
+                            + (fl_oh * (1.0 - fl_oh) / (v_fl_o as f64))
+                            + (fl_od * (1.0 - fl_od) / (v_fl_o as f64)))
+                            .sqrt();
+
+                        let se_tr = ((d_tract_home * (1.0 - d_tract_home) / (v_tr_o as f64))
+                            + (d_tract_donor * (1.0 - d_tract_donor) / (v_tr_o as f64))
+                            + (tr_oh * (1.0 - tr_oh) / (v_tr_o as f64))
+                            + (tr_od * (1.0 - tr_od) / (v_tr_o as f64)))
+                            .sqrt();
+
+                        // Flank topology: check if internal branch is statistically distinguishable from a star tree
+                        let mut sums_fl = [(s1_fl, 0i32), (s2_fl, 1i32), (s3_fl, 2i32)];
+                        sums_fl.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+                        let delta_s_fl = sums_fl[1].0 - sums_fl[0].0;
+                        let topo_fl = if delta_s_fl > z_crit_q_base * se_fl {
+                            sums_fl[0].1
                         } else {
-                            2
-                        };
-                        let topo_fl = if s1_fl <= s2_fl && s1_fl <= s3_fl {
-                            0
-                        } else if s2_fl <= s3_fl {
-                            1
-                        } else {
-                            2
+                            -1 // Unresolved polytomy / star tree
                         };
 
-                        if topo_tr == topo_fl {
+                        // Tract topology: check if internal branch is statistically distinguishable from a star tree
+                        let mut sums_tr = [(s1_tr, 0i32), (s2_tr, 1i32), (s3_tr, 2i32)];
+                        sums_tr.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+                        let delta_s_tr = sums_tr[1].0 - sums_tr[0].0;
+                        let topo_tr = if delta_s_tr > z_crit_q_base * se_tr {
+                            sums_tr[0].1
+                        } else {
+                            -1 // Unresolved polytomy / star tree
+                        };
+
+                        // If both flanks and tract have the SAME resolved split, reject (no recombination)
+                        if topo_tr >= 0 && topo_fl >= 0 && topo_tr == topo_fl {
                             return None;
                         }
-                        if topo_tr == 0 {
+
+                        // Split 0 in tract: ((R, H) | (D, O))
+                        // Rejects ONLY if R is actually closer to Home than to Donor in the tract (i.e. R stayed in Home).
+                        // If R is closer to Donor (d_tract_donor < d_tract_home), then R is in the Donor clade,
+                        // and Split 0 is merely an artifact of D and O being sisters in the Donor clade.
+                        if topo_tr == 0 && d_tract_home <= d_tract_donor {
                             return None;
                         }
 
@@ -605,7 +718,7 @@ impl SequenceDueDiligence {
                         let delta_q_diff = delta_q_tract - delta_q_flank;
 
                         // Under terminal heterotachy / rate burst, delta_q_diff >= 0.0
-                        if delta_q_diff >= 0.0 {
+                        if delta_q_diff > (z_crit_q_base * se_tr / s3).max(0.0) {
                             return None;
                         }
 
@@ -617,8 +730,8 @@ impl SequenceDueDiligence {
                         let se_topo = ((d_tract_home * (1.0 - d_tract_home) / (v_tr_o as f64))
                             + (d_flank_home * (1.0 - d_flank_home) / (v_fl_o as f64)))
                             .sqrt();
-                        let resolution_floor = 1.0 / ((v_tr_o.min(v_fl_o)) as f64);
-                        let z_crit_topo = crate::screener::normal_ppf(1.0 - self.alpha);
+                        let resolution_floor = (1.0 / ((v_tr_o.min(v_fl_o)) as f64)) * s3;
+                        let z_crit_topo = crate::screener::normal_ppf(1.0 - self.alpha) * s3;
                         let thresh = (z_crit_topo * se_topo).max(resolution_floor);
 
                         if delta_topo < thresh {
@@ -634,7 +747,7 @@ impl SequenceDueDiligence {
             }
         }
 
-        let is_verified = p_fisher <= p_crit && s_donor >= self.poisson_floor;
+        let is_verified = p_fisher <= p_crit && s_donor >= eff_poisson_floor;
 
         Some(RecombinationEvent {
             event_id: 0,
@@ -676,6 +789,8 @@ impl SequenceDueDiligence {
 
         let n_events = events.len();
         let mut pruned = vec![false; n_events];
+        let (d_sister, d_clade) =
+            crate::landmarks::compute_scale_invariant_distance_thresholds(_aln);
 
         // Pass 1: Mutual 2-Cycle Adjudication (C_1 <-> C_2)
         // Resolves cases where candidate C1 cites C2 as parent, and candidate C2 cites C1 as parent.
@@ -695,6 +810,60 @@ impl SequenceDueDiligence {
 
                 if c1_name == c2_name {
                     continue;
+                }
+
+                // Co-recombinant sisters share the same Home parent and Donor parent.
+                // They descend from the same ancestral event and NEVER form a mutual 2-cycle reflection.
+                // However, if one candidate cites the other as Home or Donor, they are in a mutual cycle relationship!
+                let c1_is_h2 = (e2.home_name == *c1_name)
+                    || (e2.home_idx.map_or(false, |h| {
+                        crate::landmarks::compute_pairwise_distance(_aln, h, e1.candidate_idx)
+                            < d_clade
+                    }));
+                let c2_is_h1 = (e1.home_name == *c2_name)
+                    || (e1.home_idx.map_or(false, |h| {
+                        crate::landmarks::compute_pairwise_distance(_aln, h, e2.candidate_idx)
+                            < d_clade
+                    }));
+                let c1_is_d2 = (e2.donor_name == *c1_name)
+                    || (e2.donor_idx.map_or(false, |d| {
+                        crate::landmarks::compute_pairwise_distance(_aln, d, e1.candidate_idx)
+                            < d_clade
+                    }));
+                let c2_is_d1 = (e1.donor_name == *c2_name)
+                    || (e1.donor_idx.map_or(false, |d| {
+                        crate::landmarks::compute_pairwise_distance(_aln, d, e2.candidate_idx)
+                            < d_clade
+                    }));
+
+                if !c1_is_h2 && !c2_is_h1 && !c1_is_d2 && !c2_is_d1 {
+                    let d_inter = match (e1.home_idx, e1.donor_idx) {
+                        (Some(h), Some(d)) => {
+                            crate::landmarks::compute_pairwise_distance(_aln, h, d)
+                        }
+                        _ => 0.05,
+                    };
+                    let same_home = e1.home_name == e2.home_name
+                        || match (e1.home_idx, e2.home_idx) {
+                            (Some(h1), Some(h2)) => {
+                                d_inter > d_sister
+                                    && crate::landmarks::compute_pairwise_distance(_aln, h1, h2)
+                                        < 0.5 * d_inter
+                            }
+                            _ => false,
+                        };
+                    let same_donor = e1.donor_name == e2.donor_name
+                        || match (e1.donor_idx, e2.donor_idx) {
+                            (Some(d1), Some(d2)) => {
+                                d_inter > d_sister
+                                    && crate::landmarks::compute_pairwise_distance(_aln, d1, d2)
+                                        < 0.5 * d_inter
+                            }
+                            _ => false,
+                        };
+                    if same_home && same_donor {
+                        continue; // Co-recombinant sisters; preserve for group_ancestral_events
+                    }
                 }
 
                 // Mutual cycle adjudication requires the two events to be homologous in genomic space:
@@ -720,22 +889,63 @@ impl SequenceDueDiligence {
                     continue;
                 }
 
-                // Check if e1 cites c2 (as Home or Donor)
-                let e1_cites_c2 = (e1.home_name == *c2_name) || (e1.donor_name == *c2_name);
-                // Check if e2 cites c1 (as Home or Donor)
-                let e2_cites_c1 = (e2.home_name == *c1_name) || (e2.donor_name == *c1_name);
+                // Check if e1 cites c2 (as Home or Donor) or a member of c2's closely related lineage
+                let e1_cites_c2 = (e1.home_name == *c2_name)
+                    || (e1.donor_name == *c2_name)
+                    || e2.isolates.contains(&e1.home_name)
+                    || e2.isolates.contains(&e1.donor_name)
+                    || (e1.home_idx.map_or(false, |h| {
+                        crate::landmarks::compute_pairwise_distance(_aln, h, e2.candidate_idx)
+                            < d_clade
+                    }))
+                    || (e1.donor_idx.map_or(false, |d| {
+                        crate::landmarks::compute_pairwise_distance(_aln, d, e2.candidate_idx)
+                            < d_clade
+                    }));
+
+                // Check if e2 cites c1 (as Home or Donor) or a member of c1's closely related lineage
+                let e2_cites_c1 = (e2.home_name == *c1_name)
+                    || (e2.donor_name == *c1_name)
+                    || e1.isolates.contains(&e2.home_name)
+                    || e1.isolates.contains(&e2.donor_name)
+                    || (e2.home_idx.map_or(false, |h| {
+                        crate::landmarks::compute_pairwise_distance(_aln, h, e1.candidate_idx)
+                            < d_clade
+                    }))
+                    || (e2.donor_idx.map_or(false, |d| {
+                        crate::landmarks::compute_pairwise_distance(_aln, d, e1.candidate_idx)
+                            < d_clade
+                    }));
 
                 if e1_cites_c2 && e2_cites_c1 {
                     // Mutual 2-cycle detected!
                     // Check external donor authenticity:
-                    let e1_has_ext_donor = e1.donor_idx.is_some() && e1.donor_name != *c2_name;
-                    let e2_has_ext_donor = e2.donor_idx.is_some() && e2.donor_name != *c1_name;
+                    // A candidate whose donor is internal (close to candidate or home) does not have an authentic external donor
+                    let e1_donor_internal = e1.donor_idx.map_or(false, |d| {
+                        crate::landmarks::compute_pairwise_distance(_aln, d, e1.candidate_idx)
+                            < d_clade
+                            || e1.home_idx.map_or(false, |h| {
+                                crate::landmarks::compute_pairwise_distance(_aln, d, h) < d_clade
+                            })
+                    });
+                    let e2_donor_internal = e2.donor_idx.map_or(false, |d| {
+                        crate::landmarks::compute_pairwise_distance(_aln, d, e2.candidate_idx)
+                            < d_clade
+                            || e2.home_idx.map_or(false, |h| {
+                                crate::landmarks::compute_pairwise_distance(_aln, d, h) < d_clade
+                            })
+                    });
+
+                    let e1_has_ext_donor =
+                        e1.donor_idx.is_some() && e1.donor_name != *c2_name && !e1_donor_internal;
+                    let e2_has_ext_donor =
+                        e2.donor_idx.is_some() && e2.donor_name != *c1_name && !e2_donor_internal;
 
                     if e1_has_ext_donor && !e2_has_ext_donor {
-                        // e1 has authentic external donor, while e2's donor is its cyclic partner
+                        // e1 has authentic external donor, while e2's donor is its cyclic partner or internal leaf
                         pruned[j] = true;
                     } else if e2_has_ext_donor && !e1_has_ext_donor {
-                        // e2 has authentic external donor, while e1's donor is its cyclic partner
+                        // e2 has authentic external donor, while e1's donor is its cyclic partner or internal leaf
                         pruned[i] = true;
                         break;
                     } else {
@@ -750,20 +960,133 @@ impl SequenceDueDiligence {
                         let trans1 = delta_h1 + delta_d1;
                         let trans2 = delta_h2 + delta_d2;
 
-                        if (trans1 - trans2).abs() > 0.02 {
+                        if (trans1 - trans2).abs() > 1e-4 {
                             if trans1 > trans2 {
                                 pruned[j] = true;
                             } else {
                                 pruned[i] = true;
                                 break;
                             }
-                        } else if (delta_h1 - delta_h2).abs() > 0.02 {
+                        } else if (delta_h1 - delta_h2).abs() > 1e-4 {
                             if delta_h1 > delta_h2 {
                                 pruned[j] = true;
                             } else {
                                 pruned[i] = true;
                                 break;
                             }
+                        } else if e1.p_fisher != e2.p_fisher {
+                            if e1.p_fisher < e2.p_fisher {
+                                pruned[j] = true;
+                            } else {
+                                pruned[i] = true;
+                                break;
+                            }
+                        } else if e1.z_phys != e2.z_phys {
+                            if e1.z_phys > e2.z_phys {
+                                pruned[j] = true;
+                            } else {
+                                pruned[i] = true;
+                                break;
+                            }
+                        } else if e1.s_informative >= e2.s_informative {
+                            pruned[j] = true;
+                        } else {
+                            pruned[i] = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pass 2: Asymmetric Reflected Parental Adjudication
+        // Resolves cases where candidate e2 cites candidate e1 as its Home or Donor parent
+        // across an overlapping tract, but e1 is already an authentic recombinant.
+        for i in 0..n_events {
+            if pruned[i] {
+                continue;
+            }
+            let e1 = &events[i];
+            let c1_name = &e1.isolates[0];
+
+            for j in 0..n_events {
+                if i == j || pruned[j] || pruned[i] {
+                    continue;
+                }
+                let e2 = &events[j];
+                let c2_name = &e2.isolates[0];
+
+                if c1_name == c2_name {
+                    continue;
+                }
+
+                // Check tract overlap
+                let ov_start = e1.u1.max(e2.u1);
+                let ov_end = e1.u2.min(e2.u2);
+                let overlap = if ov_end >= ov_start {
+                    ov_end - ov_start + 1
+                } else {
+                    0
+                };
+                let min_len =
+                    (e1.u2.saturating_sub(e1.u1) + 1).min(e2.u2.saturating_sub(e2.u1) + 1);
+                let union_span = (e1.u2.max(e2.u2) - e1.u1.min(e2.u1) + 1) as f64;
+                let iou = (overlap as f64) / union_span.max(1.0);
+                let frac = (overlap as f64) / (min_len as f64).max(1.0);
+
+                let is_overlapping = iou >= 0.50 || frac >= 0.70;
+                if !is_overlapping {
+                    continue;
+                }
+
+                // Check if e2 cites e1 (or e1's isolates) as Home or Donor
+                let e2_cites_e1 = (e2.home_name == *c1_name)
+                    || (e2.donor_name == *c1_name)
+                    || e1.isolates.contains(&e2.home_name)
+                    || e1.isolates.contains(&e2.donor_name);
+
+                if e2_cites_e1 {
+                    // e2 is citing an active recombinant candidate as parent.
+                    let e1_donor_internal = e1.donor_idx.map_or(false, |d| {
+                        crate::landmarks::compute_pairwise_distance(_aln, d, e1.candidate_idx)
+                            < d_clade
+                            || e1.home_idx.map_or(false, |h| {
+                                crate::landmarks::compute_pairwise_distance(_aln, d, h) < d_clade
+                            })
+                    });
+                    let e2_donor_internal = e2.donor_idx.map_or(false, |d| {
+                        crate::landmarks::compute_pairwise_distance(_aln, d, e2.candidate_idx)
+                            < d_clade
+                            || e2.home_idx.map_or(false, |h| {
+                                crate::landmarks::compute_pairwise_distance(_aln, d, h) < d_clade
+                            })
+                    });
+
+                    let e1_has_ext_donor = e1.donor_idx.is_some() && !e1_donor_internal;
+                    let e2_has_ext_donor = e2.donor_idx.is_some() && !e2_donor_internal;
+
+                    if e1_has_ext_donor && !e2_has_ext_donor {
+                        pruned[j] = true;
+                    } else if e2_has_ext_donor && !e1_has_ext_donor {
+                        pruned[i] = true;
+                        break;
+                    } else {
+                        let delta_h1 = (e1.d_tract_home - e1.d_flank_home).max(0.0);
+                        let delta_h2 = (e2.d_tract_home - e2.d_flank_home).max(0.0);
+                        let delta_d1 = (e1.d_flank_donor - e1.d_tract_donor).max(0.0);
+                        let delta_d2 = (e2.d_flank_donor - e2.d_tract_donor).max(0.0);
+                        let trans1 = delta_h1 + delta_d1;
+                        let trans2 = delta_h2 + delta_d2;
+
+                        if (trans1 - trans2).abs() > 1e-4 {
+                            if trans1 > trans2 {
+                                pruned[j] = true;
+                            } else {
+                                pruned[i] = true;
+                                break;
+                            }
+                        } else if e1.p_fisher <= e2.p_fisher {
+                            pruned[j] = true;
                         } else {
                             // Tie-break by mosaic reconstruction residual, z_phys, and informative sites
                             let res1 = e1.d_tract_donor + e1.d_flank_home;

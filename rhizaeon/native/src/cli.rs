@@ -44,7 +44,15 @@ struct Args {
     #[arg(short, long, default_value_t = 3)]
     poisson_floor: usize,
 
-    /// Force compression to parsimony-informative SNPs (auto-triggers for L > 50kb or sparse density)
+    /// Tier 2 filter stringency multiplier (trajectory & donor attribution; < 1.0 relaxes, > 1.0 increases stringency)
+    #[arg(long, default_value_t = 1.0)]
+    tier2_stringency: f64,
+
+    /// Tier 3 filter stringency multiplier (sequence & topological due diligence; < 1.0 relaxes, > 1.0 increases stringency)
+    #[arg(long, default_value_t = 1.0)]
+    tier3_stringency: f64,
+
+    /// Force compression to parsimony-informative SNPs (auto-triggers for L > 30kb, N >= 48, or N*L > 600k)
     #[arg(long, conflicts_with = "no_compress_snps")]
     compress_snps: bool,
 
@@ -83,13 +91,16 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     println!("================================================================================");
     println!("  Input alignment: {:?}", args.input);
     println!("  Landmarks (K):   {}", args.landmarks);
-    println!("  Significance:    alpha = {}", args.alpha);
+    println!(
+        "  Significance:    alpha = {} (Tier 2 = {:.2}x, Tier 3 = {:.2}x)",
+        args.alpha, args.tier2_stringency, args.tier3_stringency
+    );
     if args.compress_snps {
         println!("  SNP Compression: FORCED (Informative SNPs only)");
     } else if args.no_compress_snps {
         println!("  SNP Compression: DISABLED (Full nucleotide sequence)");
     } else {
-        println!("  SNP Compression: AUTO (Trigger if L > 50kb or density < 0.10)");
+        println!("  SNP Compression: AUTO (Trigger if L > 30kb, N >= 48, or N*L > 600k)");
     }
     println!("--------------------------------------------------------------------------------");
 
@@ -106,7 +117,9 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut engine = RhizAeonEngine::new()
         .with_landmarks(args.landmarks)
         .with_alpha(args.alpha)
-        .with_poisson_floor(args.poisson_floor);
+        .with_poisson_floor(args.poisson_floor)
+        .with_tier2_stringency(args.tier2_stringency)
+        .with_tier3_stringency(args.tier3_stringency);
 
     if args.compress_snps {
         engine = engine.with_compress_snps(true);
