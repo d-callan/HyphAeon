@@ -283,12 +283,26 @@ impl LocalFluxScreener {
             .sqrt()
             .max(1.645f64);
 
+        // Sister adjacency in a single upper-triangular pass: each pair distance
+        // is evaluated at most once, and pairs where both leaves already have a
+        // sister are skipped entirely.
+        let mut has_sister = vec![false; n];
+        for i in 0..n {
+            for j in (i + 1)..n {
+                if has_sister[i] && has_sister[j] {
+                    continue;
+                }
+                if crate::landmarks::compute_pairwise_distance(aln, i, j) < d_sister {
+                    has_sister[i] = true;
+                    has_sister[j] = true;
+                }
+            }
+        }
+
         for i in 0..n {
             let z_r = (logit_r[i] - med_logit) / scale_logit;
 
-            let is_isolated_leaf = !(0..n).any(|j| {
-                j != i && crate::landmarks::compute_pairwise_distance(aln, i, j) < d_sister
-            });
+            let is_isolated_leaf = !has_sister[i];
             if z_r > z_alpha_r
                 && r_root[i] >= self.root_ratio_threshold
                 && gamma_root[i] <= self.spatial_coherence_threshold

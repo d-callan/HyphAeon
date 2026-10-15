@@ -52,7 +52,7 @@ struct Args {
     #[arg(long, default_value_t = 1.0)]
     tier3_stringency: f64,
 
-    /// Force compression to parsimony-informative SNPs (auto-triggers for L > 50kb or sparse density)
+    /// Force compression to parsimony-informative SNPs (auto-triggers for L > 30kb, N >= 48, or N*L > 600k)
     #[arg(long, conflicts_with = "no_compress_snps")]
     compress_snps: bool,
 
@@ -100,7 +100,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     } else if args.no_compress_snps {
         println!("  SNP Compression: DISABLED (Full nucleotide sequence)");
     } else {
-        println!("  SNP Compression: AUTO (Trigger if L > 50kb or density < 0.10)");
+        println!("  SNP Compression: AUTO (Trigger if L > 30kb, N >= 48, or N*L > 600k)");
     }
     println!("--------------------------------------------------------------------------------");
 

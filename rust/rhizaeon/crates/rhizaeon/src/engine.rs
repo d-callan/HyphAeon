@@ -184,8 +184,7 @@ impl RhizAeonEngine {
         // Pass 2: Retain full canonical landmark basis (DIR-RHIZ-PAFF-012)
         // Discarding candidate taxa from the landmark basis corrupts authentic parental lineages
         // (e.g. Subtype B in HIV-1) that exhibit legitimate contrast with recombinant children.
-        let k_init = landmarks.num_landmarks + 1;
-        let (landmarks, a_tensor, c_tensor, num_channels) = (landmarks, a_tensor, c_tensor, k_init);
+        let num_channels = landmarks.num_landmarks + 1;
 
         // 6. Pass 2 Polishing & Pass 3 Due Diligence on candidates
         let resolver = TrajectoryParentalResolver::new().with_stringency(self.tier2_stringency);
