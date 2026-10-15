@@ -226,12 +226,13 @@ impl DannoEstimator {
         let k = k.max(0.0);
         let delta_t = delta_t.max(0.0);
 
-        // 1. Triangular temporal density for difference of two uniform arrivals on [0, T_span]
-        let p_delta_t = if delta_t < self.t_span {
-            ((2.0 / self.t_span) * (1.0 - delta_t / self.t_span)).max(1e-6 / self.t_span)
-        } else {
-            1e-6 / self.t_span
-        };
+        // 1. Triangular temporal density for difference of two uniform arrivals on [0, T_span],
+        // floored at dt_b = max(0.5 * T_span, T_span - omega) so finite-sample range extremes
+        // (delta_t -> T_span) cannot drive the null density to zero or invert BF monotonicity.
+        let dt_b = (self.t_span - self.omega).max(0.5 * self.t_span);
+        let dt_eff = delta_t.min(dt_b);
+        let p_delta_t =
+            ((2.0 / self.t_span) * (1.0 - dt_eff / self.t_span)).max(1e-6 / self.t_span);
 
         // 2. Continuous Negative Binomial background genetic likelihood
         let p_scipy = 1.0 - self.p_bg;
@@ -482,5 +483,39 @@ mod tests {
         // Clock violation: d = 0.0, delta_t = 5.0 years => BF = 0.0
         let bf_viol = danno.compute_bayes_factor(0.0, 5.0);
         assert_eq!(bf_viol, 0.0);
+    }
+
+    #[test]
+    fn test_danno_boundary_monotonicity() {
+        // Verify BF is monotonically non-increasing across [0.30, t_span] at d=0.002
+        // and across [0.05, t_span] at d=0.0, with zero boundary spike at delta_t == t_span.
+        let danno = DannoEstimator::new(1000, 2e-3, 1.0, 2.0, 2.30, 0.05, 0.065, 0.0004);
+        let dt_grid_0 = [0.05, 0.25, 0.50, 1.00, 1.40, 2.29, 2.30, 2.50];
+        let bfs_0: Vec<f64> = dt_grid_0
+            .iter()
+            .map(|&dt| danno.compute_bayes_factor(0.0, dt))
+            .collect();
+        for w in bfs_0.windows(2) {
+            assert!(
+                w[0] >= w[1],
+                "BF(d=0) increased with delta_t: {} < {}",
+                w[0],
+                w[1]
+            );
+        }
+
+        let dt_grid = [1.15, 1.50, 2.00, 2.29, 2.30, 2.50];
+        let bfs: Vec<f64> = dt_grid
+            .iter()
+            .map(|&dt| danno.compute_bayes_factor(0.002, dt))
+            .collect();
+        for w in bfs.windows(2) {
+            assert!(
+                w[0] >= w[1],
+                "BF(d=0.002) increased with delta_t: {} < {}",
+                w[0],
+                w[1]
+            );
+        }
     }
 }

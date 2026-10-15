@@ -338,8 +338,12 @@ pub fn fit_clock_community(
     let t_crit = student_t_ppf(1.0 - alpha / 2.0, df_eff);
     let ci_mu = [lr.slope - t_crit * se_mu, lr.slope + t_crit * se_mu];
 
-    let (ci_mrca, fieller_status) =
+    let (mut ci_mrca, fieller_status) =
         compute_fieller_mrca(lr.slope, d_mean, se_mu, se_d0, t_mean, df_eff, alpha);
+    // The MRCA cannot postdate the earliest sample: clamp the upper bound.
+    if ci_mrca[1].is_finite() {
+        ci_mrca[1] = ci_mrca[1].min(min_date);
+    }
 
     // Gaussian-profile log-likelihood at the OLS optimum; p = 3
     // (intercept, slope, sigma^2). Uses the Bartlett-penalized sigma^2 —
@@ -351,7 +355,7 @@ pub fn fit_clock_community(
     // estimate; a non-positive slope falls back to the earliest sample
     // date rather than extrapolating a future origin.
     let tmrca = if lr.slope > 1e-12 {
-        t_mean - d_mean / lr.slope
+        (t_mean - d_mean / lr.slope).min(min_date)
     } else {
         min_date
     };

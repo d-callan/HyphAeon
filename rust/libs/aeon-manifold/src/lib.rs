@@ -804,4 +804,53 @@ mod tests {
         let f2 = res.eigenvectors[2 * n + (n - 2)];
         assert!(f0 * f2 < 0.0);
     }
+
+    #[test]
+    fn test_jacobi_eigh_large_laplacian() {
+        // 120x120 normalized graph Laplacian with two weakly coupled 60-node
+        // blocks (upstream trace50-core test_jacobi_eigensystem_large_laplacian,
+        // c195a16). Eigenvalues are descending here: the zero eigenvalue is at
+        // index n-1 and the Fiedler pair at n-2.
+        let n = 120;
+        let mut w: Vec<f64> = vec![0.0; n * n];
+        let mut deg: Vec<f64> = vec![0.0; n];
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let same_block = (i < 60 && j < 60) || (i >= 60 && j >= 60);
+                let weight = if same_block { 1.0 } else { 0.02 };
+                w[i * n + j] = weight;
+                w[j * n + i] = weight;
+                deg[i] += weight;
+                deg[j] += weight;
+            }
+        }
+        let mut l_sym = vec![0.0; n * n];
+        for i in 0..n {
+            l_sym[i * n + i] = 1.0;
+            for j in 0..n {
+                if i != j {
+                    l_sym[i * n + j] = -w[i * n + j] / (deg[i] * deg[j]).sqrt();
+                }
+            }
+        }
+        let res = symmetric_jacobi_eigh(&l_sym, n);
+        // Smallest eigenvalue of normalized Laplacian is 0.0
+        assert!(
+            res.eigenvalues[n - 1].abs() < 1e-9,
+            "lambda_1 = {}",
+            res.eigenvalues[n - 1]
+        );
+        // Second eigenvalue (Fiedler value) for two weakly coupled blocks is small positive
+        let lam2 = res.eigenvalues[n - 2];
+        assert!(lam2 > 0.01 && lam2 < 0.10, "lambda_2 = {}", lam2);
+        // Fiedler vector (column n-2) must cleanly separate block 0..60 from 60..120 by sign
+        let fc = n - 2;
+        let sign_0 = res.eigenvectors[fc].signum();
+        for i in 0..60 {
+            assert_eq!(res.eigenvectors[i * n + fc].signum(), sign_0);
+        }
+        for i in 60..120 {
+            assert_eq!(res.eigenvectors[i * n + fc].signum(), -sign_0);
+        }
+    }
 }
