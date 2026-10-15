@@ -8,6 +8,7 @@ pub struct CumulativeTrajectoryPolisher {
     pub min_tract_length: usize,
     pub dyadic_scales: Vec<usize>,
     pub alpha: f64,
+    pub stringency: f64,
 }
 
 impl Default for CumulativeTrajectoryPolisher {
@@ -18,6 +19,7 @@ impl Default for CumulativeTrajectoryPolisher {
             min_tract_length: 30,
             dyadic_scales: vec![30, 60, 120, 240, 300, 360, 480, 600, 800],
             alpha: 0.05,
+            stringency: 1.0,
         }
     }
 }
@@ -25,6 +27,21 @@ impl Default for CumulativeTrajectoryPolisher {
 impl CumulativeTrajectoryPolisher {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_stringency(mut self, stringency: f64) -> Self {
+        self.stringency = stringency;
+        self
+    }
+
+    #[inline]
+    fn eff_min_tract_length(&self) -> usize {
+        let s2 = self.stringency.max(0.1);
+        if (s2 - 1.0).abs() < 1e-9 {
+            self.min_tract_length
+        } else {
+            ((self.min_tract_length as f64 * s2).round() as usize).clamp(10, 200)
+        }
     }
 
     /// Recursive Binary Segmentation on differential flux X in interval [s, e] (1-indexed inclusive)
@@ -36,8 +53,9 @@ impl CumulativeTrajectoryPolisher {
         eff_alpha: f64,
         sigma_x: f64,
     ) -> Vec<usize> {
+        let eff_min_len = self.eff_min_tract_length();
         let n = e.saturating_sub(s) + 1;
-        if n < 2 * self.min_tract_length {
+        if n < 2 * eff_min_len {
             return Vec::new();
         }
 
@@ -65,8 +83,8 @@ impl CumulativeTrajectoryPolisher {
             b_sub.push(bridge_val);
         }
 
-        let idx_start = self.min_tract_length - 1;
-        let idx_end = n - self.min_tract_length;
+        let idx_start = eff_min_len - 1;
+        let idx_end = n - eff_min_len;
         if idx_start >= idx_end {
             return Vec::new();
         }
@@ -81,8 +99,9 @@ impl CumulativeTrajectoryPolisher {
             }
         }
 
+        let s2 = self.stringency.max(0.1);
         let z_local = max_abs / (sigma_eff * (n as f64).sqrt());
-        let z_crit = (-0.5 * (eff_alpha / 2.0).max(1e-15).ln()).sqrt();
+        let z_crit = (-0.5 * (eff_alpha / 2.0).max(1e-15).ln()).sqrt() * s2;
 
         if z_local < z_crit {
             return Vec::new();
@@ -110,10 +129,16 @@ impl CumulativeTrajectoryPolisher {
         num_taxa: usize,
         sigma_x: f64,
     ) -> Vec<(usize, usize)> {
+        let s2 = self.stringency.max(0.1);
         let m_scales = self.dyadic_scales.len().max(1);
         let mut candidates = Vec::new();
 
-        for &tau in &self.dyadic_scales {
+        for &base_tau in &self.dyadic_scales {
+            let tau = if s2 < 1.0 {
+                ((base_tau as f64 * s2).round() as usize).max(12)
+            } else {
+                base_tau
+            };
             if tau >= l {
                 continue;
             }
@@ -122,10 +147,10 @@ impl CumulativeTrajectoryPolisher {
             let n_blocks = ((l as f64) / (tau as f64)).max(1.0);
             let eff_alpha_tau =
                 (self.alpha / (2.0 * (num_taxa as f64) * (m_scales as f64) * n_blocks)).max(1e-15);
-            let z_crit_tau = normal_ppf(1.0 - eff_alpha_tau);
+            let z_crit_tau = normal_ppf(1.0 - eff_alpha_tau) * s2;
 
             let se_tau = sigma_x * (tau as f64).sqrt();
-            let theta_tau = self.poisson_floor.max(z_crit_tau * se_tau);
+            let theta_tau = (self.poisson_floor * s2).max(z_crit_tau * se_tau);
 
             let mut max_boxcar = f64::NEG_INFINITY;
             let mut best_k = 0;
@@ -159,6 +184,9 @@ impl CumulativeTrajectoryPolisher {
         n: usize,
         num_channels: usize,
     ) -> Vec<PhysicalTract> {
+        let s2 = self.stringency.max(0.1);
+        let eff_min_len = self.eff_min_tract_length();
+        let eff_poisson_floor = self.poisson_floor * s2;
         let home_ch = parental.home_channel;
         let donor_ch = parental.donor_channel;
 
@@ -215,11 +243,9 @@ impl CumulativeTrajectoryPolisher {
 
         let delta_c_max = (max_b - min_b).max(0.0);
         let eff_alpha = (self.alpha / (2.0 * (n as f64))).max(1e-15);
-        let z_crit = (-0.5 * (eff_alpha / 2.0).max(1e-15).ln()).sqrt();
+        let z_crit = (-0.5 * (eff_alpha / 2.0).max(1e-15).ln()).sqrt() * s2;
 
-        let floor_adaptive = self
-            .poisson_floor
-            .max(z_crit * sigma_x * (self.min_tract_length as f64).sqrt());
+        let floor_adaptive = eff_poisson_floor.max(z_crit * sigma_x * (eff_min_len as f64).sqrt());
         let dyadic_hits = self.dyadic_matched_filter(&x, &cum_x, l, n, sigma_x);
 
         if delta_c_max < floor_adaptive && dyadic_hits.is_empty() {
@@ -255,6 +281,7 @@ impl CumulativeTrajectoryPolisher {
         tau_bounds.push(l);
 
         let mut segments = Vec::new();
+        let z_pol = 1.645 * s2.min(1.5);
         for k in 0..(tau_bounds.len() - 1) {
             let s_k = tau_bounds[k] + 1;
             let e_k = tau_bounds[k + 1];
@@ -264,7 +291,7 @@ impl CumulativeTrajectoryPolisher {
             let mean_flux = sum_flux / seg_len;
 
             // One-sided z-test for donor polarity beyond background noise
-            let is_donor_polarity = mean_flux > (1.645 * sigma_x / seg_len.sqrt());
+            let is_donor_polarity = mean_flux > (z_pol * sigma_x / seg_len.sqrt());
             segments.push((s_k, e_k, is_donor_polarity));
         }
 
@@ -301,14 +328,37 @@ impl CumulativeTrajectoryPolisher {
             (false, donor_ch, home_ch)
         };
 
-        let donor_segments: Vec<(usize, usize)> = merged_segments
+        let raw_donor_segments: Vec<(usize, usize)> = merged_segments
             .into_iter()
             .filter(|&(_, _, is_d)| is_d == target_polarity)
             .map(|(s, e, _)| (s, e))
             .collect();
 
-        if donor_segments.is_empty() {
+        if raw_donor_segments.is_empty() {
             return Vec::new();
+        }
+
+        // Bridge adjacent donor segments across short non-informative gaps (<= 150 bp)
+        // In low-divergence regimes (d <= 0.02), stochastic intervals of 50-100 bp within a true
+        // cassette can lack mutations, causing temporary zero-flux dips. Bridging ensures the full
+        // continuous introgression cassette is evaluated as a single coherent tract.
+        let mut donor_segments: Vec<(usize, usize)> = Vec::new();
+        for (s, e) in raw_donor_segments {
+            if let Some(last) = donor_segments.last_mut() {
+                let gap = s.saturating_sub(last.1 + 1);
+                if gap <= 150 {
+                    let combined_s = last.0;
+                    let combined_e = e;
+                    let comb_len = (combined_e - combined_s + 1) as f64;
+                    let comb_sum: f64 = x[(combined_s - 1)..combined_e].iter().sum();
+                    let comb_mean = comb_sum / comb_len;
+                    if comb_mean > 0.0 {
+                        last.1 = e;
+                        continue;
+                    }
+                }
+            }
+            donor_segments.push((s, e));
         }
 
         // 6. Build PhysicalTracts for surviving donor segments
@@ -316,7 +366,7 @@ impl CumulativeTrajectoryPolisher {
 
         for (s_disc, e_disc) in donor_segments {
             let tract_len = e_disc - s_disc + 1;
-            if tract_len < self.min_tract_length {
+            if tract_len < eff_min_len {
                 continue;
             }
 
@@ -340,7 +390,7 @@ impl CumulativeTrajectoryPolisher {
                 let z = max_b_seg / (sigma_x * (l as f64).sqrt());
                 (z, z_crit, floor_adaptive)
             } else {
-                let w_span = (tract_len as f64).max(self.min_tract_length as f64);
+                let w_span = (tract_len as f64).max(eff_min_len as f64);
                 let delta_c_tract: f64 = x[(s_disc - 1)..e_disc].iter().sum();
                 let z = (max_b_seg / (sigma_x * w_span.sqrt()))
                     .max(delta_c_tract / (sigma_x * w_span.sqrt()));
@@ -348,8 +398,8 @@ impl CumulativeTrajectoryPolisher {
                 let m_scales = self.dyadic_scales.len().max(1);
                 let eff_alpha_dyadic =
                     (self.alpha / (2.0 * (n as f64) * (m_scales as f64))).max(1e-15);
-                let z_cr = normal_ppf(1.0 - eff_alpha_dyadic);
-                (z, z_cr, self.poisson_floor)
+                let z_cr = normal_ppf(1.0 - eff_alpha_dyadic) * s2;
+                (z, z_cr, eff_poisson_floor)
             };
 
             // Newtonian Velocity Reversal Symmetry Breaking (DIR-RHIZ-PAFF-012.0)
@@ -422,9 +472,15 @@ impl CumulativeTrajectoryPolisher {
                 0.0
             };
 
+            let cos_thresh = if (s2 - 1.0).abs() < 1e-9 {
+                0.20
+            } else {
+                (0.20 + 0.45 * (1.0 - s2)).clamp(-0.50, 0.85)
+            };
+
             let is_phys_sig = z_phys >= z_eff_crit
                 && (delta_c_seg >= floor_req || delta_c_max >= floor_adaptive)
-                && cos_theta <= 0.20;
+                && cos_theta <= cos_thresh;
 
             if !is_phys_sig {
                 continue;

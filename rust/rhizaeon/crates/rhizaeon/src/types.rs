@@ -171,6 +171,8 @@ pub struct VisualizationBreakpoint {
     pub ci_left: usize,
     pub ci_right: usize,
     pub plateau_width: usize,
+    pub tract_start: usize,
+    pub tract_end: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flanking_p1_site: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]

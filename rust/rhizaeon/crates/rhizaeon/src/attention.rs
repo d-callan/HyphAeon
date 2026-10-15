@@ -50,8 +50,8 @@ impl PhyloAttentionEngine {
                 let out_offset = u_offset + in_offset;
 
                 let mut max_s = f64::NEG_INFINITY;
-                let mut logits = [0.0f64; 64]; // Max K+1 <= 64
-                assert!(num_channels <= 64, "K+1 exceeds stack buffer limit");
+                let mut logits = [0.0f64; 128]; // Max K+1 <= 128
+                assert!(num_channels <= 128, "K+1 exceeds stack buffer limit");
 
                 // Root channel 0
                 let m_root = m_matrix[in_offset + 0];

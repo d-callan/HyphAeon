@@ -278,11 +278,11 @@
     }
     .seq-track-bar {
       flex-grow: 1;
-      height: 16px;
+      height: 18px;
       position: relative;
       background: var(--bg-base);
       border-radius: 3px;
-      overflow: hidden;
+      overflow: visible;
     }
 
     /* Level 3: Micro Signals */
@@ -495,15 +495,24 @@
       background: rgba(168, 85, 247, 0.06);
     }
     @keyframes pulseTract {
-      0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.9); }
-      70% { box-shadow: 0 0 0 7px rgba(239, 68, 68, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+      0%, 100% {
+        border-color: #ff1111;
+        outline-color: #ff1111;
+        box-shadow: 0 0 5px 1px rgba(255, 17, 17, 0.95), inset 0 0 0 1px #ff1111;
+      }
+      50% {
+        border-color: var(--bg-surface);
+        outline-color: var(--bg-surface);
+        box-shadow: 0 0 0 0 rgba(255, 17, 17, 0), inset 0 0 0 1px var(--bg-surface);
+      }
     }
     .selected-mosaic-tract {
-      outline: 3.5px solid #ef4444 !important;
-      outline-offset: -1px;
-      z-index: 10;
-      animation: pulseTract 1.5s infinite;
+      border: 2px solid #ff1111 !important;
+      outline: 1.75px solid #ff1111 !important;
+      outline-offset: 0px;
+      border-radius: 2px;
+      z-index: 25;
+      animation: pulseTract 2s ease-in-out infinite !important;
     }
     .pill-badge {
       display: inline-block;
@@ -834,6 +843,7 @@ __RHIZAEON_DATA_JSON__
         p1Taxon: DATA.metadata.p1_id,
         p2Taxon: DATA.metadata.p2_id,
         activeBpId: (DATA.breakpoints.length > 0) ? DATA.breakpoints[0].breakpoint_id : null,
+        activeEventId: (DATA.breakpoints.length > 0) ? DATA.breakpoints[0].event_id : null,
         signals: null,
         filterText: '',
         isDraggingBrush: false,
@@ -1595,6 +1605,10 @@ __RHIZAEON_DATA_JSON__
 
         selectMdsBp.onchange = () => {
           state.activeBpId = selectMdsBp.value;
+          const bp = DATA.breakpoints.find(b => b.breakpoint_id === state.activeBpId);
+          if (bp) state.activeEventId = bp.event_id;
+          renderMatrix();
+          renderInventoryTable();
           renderSubspaces();
         };
       }
@@ -1604,6 +1618,50 @@ __RHIZAEON_DATA_JSON__
         if (selectP1) selectP1.value = state.p1Taxon;
         if (selectP2) selectP2.value = state.p2Taxon;
         initMdsDropdown();
+      }
+
+      // Compute full recombined tract bounds [start, end] for an event on a given taxon
+      function getEventTractBounds(eventId, bpId, taxon) {
+        const resolvedEventId = eventId || (bpId ? (DATA.breakpoints.find(b => b.breakpoint_id === bpId) || {}).event_id : null);
+        if (!resolvedEventId && !bpId) return null;
+
+        const evBps = DATA.breakpoints.filter(b =>
+          (resolvedEventId && b.event_id === resolvedEventId) ||
+          (!resolvedEventId && bpId && b.breakpoint_id === bpId)
+        );
+
+        const segs = (taxon && DATA.mosaic_taxa[taxon]) ? DATA.mosaic_taxa[taxon] : [];
+        const matchingSegs = segs.filter(s =>
+          (resolvedEventId && s.event_id === resolvedEventId) ||
+          evBps.some(b => b.breakpoint_id && s.breakpoint_id === b.breakpoint_id)
+        );
+
+        if (taxon) {
+          const isIsolate = evBps.some(b => b.recombinant === taxon || (b.isolates && b.isolates.includes(taxon))) || matchingSegs.length > 0;
+          if (!isIsolate) return null;
+        }
+
+        let minStart = Infinity;
+        let maxEnd = -Infinity;
+
+        evBps.forEach(b => {
+          if (typeof b.tract_start === 'number' && typeof b.tract_end === 'number' && b.tract_end >= b.tract_start) {
+            minStart = Math.min(minStart, b.tract_start);
+            maxEnd = Math.max(maxEnd, b.tract_end);
+          }
+          if (typeof b.ci_left === 'number' && typeof b.ci_right === 'number') {
+            minStart = Math.min(minStart, b.ci_left);
+            maxEnd = Math.max(maxEnd, b.ci_right);
+          }
+        });
+
+        matchingSegs.forEach(s => {
+          minStart = Math.min(minStart, s.start);
+          maxEnd = Math.max(maxEnd, s.end);
+        });
+
+        if (minStart === Infinity || maxEnd < minStart) return null;
+        return [Math.max(1, minStart), Math.min(L_TOTAL, maxEnd)];
       }
 
       // Top Jump Buttons for Focal Taxon
@@ -1616,7 +1674,15 @@ __RHIZAEON_DATA_JSON__
           btn.innerHTML = `<b style="color:var(--cyan)">${b.breakpoint_id}</b>: nt ${b.breakpoint_nt.toLocaleString()}`;
           btn.onclick = () => {
             state.activeBpId = b.breakpoint_id;
-            window.jumpTo(b.ci_left - 45, b.ci_right + 45);
+            state.activeEventId = b.event_id;
+            const bounds = getEventTractBounds(b.event_id, b.breakpoint_id, state.focalTaxon);
+            if (bounds) {
+              window.jumpTo(bounds[0] - 45, bounds[1] + 45);
+            } else {
+              window.jumpTo(b.ci_left - 45, b.ci_right + 45);
+            }
+            renderMatrix();
+            renderInventoryTable();
             document.getElementById('signals-stack').scrollIntoView({ behavior: 'smooth', block: 'start' });
           };
           topJumpContainer.appendChild(btn);
@@ -1630,6 +1696,10 @@ __RHIZAEON_DATA_JSON__
         if (forcedP1 && forcedP2) {
           state.p1Taxon = forcedP1;
           state.p2Taxon = forcedP2;
+          if (!state.activeEventId && state.activeBpId) {
+            const bp = DATA.breakpoints.find(b => b.breakpoint_id === state.activeBpId);
+            if (bp) state.activeEventId = bp.event_id;
+          }
         } else {
           const myBps = DATA.breakpoints.filter(b => b.recombinant === t || (b.isolates && b.isolates.includes(t)));
           if (myBps.length > 0) {
@@ -1773,11 +1843,6 @@ __RHIZAEON_DATA_JSON__
               segDiv.style.border = '1px dashed #fbbf24';
               segDiv.style.boxShadow = '0 0 6px rgba(245,158,11,0.5)';
             }
-            const isSelectedTract = (state.activeBpId && seg.breakpoint_id === state.activeBpId) ||
-                                    (state.activeEventId && seg.event_id === state.activeEventId);
-            if (isSelectedTract) {
-              segDiv.classList.add('selected-mosaic-tract');
-            }
             if (seg.breakpoint_id || seg.event_id) {
               segDiv.style.cursor = 'pointer';
               segDiv.onclick = (e) => {
@@ -1794,6 +1859,23 @@ __RHIZAEON_DATA_JSON__
             segDiv.title = `${t}: ${seg.lineage} [nt ${seg.start} – ${seg.end}]`;
             bar.appendChild(segDiv);
           });
+
+          // Draw a single contiguous red border around the ENTIRE recombined tract of the selected event
+          const tractBounds = getEventTractBounds(state.activeEventId, state.activeBpId, t);
+          if (tractBounds) {
+            const [tStart, tEnd] = tractBounds;
+            const tractLeftPct = ((tStart - 1) / L_TOTAL) * 100;
+            const tractWidthPct = ((tEnd - tStart + 1) / L_TOTAL) * 100;
+            const selOverlay = document.createElement('div');
+            selOverlay.className = 'selected-mosaic-tract';
+            selOverlay.style.position = 'absolute';
+            selOverlay.style.left = `${tractLeftPct}%`;
+            selOverlay.style.width = `${tractWidthPct}%`;
+            selOverlay.style.top = '0';
+            selOverlay.style.height = '100%';
+            selOverlay.style.pointerEvents = 'none';
+            bar.appendChild(selOverlay);
+          }
 
           row.appendChild(label);
           row.appendChild(bar);
@@ -2451,7 +2533,12 @@ __RHIZAEON_DATA_JSON__
           if (bp) state.activeEventId = bp.event_id;
         }
         setFocalTaxon(rec, p1, p2);
-        window.jumpTo(ciL - 45, ciR + 45);
+        const bounds = getEventTractBounds(state.activeEventId, state.activeBpId, rec);
+        if (bounds) {
+          window.jumpTo(bounds[0] - 45, bounds[1] + 45);
+        } else {
+          window.jumpTo(ciL - 45, ciR + 45);
+        }
         notifyParentEvent(state.activeEventId, state.activeBpId, rec);
         highlightInventoryRow();
       };
@@ -2461,15 +2548,13 @@ __RHIZAEON_DATA_JSON__
         const bp = DATA.breakpoints.find(b => b.event_id === eventId);
         if (bp) {
           state.activeBpId = bp.breakpoint_id;
-          let u1 = bp.ci_left, u2 = bp.ci_right;
-          const tracks = DATA.mosaic_taxa[bp.recombinant] || [];
-          const donorSeg = tracks.find(s => s.event_id === eventId && s.lineage && s.lineage.includes('Donor'));
-          if (donorSeg) {
-            u1 = donorSeg.start;
-            u2 = donorSeg.end;
-          }
           setFocalTaxon(bp.recombinant, bp.parent_1, bp.parent_2);
-          window.jumpTo(u1 - 45, u2 + 45);
+          const bounds = getEventTractBounds(eventId, bp.breakpoint_id, bp.recombinant);
+          if (bounds) {
+            window.jumpTo(bounds[0] - 45, bounds[1] + 45);
+          } else {
+            window.jumpTo(bp.ci_left - 45, bp.ci_right + 45);
+          }
           notifyParentEvent(state.activeEventId, state.activeBpId, bp.recombinant);
           highlightInventoryRow();
         } else {

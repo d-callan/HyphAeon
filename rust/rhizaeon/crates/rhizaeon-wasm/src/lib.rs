@@ -13,6 +13,8 @@ pub fn scan_fasta(
     fasta_str: &str,
     target_landmarks: Option<usize>,
     compress_snps: Option<bool>,
+    tier2_stringency: Option<f64>,
+    tier3_stringency: Option<f64>,
 ) -> Result<JsValue, JsValue> {
     init_panic_hook();
 
@@ -20,7 +22,10 @@ pub fn scan_fasta(
     let aln = parse_fasta(fasta_str).map_err(|e| JsValue::from_str(&e))?;
 
     let k = target_landmarks.unwrap_or(16);
-    let mut engine = RhizAeonEngine::new().with_landmarks(k);
+    let mut engine = RhizAeonEngine::new()
+        .with_landmarks(k)
+        .with_tier2_stringency(tier2_stringency.unwrap_or(1.0))
+        .with_tier3_stringency(tier3_stringency.unwrap_or(1.0));
     if let Some(cs) = compress_snps {
         engine = engine.with_compress_snps(cs);
     }
@@ -38,6 +43,8 @@ pub fn scan_fasta_json(
     fasta_str: &str,
     target_landmarks: Option<usize>,
     compress_snps: Option<bool>,
+    tier2_stringency: Option<f64>,
+    tier3_stringency: Option<f64>,
 ) -> Result<String, JsValue> {
     init_panic_hook();
 
@@ -45,7 +52,10 @@ pub fn scan_fasta_json(
     let aln = parse_fasta(fasta_str).map_err(|e| JsValue::from_str(&e))?;
 
     let k = target_landmarks.unwrap_or(16);
-    let mut engine = RhizAeonEngine::new().with_landmarks(k);
+    let mut engine = RhizAeonEngine::new()
+        .with_landmarks(k)
+        .with_tier2_stringency(tier2_stringency.unwrap_or(1.0))
+        .with_tier3_stringency(tier3_stringency.unwrap_or(1.0));
     if let Some(cs) = compress_snps {
         engine = engine.with_compress_snps(cs);
     }
@@ -71,6 +81,8 @@ pub fn scan_fasta_dossier(
     title: Option<String>,
     target_landmarks: Option<usize>,
     compress_snps: Option<bool>,
+    tier2_stringency: Option<f64>,
+    tier3_stringency: Option<f64>,
 ) -> Result<JsValue, JsValue> {
     init_panic_hook();
 
@@ -78,7 +90,10 @@ pub fn scan_fasta_dossier(
     let aln = parse_fasta(fasta_str).map_err(|e| JsValue::from_str(&e))?;
 
     let k = target_landmarks.unwrap_or(16);
-    let mut engine = RhizAeonEngine::new().with_landmarks(k);
+    let mut engine = RhizAeonEngine::new()
+        .with_landmarks(k)
+        .with_tier2_stringency(tier2_stringency.unwrap_or(1.0))
+        .with_tier3_stringency(tier3_stringency.unwrap_or(1.0));
     if let Some(cs) = compress_snps {
         engine = engine.with_compress_snps(cs);
     }
@@ -98,6 +113,8 @@ pub fn scan_fasta_dossier_json(
     title: Option<String>,
     target_landmarks: Option<usize>,
     compress_snps: Option<bool>,
+    tier2_stringency: Option<f64>,
+    tier3_stringency: Option<f64>,
 ) -> Result<String, JsValue> {
     init_panic_hook();
 
@@ -105,7 +122,10 @@ pub fn scan_fasta_dossier_json(
     let aln = parse_fasta(fasta_str).map_err(|e| JsValue::from_str(&e))?;
 
     let k = target_landmarks.unwrap_or(16);
-    let mut engine = RhizAeonEngine::new().with_landmarks(k);
+    let mut engine = RhizAeonEngine::new()
+        .with_landmarks(k)
+        .with_tier2_stringency(tier2_stringency.unwrap_or(1.0))
+        .with_tier3_stringency(tier3_stringency.unwrap_or(1.0));
     if let Some(cs) = compress_snps {
         engine = engine.with_compress_snps(cs);
     }
@@ -125,6 +145,8 @@ pub fn scan_fasta_html(
     title: Option<String>,
     target_landmarks: Option<usize>,
     compress_snps: Option<bool>,
+    tier2_stringency: Option<f64>,
+    tier3_stringency: Option<f64>,
 ) -> Result<String, JsValue> {
     init_panic_hook();
 
@@ -132,7 +154,10 @@ pub fn scan_fasta_html(
     let aln = parse_fasta(fasta_str).map_err(|e| JsValue::from_str(&e))?;
 
     let k = target_landmarks.unwrap_or(16);
-    let mut engine = RhizAeonEngine::new().with_landmarks(k);
+    let mut engine = RhizAeonEngine::new()
+        .with_landmarks(k)
+        .with_tier2_stringency(tier2_stringency.unwrap_or(1.0))
+        .with_tier3_stringency(tier3_stringency.unwrap_or(1.0));
     if let Some(cs) = compress_snps {
         engine = engine.with_compress_snps(cs);
     }
