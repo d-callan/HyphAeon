@@ -1,0 +1,331 @@
+{
+ "headers": [
+  {
+   "input": "B.US.2013.DC1000_0131022_PR_RT.MF455515",
+   "expected": "2013.8068493150686",
+   "rule": "run_danno.parse_date"
+  },
+  {
+   "input": "B.US.2013.DC1001_0130111_PR_RT.MF455516",
+   "expected": "2013.0287671232877",
+   "rule": "run_danno.parse_date"
+  },
+  {
+   "input": "B.US.2012.DC5_0120229_PR_RT.X1",
+   "expected": "2012.1625683060108",
+   "rule": "run_danno.parse_date"
+  },
+  {
+   "input": "B.US.2013.DC6_0130229_PR_RT.X2",
+   "expected": "2013.5",
+   "rule": "run_danno.parse_date"
+  },
+  {
+   "input": "B.US.2013.DC7_0121022_PR_RT.X3",
+   "expected": "2013.5",
+   "rule": "run_danno.parse_date"
+  },
+  {
+   "input": "B.US.2013.DC8_0131301_PR.X4",
+   "expected": "2013.5",
+   "rule": "run_danno.parse_date"
+  },
+  {
+   "input": "B.US.2013.DC9_PR_RT.X5",
+   "expected": "2013.5",
+   "rule": "run_danno.parse_date"
+  },
+  {
+   "input": "B.US.2013.DC10_01310221_PR.X6",
+   "expected": "2013.5",
+   "rule": "run_danno.parse_date"
+  },
+  {
+   "input": "B.US.2014.DC11_0141231",
+   "expected": "2014.9986301369863",
+   "rule": "run_danno.parse_date"
+  },
+  {
+   "input": "b.US.2013.DC1_0131022_PR.X",
+   "expected": "2013.8068493150686",
+   "rule": "run_danno.parse_date"
+  },
+  {
+   "input": "B.us.2013.DC1_0131022_PR.X",
+   "expected": null,
+   "rule": "none"
+  },
+  {
+   "input": "MH074765.1 HIV-1 isolate p6s6_2013 from Germany pol gene",
+   "expected": "2013.5",
+   "rule": "run_danno.parse_date"
+  },
+  {
+   "input": "X_2009.86 clone",
+   "expected": "2009.86",
+   "rule": "run_danno.parse_date"
+  },
+  {
+   "input": "X_2009.86",
+   "expected": "2009.86",
+   "rule": "run_danno.parse_date"
+  },
+  {
+   "input": "X_2009.5_y",
+   "expected": "2009.5",
+   "rule": "run_danno.parse_date"
+  },
+  {
+   "input": "X_2009.861",
+   "expected": null,
+   "rule": "none"
+  },
+  {
+   "input": "X_1975",
+   "expected": null,
+   "rule": "none"
+  },
+  {
+   "input": "X_1975_2001",
+   "expected": "2001.5",
+   "rule": "run_danno.parse_date"
+  },
+  {
+   "input": "X_2031.5_2012",
+   "expected": "2012.5",
+   "rule": "run_danno.parse_date"
+  },
+  {
+   "input": "seq1_2015.0",
+   "expected": "2015.0",
+   "rule": "run_danno.parse_date"
+  },
+  {
+   "input": "seq4_2018.0",
+   "expected": "2018.0",
+   "rule": "run_danno.parse_date"
+  },
+  {
+   "input": "ID|2013-10-22",
+   "expected": "2013.8068493150686",
+   "rule": "pipe"
+  },
+  {
+   "input": "ID|2013.81",
+   "expected": "2013.81",
+   "rule": "pipe"
+  },
+  {
+   "input": "ID|2013",
+   "expected": "2013.5",
+   "rule": "pipe"
+  },
+  {
+   "input": "ID|22-Oct-2013",
+   "expected": "2013.8068493150686",
+   "rule": "pipe"
+  },
+  {
+   "input": "ID|2013-02-30",
+   "expected": null,
+   "rule": "none"
+  },
+  {
+   "input": "PT|1001|clone0",
+   "expected": null,
+   "rule": "none"
+  },
+  {
+   "input": "PT|0042",
+   "expected": null,
+   "rule": "none"
+  },
+  {
+   "input": "HXB2|1234|x",
+   "expected": null,
+   "rule": "none"
+  },
+  {
+   "input": "ID|1949-12-31",
+   "expected": null,
+   "rule": "none"
+  },
+  {
+   "input": "ID|2036",
+   "expected": null,
+   "rule": "none"
+  },
+  {
+   "input": "ID|2035",
+   "expected": "2035.5",
+   "rule": "pipe"
+  },
+  {
+   "input": "ID|1950-01-01",
+   "expected": "1950.0013698630137",
+   "rule": "pipe"
+  },
+  {
+   "input": "seq1",
+   "expected": null,
+   "rule": "none"
+  },
+  {
+   "input": "A_B_C",
+   "expected": null,
+   "rule": "none"
+  }
+ ],
+ "meta": [
+  {
+   "input": "2013-10-22",
+   "expected": "2013.8068493150686",
+   "rule": "fetch_dates+ymd_to_decimal"
+  },
+  {
+   "input": "2013-01-11",
+   "expected": "2013.0287671232877",
+   "rule": "fetch_dates+ymd_to_decimal"
+  },
+  {
+   "input": "2012-02-29",
+   "expected": "2012.1625683060108",
+   "rule": "fetch_dates+ymd_to_decimal"
+  },
+  {
+   "input": "2013-02-29",
+   "expected": null,
+   "rule": "fetch_dates+ymd_to_decimal"
+  },
+  {
+   "input": "2013-02-30",
+   "expected": null,
+   "rule": "fetch_dates+ymd_to_decimal"
+  },
+  {
+   "input": "2016-12-31",
+   "expected": "2016.9986338797814",
+   "rule": "fetch_dates+ymd_to_decimal"
+  },
+  {
+   "input": "2013-10",
+   "expected": "2013.7904109589042",
+   "rule": "fetch_dates"
+  },
+  {
+   "input": "2013-02",
+   "expected": "2013.123287671233",
+   "rule": "fetch_dates"
+  },
+  {
+   "input": "2012-02",
+   "expected": "2012.1243169398906",
+   "rule": "fetch_dates"
+  },
+  {
+   "input": "2013",
+   "expected": "2013.5",
+   "rule": "fetch_dates"
+  },
+  {
+   "input": "22-Oct-2013",
+   "expected": "2013.8068493150686",
+   "rule": "fetch_dates+ymd_to_decimal"
+  },
+  {
+   "input": "1-mar-2012",
+   "expected": "2012.1653005464482",
+   "rule": "fetch_dates+ymd_to_decimal"
+  },
+  {
+   "input": "Oct-2013",
+   "expected": "2013.7904109589042",
+   "rule": "fetch_dates"
+  },
+  {
+   "input": "Feb-2012",
+   "expected": "2012.1243169398906",
+   "rule": "fetch_dates"
+  },
+  {
+   "input": "2011/2012",
+   "expected": "2011.5",
+   "rule": "fetch_dates"
+  },
+  {
+   "input": "01-Jan-2011/31-Dec-2011",
+   "expected": "2011.0013698630137",
+   "rule": "fetch_dates+ymd_to_decimal"
+  },
+  {
+   "input": "2013.806849",
+   "expected": "2013.806849",
+   "rule": "decimal"
+  },
+  {
+   "input": "2013.028767",
+   "expected": "2013.028767",
+   "rule": "decimal"
+  },
+  {
+   "input": "\"2013-10-22\"",
+   "expected": "2013.8068493150686",
+   "rule": "fetch_dates+ymd_to_decimal"
+  },
+  {
+   "input": " 2013-10-22 ",
+   "expected": "2013.8068493150686",
+   "rule": "fetch_dates+ymd_to_decimal"
+  },
+  {
+   "input": "",
+   "expected": null,
+   "rule": "none"
+  },
+  {
+   "input": "NA",
+   "expected": null,
+   "rule": "none"
+  },
+  {
+   "input": "10/22/2013",
+   "expected": null,
+   "rule": "none"
+  },
+  {
+   "input": "22/10/2013",
+   "expected": null,
+   "rule": "none"
+  },
+  {
+   "input": "2013-13",
+   "expected": null,
+   "rule": "fetch_dates (month out of range)"
+  },
+  {
+   "input": "2013-00-10",
+   "expected": null,
+   "rule": "fetch_dates+ymd_to_decimal"
+  },
+  {
+   "input": "2013-1-5",
+   "expected": null,
+   "rule": "none"
+  },
+  {
+   "input": "1949.5",
+   "expected": null,
+   "rule": "none"
+  },
+  {
+   "input": "2040.1",
+   "expected": null,
+   "rule": "none"
+  },
+  {
+   "input": "Foo-2013",
+   "expected": null,
+   "rule": "none"
+  }
+ ]
+}

@@ -8,7 +8,8 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
-use trace50::{run_trace50, Alignment, Trace50Config, VisualizationDossier};
+use trace50::dates::parse_date_value;
+use trace50::{run_trace50_with_matrix, Alignment, Trace50Config, VisualizationDossier};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -89,83 +90,35 @@ struct CliArgs {
     /// Use site-specific Information-Theoretic Transmission Odds (InfoDANNO)
     #[arg(long, default_value_t = false)]
     info_danno: bool,
+
+    /// Consume a precomputed pairwise distance CSV instead of computing TN93
+    /// internally. Expects `tn93` output: a header line then
+    /// ID1,ID2,Distance rows, IDs matching the FASTA headers. Pairs absent
+    /// from the file are treated as distance-unavailable, so pass the full
+    /// matrix (`tn93 -t 1.0`) if the background is to be calibrated from it.
+    #[arg(long)]
+    distances: Option<PathBuf>,
+
+    /// Ambiguity handling for the internal TN93 distances, as `tn93 -a`:
+    /// resolve, average, skip, gapmm, or a list of ambiguity codes to resolve
+    /// (all others averaged). Ignored with --distances.
+    #[arg(long, default_value = "RMYSKB")]
+    tn93_ambig: String,
+
+    /// Sequence length L used by DANNO (k = d * L). Defaults to the median
+    /// number of non-gap characters per sequence (as validation/run_danno.py).
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    seq_len: Option<u64>,
 }
 
-fn parse_date_string(date_str: &str) -> Option<f64> {
-    let s = date_str.trim().trim_matches('"');
-    if let Ok(val) = s.parse::<f64>() {
-        if (1950.0..=2035.0).contains(&val) {
-            return Some(val);
-        }
-    }
-
-    // Split by common date separators: '-', '/', '.', ' '
-    let parts: Vec<&str> = s
-        .split(|c| c == '-' || c == '/' || c == '.' || c == ' ')
-        .filter(|p| !p.is_empty())
-        .collect();
-    if parts.is_empty() {
-        return None;
-    }
-
-    let months = [
-        ("jan", 1.0),
-        ("feb", 2.0),
-        ("mar", 3.0),
-        ("apr", 4.0),
-        ("may", 5.0),
-        ("jun", 6.0),
-        ("jul", 7.0),
-        ("aug", 8.0),
-        ("sep", 9.0),
-        ("oct", 10.0),
-        ("nov", 11.0),
-        ("dec", 12.0),
-    ];
-
-    let mut year = None;
-    let mut month = None;
-    let mut day = None;
-
-    for part in &parts {
-        let p_lower = part.to_ascii_lowercase();
-        // Check for month name
-        if let Some(&(_, m_num)) = months.iter().find(|(name, _)| p_lower.starts_with(name)) {
-            month = Some(m_num);
-            continue;
-        }
-
-        if let Ok(num) = part.parse::<f64>() {
-            if num >= 1950.0 && num <= 2035.0 {
-                year = Some(num);
-            } else if num >= 1.0 && num <= 31.0 {
-                if month.is_none() && num <= 12.0 && parts.len() == 3 && parts[0] == *part {
-                    // Possible month in MM/DD/YYYY
-                    month = Some(num);
-                } else if day.is_none() {
-                    day = Some(num);
-                } else if month.is_none() && num <= 12.0 {
-                    month = Some(num);
-                }
-            }
-        }
-    }
-
-    if let Some(y) = year {
-        let m = month.unwrap_or(6.5);
-        let d = day.unwrap_or(15.0);
-        let frac = (m - 1.0 + (d - 1.0) / 30.0) / 12.0;
-        return Some(y + frac);
-    }
-
-    None
-}
-
+/// Reads `id_col` -> decimal date from a metadata CSV/TSV. Dates are parsed
+/// positionally by [`parse_date_value`]; rows whose date cannot be parsed are
+/// counted (second return value) and left out, so those sequences stay undated.
 fn parse_metadata_dates(
     meta_path: &Path,
     id_col: &str,
     date_col: &str,
-) -> Result<std::collections::HashMap<String, f64>, String> {
+) -> Result<(std::collections::HashMap<String, f64>, usize), String> {
     let file = File::open(meta_path).map_err(|e| format!("Failed to open metadata file: {}", e))?;
     let reader = BufReader::new(file);
     let mut lines = reader.lines();
@@ -197,6 +150,7 @@ fn parse_metadata_dates(
     })?;
 
     let mut map = std::collections::HashMap::new();
+    let mut unparsed = 0usize;
 
     for line_res in lines {
         let line = line_res.map_err(|e| format!("Error reading metadata row: {}", e))?;
@@ -212,13 +166,78 @@ fn parse_metadata_dates(
             let id = fields[id_idx].to_string();
             let date_str = fields[date_idx];
 
-            if let Some(val) = parse_date_string(date_str) {
-                map.insert(id, val);
+            match parse_date_value(date_str) {
+                Some(val) => {
+                    map.insert(id, val);
+                }
+                None => unparsed += 1,
             }
         }
     }
 
-    Ok(map)
+    Ok((map, unparsed))
+}
+
+/// Loads a `tn93`-style pairwise distance CSV into a row-major n x n matrix
+/// ordered to match `headers`.
+///
+/// Expected format: an optional header line, then `ID1,ID2,Distance` rows.
+/// Returns (matrix, pairs_loaded, rows_with_unknown_ids).
+///
+/// Pairs not present in the file are left as NaN, i.e. "distance
+/// unavailable", which the pipeline and `calibrate_from_data` both skip. A
+/// thresholded edge list therefore yields a truncated background, so pass the
+/// full matrix when the background is to be calibrated from it.
+fn load_distance_csv(
+    path: &Path,
+    headers: &[String],
+) -> Result<(Vec<f64>, usize, usize), String> {
+    let n = headers.len();
+    let index: std::collections::HashMap<&str, usize> =
+        headers.iter().enumerate().map(|(i, h)| (h.as_str(), i)).collect();
+
+    let file = File::open(path).map_err(|e| e.to_string())?;
+    let mut m = vec![f64::NAN; n * n];
+    for i in 0..n {
+        m[i * n + i] = 0.0;
+    }
+
+    let mut loaded = 0usize;
+    let mut unknown = 0usize;
+    for (lineno, line) in BufReader::new(file).lines().enumerate() {
+        let line = line.map_err(|e| e.to_string())?;
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let f: Vec<&str> = line.split(',').map(|s| s.trim().trim_matches('"')).collect();
+        if f.len() < 3 {
+            continue;
+        }
+        // skip a header row
+        if lineno == 0 && f[2].parse::<f64>().is_err() {
+            continue;
+        }
+        let d: f64 = match f[2].parse() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        match (index.get(f[0]), index.get(f[1])) {
+            (Some(&i), Some(&j)) => {
+                m[i * n + j] = d;
+                m[j * n + i] = d;
+                loaded += 1;
+            }
+            _ => unknown += 1,
+        }
+    }
+    if loaded == 0 {
+        return Err(format!(
+            "no usable rows: none of the ID pairs matched the {} FASTA headers",
+            n
+        ));
+    }
+    Ok((m, loaded, unknown))
 }
 
 /// Entry point forwarded by the `trace50` Python console script. `argv`
@@ -257,17 +276,34 @@ fn run(args: CliArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut alignment = Alignment::from_fasta_str(&fasta_content)
         .map_err(|e| format!("[!] Error parsing alignment: {}", e))?;
 
+    let seq_len = args
+        .seq_len
+        .map(|v| v as usize)
+        .unwrap_or(alignment.effective_len);
     println!(
-        "[*] Ingested {} sequences across {} nucleotide sites.",
+        "[*] Ingested {} sequences: alignment width {}, median non-gap length {} -> L = {}{}.",
         alignment.num_sequences(),
-        alignment.seq_len
+        alignment.seq_len,
+        alignment.effective_len,
+        seq_len,
+        if args.seq_len.is_some() {
+            " (--seq-len)"
+        } else {
+            ""
+        }
     );
 
     // Merge metadata if provided
     if let Some(meta_path) = &args.meta {
         println!("[*] Reading metadata from: {}", meta_path.display());
         match parse_metadata_dates(meta_path, &args.id_col, &args.date_col) {
-            Ok(date_map) => {
+            Ok((date_map, unparsed)) => {
+                if unparsed > 0 {
+                    eprintln!(
+                        "[!] WARNING: {} metadata rows have a date that could not be parsed (accepted: YYYY-MM-DD, YYYY-MM, YYYY, DD-Mon-YYYY, Mon-YYYY, decimal year); they are ignored.",
+                        unparsed
+                    );
+                }
                 let mut matched = 0usize;
                 for (i, h) in alignment.headers.iter().enumerate() {
                     let clean_id = h.trim();
@@ -303,6 +339,25 @@ fn run(args: CliArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    let num_undated = alignment.dates.iter().filter(|d| !d.is_finite()).count();
+    if num_undated == alignment.num_sequences() {
+        return Err("[!] ERROR: no sequence has a parseable collection date (from --meta or the FASTA headers). DANNO needs a sampling interval for every pair and cannot run.".into());
+    } else if num_undated > 0 {
+        eprintln!("================================================================================");
+        eprintln!(
+            "[!] WARNING: {} of {} sequences have NO collection date. They are EXCLUDED from",
+            num_undated,
+            alignment.num_sequences()
+        );
+        eprintln!("[!] DANNO, the static network, AutoClock and CHIN (not imputed); as in run_danno.py.");
+        eprintln!("================================================================================");
+    } else {
+        println!(
+            "[*] Collection dates: all {} sequences dated.",
+            alignment.num_sequences()
+        );
+    }
+
     let config = Trace50Config {
         mu: args.mu,
         tau_bar: args.tau_bar,
@@ -318,10 +373,50 @@ fn run(args: CliArgs) -> Result<(), Box<dyn std::error::Error>> {
         use_robust_bf: args.use_robust,
         static_distance_threshold: args.threshold,
         use_info_danno: args.info_danno,
+        tn93_ambiguity: args.tn93_ambig.clone(),
+        seq_len: Some(seq_len),
     };
 
+    // Optional precomputed distance matrix (e.g. from the `tn93` binary)
+    let supplied_matrix = match &args.distances {
+        None => None,
+        Some(path) => match load_distance_csv(path, &alignment.headers) {
+            Ok((m, found, missing)) => {
+                println!(
+                    "[*] Loaded {} pairwise distances from {} ({} of {} pairs present{})",
+                    found,
+                    path.display(),
+                    found,
+                    alignment.headers.len() * (alignment.headers.len() - 1) / 2,
+                    if missing > 0 {
+                        format!(", {} unknown IDs skipped", missing)
+                    } else {
+                        String::new()
+                    }
+                );
+                Some(m)
+            }
+            Err(e) => {
+                return Err(format!(
+                    "[!] Failed to load --distances {}: {}",
+                    path.display(),
+                    e
+                )
+                .into());
+            }
+        },
+    };
+
+    if supplied_matrix.is_none() {
+        println!(
+            "[*] Internal TN93 distances (tn93 -t 1.0 -l {} -a {}).",
+            trace50::tn93::TN93_MIN_OVERLAP,
+            args.tn93_ambig
+        );
+    }
+
     println!("[*] Executing end-to-end TRACE-5.0 pipeline...");
-    let dossier = run_trace50(&alignment, &config)
+    let dossier = run_trace50_with_matrix(&alignment, &config, supplied_matrix)
         .map_err(|e| format!("[!] Pipeline execution failed: {}", e))?;
 
     // Ensure output directory exists
@@ -405,22 +500,29 @@ fn run(args: CliArgs) -> Result<(), Box<dyn std::error::Error>> {
         "   - Giant Component Size:             {} patients",
         dossier.kpi.danno_network.max_cluster_size
     );
-    println!(
-        "   - Giant Component Reduction:        {:.1}%",
-        dossier.kpi.giant_component_reduction_pct
-    );
+    match dossier.kpi.giant_component_reduction_pct {
+        Some(pct) => println!("   - Giant Component Reduction:        {:.1}%", pct),
+        None => println!("   - Giant Component Reduction:        n/a (no supported DANNO cluster)"),
+    }
     println!("--------------------------------------------------------------------------------");
     println!(" CHIN Macro-Scale Epidemiological Scaling:");
-    println!(
-        "   - Active Transmitting Pool (N_act): {:.0} [CI: {:.0} - {:.0}]",
+    match (
         dossier.kpi.inferred_active_transmitting_pool,
-        dossier.kpi.inferred_active_pool_ci[0],
-        dossier.kpi.inferred_active_pool_ci[1]
-    );
-    println!(
-        "   - Surveillance Sampling Fraction:   {:.2}%",
-        dossier.kpi.inferred_surveillance_sampling_fraction_pct
-    );
+        dossier.kpi.inferred_active_pool_ci,
+    ) {
+        (Some(n_act), Some(ci)) => println!(
+            "   - Active Transmitting Pool (N_act): {:.0} [CI: {:.0} - {:.0}]",
+            n_act, ci[0], ci[1]
+        ),
+        _ => println!(
+            "   - Active Transmitting Pool (N_act): {}",
+            dossier.kpi.inferred_active_pool_status
+        ),
+    }
+    match dossier.kpi.inferred_surveillance_sampling_fraction_pct {
+        Some(pct) => println!("   - Surveillance Sampling Fraction:   {:.2}%", pct),
+        None => println!("   - Surveillance Sampling Fraction:   not estimable (N_act not estimable)"),
+    }
     println!(
         "   - Borel Branching Decay (R^2):      {:.4}",
         dossier.macro_scaling.borel_decay.r_squared
@@ -492,11 +594,16 @@ fn write_csv_outputs(dossier: &VisualizationDossier, out_dir: &Path) -> std::io:
     let mut nodes_file = File::create(&nodes_csv)?;
     writeln!(nodes_file, "taxon_id,date,degree_static,degree_supported,cluster_static,cluster_supported,community_id,operational_tier")?;
     for n in &dossier.nodes {
+        let date = if n.date.is_finite() {
+            format!("{:.2}", n.date)
+        } else {
+            String::new()
+        };
         writeln!(
             nodes_file,
-            "{},{:.2},{},{},{},{},{},\"{}\"",
+            "{},{},{},{},{},{},{},\"{}\"",
             n.id,
-            n.date,
+            date,
             n.degree_static,
             n.degree_supported,
             n.cluster_id_static,

@@ -9,7 +9,14 @@
 
 use crate::math::{linregress, norm_ppf};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
+
+/// Reason reported when N_act is refused because no edge is supported (E_obs = 0).
+pub const N_ACT_NOT_ESTIMABLE_NO_EDGES: &str =
+    "not estimable: zero supported edges (E_obs = 0)";
+/// Reason reported when N_act is refused because there are no samples (n = 0).
+pub const N_ACT_NOT_ESTIMABLE_NO_SAMPLES: &str =
+    "not estimable: no sequences (n = 0)";
 
 /// Active transmitting population and surveillance coverage estimates.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,22 +78,24 @@ impl ChinEstimator {
 
     /// Inverts quadratic scaling law to infer active transmitting population scale N_act:
     /// N_act = (R0 * n^2) / (2 * E_obs).
+    ///
+    /// Refuses (returns `Err`) when E_obs == 0 or n == 0: the inversion divides by
+    /// E_obs and its Poisson interval by sqrt(E_obs), so with no supported edges
+    /// N_act is not estimable. (The Python reference returns inf here; inf is not an
+    /// estimate and serialises to JSON null, which downstream renderers showed as 0.)
     pub fn estimate_active_population(
         &self,
         n_samples: usize,
         n_edges: usize,
         r0_opt: Option<f64>,
         confidence_level: f64,
-    ) -> ActivePopulationEstimate {
+    ) -> Result<ActivePopulationEstimate, String> {
         let r0 = r0_opt.unwrap_or(self.r0_default);
-        if n_edges == 0 || n_samples == 0 {
-            return ActivePopulationEstimate {
-                n_act: f64::INFINITY,
-                ci_lower: f64::INFINITY,
-                ci_upper: f64::INFINITY,
-                relative_error: f64::INFINITY,
-                r0,
-            };
+        if n_samples == 0 {
+            return Err(N_ACT_NOT_ESTIMABLE_NO_SAMPLES.to_string());
+        }
+        if n_edges == 0 {
+            return Err(N_ACT_NOT_ESTIMABLE_NO_EDGES.to_string());
         }
 
         let n = n_samples as f64;
@@ -100,13 +109,13 @@ impl ChinEstimator {
         let ci_lower = n_act * (-rel_err).exp();
         let ci_upper = n_act * rel_err.exp();
 
-        ActivePopulationEstimate {
+        Ok(ActivePopulationEstimate {
             n_act,
             ci_lower,
             ci_upper,
             relative_error: rel_err,
             r0,
-        }
+        })
     }
 
     /// Tests whether cluster frequencies follow subcritical Borel branching process decay.
@@ -129,24 +138,24 @@ impl ChinEstimator {
         }
 
         let max_size = valid_sizes.iter().copied().max().unwrap_or(0);
-        let mut counts: HashMap<usize, usize> = HashMap::new();
+        // Sorted by size, as np.unique, so the regression sums run in the same order.
+        let mut counts: BTreeMap<usize, usize> = BTreeMap::new();
         for &s in &valid_sizes {
             *counts.entry(s).or_insert(0) += 1;
         }
 
         let mut x_vals = Vec::new();
         let mut y_vals = Vec::new();
-        let mut n_megaclusters = 0usize;
-
         for (&size, &cnt) in &counts {
-            if size > max_size_fit {
-                n_megaclusters += 1;
-            }
             if size <= max_size_fit {
                 x_vals.push(size as f64);
                 y_vals.push((cnt as f64).ln());
             }
         }
+
+        // Clusters (not distinct sizes) larger than the fit window, as
+        // Python's np.sum(sizes > max_size_fit).
+        let n_megaclusters = valid_sizes.iter().filter(|&&s| s > max_size_fit).count();
 
         let (slope, r_squared, p_value) = if x_vals.len() >= 3 {
             match linregress(&x_vals, &y_vals) {

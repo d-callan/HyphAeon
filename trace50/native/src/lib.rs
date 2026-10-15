@@ -9,6 +9,9 @@ use pyo3::prelude::*;
 
 mod cli;
 
+// Re-exported so integration tests can drive the CLI in-process.
+pub use cli::cli_main;
+
 /// `trace50` console-script entry point. `argv` includes the program name
 /// at index 0; returns a process exit code.
 #[pyfunction]

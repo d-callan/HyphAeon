@@ -330,8 +330,32 @@ impl DannoEstimator {
         let mut candidates = Vec::new();
 
         // Dynamic transmission envelope: d_crit = (d0 + 2 * mu * dt) * 1.5
-        // Approximation of 99th percentile of NegBin(r=1, p_trans)
-        let d0 = (3.0 / (self.seq_len as f64)).max(0.005);
+        // d0 = Q_trans(0.99) / L, the exact 99th percentile of the ancestral
+        // NegBin(r = 1, p_trans) divergence, matching the manuscript's
+        // d0 = Q_trans(0.99)/L and the Python reference implementation
+        // (stats.nbinom.ppf(0.99, r_trans, 1 - p_trans) / seq_len).
+        //
+        // With r_trans = 1 the marginal is Geometric on k = 0, 1, 2, ... with
+        // P(K <= k) = 1 - p_trans^(k + 1), so the quantile is closed-form:
+        //     Q(q) = ceil( ln(1 - q) / ln(p_trans) - 1 )
+        // Verified equal to scipy's nbinom.ppf(0.99, 1, 1 - p_trans) on all 54
+        // combinations of L in {240, 1000, 1023, 1032, 1568, 2841},
+        // mu in {1.5, 2.0, 3.5}e-3 and tau_bar in {0.05, 1.0, 3.0}.
+        //
+        // The previous value, (3/L).max(0.005), did not depend on mu or tau_bar
+        // and so could not approximate this percentile: at L = 1023 it gave
+        // 0.005 against the correct 0.020528, a 4x tighter envelope that
+        // admitted only near-identical pairs. On the 1,879-sequence DC cohort
+        // that left the prefilter and the clock-adequacy/FDR gates jointly
+        // unsatisfiable and the engine returned zero supported edges.
+        let d0 = if self.p_trans > 0.0 && self.p_trans < 1.0 {
+            let k99 = ((1.0_f64 - 0.99).ln() / self.p_trans.ln() - 1.0).ceil();
+            k99.max(0.0) / (self.seq_len as f64)
+        } else {
+            // p_trans = 0 (no ancestral divergence expected) or 1 (degenerate):
+            // fall back to a single-substitution envelope rather than 0 or inf.
+            1.0 / (self.seq_len as f64)
+        };
 
         for i in 0..n {
             let idx_i = indices[i];

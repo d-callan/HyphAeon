@@ -118,7 +118,11 @@ pub fn compute_bartlett_neff(d_sub: &[f64], n: usize, decay_param: f64) -> f64 {
     for i in 0..n {
         for j in 0..n {
             let dist = d_sub[i * n + j];
-            sum_c += (-decay_param * dist).exp();
+            // A pair without a distance (NaN: insufficient overlap, or absent
+            // from a supplied matrix) contributes no covariance.
+            if dist.is_finite() {
+                sum_c += (-decay_param * dist).exp();
+            }
         }
     }
 
@@ -209,19 +213,54 @@ pub fn fit_clock_community(
         .map(|(i, _)| i)
         .unwrap_or(0);
 
-    let root_dists: Vec<f64> = (0..n).map(|i| d_sub[earliest_local_idx * n + i]).collect();
+    // Root-to-tip regression over the members that have a distance to the
+    // root isolate; pairs without one (NaN) carry no information here.
+    let (reg_dates, root_dists): (Vec<f64>, Vec<f64>) = (0..n)
+        .map(|i| (sub_dates[i], d_sub[earliest_local_idx * n + i]))
+        .filter(|&(_, d)| d.is_finite())
+        .unzip();
+    let n_reg = reg_dates.len();
+
+    // No member carries a finite distance to the root isolate (e.g. every
+    // pair was below tn93's minimum overlap): the regression has no data.
+    if n_reg == 0 {
+        return SteveCommunity {
+            community_id: 0,
+            path: "".to_string(),
+            members: sub_idx.to_vec(),
+            size: n,
+            n_eff: n as f64,
+            mu: 0.0,
+            se_mu: 0.0,
+            ci_mu: [0.0, 0.0],
+            r_squared: 0.0,
+            rss: 0.0,
+            tot_var: 0.0,
+            aicc: AICC_UNIDENTIFIABLE,
+            tmrca: min_date,
+            ci_mrca: [min_date, min_date],
+            fieller_status: "REGRESSION_FAILED".to_string(),
+            mean_pairwise_dist: mean_d,
+            max_pairwise_dist: max_d,
+            d0: 0.0,
+            time_span_years: span,
+            is_active_outbreak: false,
+            operational_tier: "Indeterminate".to_string(),
+            stop_reason: "reg_failure".to_string(),
+        };
+    }
 
     // d_mean (OLS intercept d0 at t_mean) and tot_var are computed before
     // the degenerate-time bail so the ZERO_TIME_VAR leaf still reports the
     // real residual mass rather than zeroed placeholders.
-    let d_mean = root_dists.iter().sum::<f64>() / (n as f64);
+    let d_mean = root_dists.iter().sum::<f64>() / (n_reg as f64);
     let tot_var = root_dists
         .iter()
         .map(|&d| (d - d_mean).powi(2))
         .sum::<f64>();
 
-    let t_mean = sub_dates.iter().sum::<f64>() / (n as f64);
-    let s_tt = sub_dates.iter().map(|&t| (t - t_mean).powi(2)).sum::<f64>();
+    let t_mean = reg_dates.iter().sum::<f64>() / (n_reg as f64);
+    let s_tt = reg_dates.iter().map(|&t| (t - t_mean).powi(2)).sum::<f64>();
 
     // Python contract (fit_clock): a degenerate time axis (var_x < 1e-12)
     // cannot identify a rate — bail before regression with ZERO_TIME_VAR
@@ -253,7 +292,7 @@ pub fn fit_clock_community(
         };
     }
 
-    let lr = match linregress(&sub_dates, &root_dists) {
+    let lr = match linregress(&reg_dates, &root_dists) {
         Some(res) => res,
         None => {
             return SteveCommunity {
@@ -498,7 +537,12 @@ pub fn recursive_autoclock_deconvolution(
         for j in 0..n {
             if i != j {
                 let d = d_matrix[sub_idx[i] * n_total + sub_idx[j]];
-                let aff = (-d * d / (2.0 * sigma * sigma)).exp();
+                // No distance (NaN) means no affinity, not an undefined one.
+                let aff = if d.is_finite() {
+                    (-d * d / (2.0 * sigma * sigma)).exp()
+                } else {
+                    0.0
+                };
                 w[i * n + j] = aff;
                 degrees[i] += aff;
             }
