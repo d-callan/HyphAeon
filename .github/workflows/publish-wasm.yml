@@ -31,21 +31,8 @@ permissions:
 
 jobs:
   publish:
-    name: wasm release ${{ matrix.pkg }}
+    name: wasm release ${{ github.ref_name }}
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - pkg: rhizaeon-wasm
-            tag_prefix: rhizaeon-v
-            crate_dir: rust/rhizaeon/crates/rhizaeon-wasm
-          - pkg: trace50-wasm
-            tag_prefix: trace50-v
-            crate_dir: rust/trace-5.0/crates/trace50-wasm
-    # Each matrix leg fires on every tag push; only the leg matching the
-    # pushed tag does any work.
-    if: startsWith(github.ref, format('refs/tags/{0}', matrix.tag_prefix))
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -60,28 +47,35 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Resolve tag and assert version match
+      - name: Resolve tag -> package and assert version match
         id: pkg
-        env:
-          CRATE_DIR: ${{ matrix.crate_dir }}
         run: |
           TAG=${GITHUB_REF#refs/tags/}
           TAG_VERSION=${TAG##*-v}
+          case "$TAG" in
+            rhizaeon-v*) PKG=rhizaeon-wasm; CRATE_DIR=rust/rhizaeon/crates/rhizaeon-wasm ;;
+            trace50-v*)  PKG=trace50-wasm;  CRATE_DIR=rust/trace-5.0/crates/trace50-wasm ;;
+            *) echo "::error::Unrecognized tag '$TAG'"; exit 1 ;;
+          esac
           PKG_VERSION=$(grep -m1 '^version' "$CRATE_DIR/Cargo.toml" | sed 's/.*"\(.*\)".*/\1/')
           if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
-            echo "::error::Tag version '$TAG_VERSION' != wasm crate version '$PKG_VERSION' for ${{ matrix.pkg }} (versions are lockstep across pyproject/native/wasm)"
+            echo "::error::Tag version '$TAG_VERSION' != wasm crate version '$PKG_VERSION' for $PKG (versions are lockstep across pyproject/native/wasm)"
             exit 1
           fi
-          echo "tag_version=$TAG_VERSION" >> $GITHUB_OUTPUT
+          {
+            echo "pkg=$PKG"
+            echo "crate_dir=$CRATE_DIR"
+            echo "tag_version=$TAG_VERSION"
+          } >> "$GITHUB_OUTPUT"
       - name: Build wasm bundle (fresh, not the committed pkg)
-        run: wasm-pack build --target web --release "${{ matrix.crate_dir }}"
+        run: wasm-pack build --target web --release "${{ steps.pkg.outputs.crate_dir }}"
       - name: Smoke-test fresh bundle
-        working-directory: ${{ matrix.crate_dir }}
+        working-directory: ${{ steps.pkg.outputs.crate_dir }}
         run: node test_wasm.mjs
       - name: Package pkg/ as tarball
         run: |
-          ASSET="${{ matrix.pkg }}-${{ steps.pkg.outputs.tag_version }}-pkg.tar.gz"
-          tar -czf "$ASSET" -C "${{ matrix.crate_dir }}/pkg" .
+          ASSET="${{ steps.pkg.outputs.pkg }}-${{ steps.pkg.outputs.tag_version }}-pkg.tar.gz"
+          tar -czf "$ASSET" -C "${{ steps.pkg.outputs.crate_dir }}/pkg" .
           echo "asset=$ASSET" >> $GITHUB_ENV
       - name: Publish GitHub Release with pkg bundle
         env:
@@ -90,7 +84,7 @@ jobs:
         run: |
           TAG_VERSION=${TAG##*-v}
           cat > /tmp/release-notes.md <<EOF
-          wasm-pack bundle (\`--target web\`) for **${{ matrix.pkg }} ${TAG_VERSION}**,
+          wasm-pack bundle (\`--target web\`) for **${{ steps.pkg.outputs.pkg }} ${TAG_VERSION}**,
           built fresh from tag \`${TAG}\` (same tag as the PyPI release).
 
           Consumers (e.g. the GitHub Pages apps in veg/rhizaeon-code,
@@ -98,7 +92,7 @@ jobs:
 
           \`\`\`sh
           gh release download --repo ${{ github.repository }} ${TAG} \\
-            --pattern '${{ matrix.pkg }}-*-pkg.tar.gz' --output - | tar -xz -C docs/pkg
+            --pattern '${{ steps.pkg.outputs.pkg }}-*-pkg.tar.gz' --output - | tar -xz -C docs/pkg
           \`\`\`
 
           The bundle is verified by the crate's \`test_wasm.mjs\` smoke test
@@ -109,7 +103,7 @@ jobs:
           if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
-              --title "${{ matrix.pkg }} ${TAG_VERSION} wasm bundle" \
+              --title "${{ steps.pkg.outputs.pkg }} ${TAG_VERSION} wasm bundle" \
               --notes-file /tmp/release-notes.md
           fi
           gh release upload "$TAG" "$ASSET" --clobber --repo "${{ github.repository }}"

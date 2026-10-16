@@ -90,7 +90,7 @@ jobs:
   # tier-1 platforms; other users build from the repo with maturin.
 
   publish-native:
-    name: twine check + PyPI upload (native: ${{ needs.verify.outputs.dir }})
+    name: "twine check + PyPI upload (native: ${{ needs.verify.outputs.dir }})"
     needs: [verify, wheels]
     if: needs.verify.outputs.native == 'true'
     runs-on: ubuntu-latest
