@@ -13,7 +13,10 @@ use std::time::Instant;
 #[command(about = "Ultra-fast Physical Force Field (PA-FF v2.1) Recombination Engine", long_about = None)]
 struct Args {
     /// Path to input alignment FASTA file
-    #[arg(short, long)]
+    ///
+    /// `-f`/`--fasta` aliases keep parity with `trace50 -f/--fasta` so
+    /// muscle memory carries across the Aeon command-line tools.
+    #[arg(short, long, visible_short_alias = 'f', visible_alias = "fasta")]
     input: PathBuf,
 
     /// Optional path to write structured scan summary JSON
@@ -21,7 +24,10 @@ struct Args {
     output: Option<PathBuf>,
 
     /// Optional path to write rich visualization JSON dossier
-    #[arg(short, long)]
+    ///
+    /// Long flag only: a lowercase `-v` would squat on the conventional
+    /// verbose flag and invite misuse (`rhizaeon -v` expecting version).
+    #[arg(long)]
     viz: Option<PathBuf>,
 
     /// Optional path to write standalone interactive HTML dashboard
@@ -68,6 +74,14 @@ struct Args {
 /// console script still sees the same exit codes (0 help, 2 usage) as the
 /// standalone binary. Returns a process exit code.
 pub fn cli_main(argv: Vec<String>) -> i32 {
+    // Intercept --version/-V ahead of clap so the printed version is the
+    // PEP 440 form `pip show rhizaeon` reports (Cargo semver writes
+    // `0.1.0-beta.1`; PyPI normalizes it to `0.1.0b1`). Same
+    // short-circuit semantics as clap's built-in version flag.
+    if argv.iter().skip(1).any(|a| a == "--version" || a == "-V") {
+        println!("rhizaeon {}", pep440(env!("CARGO_PKG_VERSION")));
+        return 0;
+    }
     let args = match Args::try_parse_from(&argv) {
         Ok(a) => a,
         Err(e) => {
@@ -82,6 +96,25 @@ pub fn cli_main(argv: Vec<String>) -> i32 {
             1
         }
     }
+}
+
+/// Render a cargo semver string in PEP 440 form (the version `pip show`
+/// reports): `0.1.0-beta.1` -> `0.1.0b1`, `0.1.0-alpha.2` -> `0.1.0a2`,
+/// `0.1.0-rc.1` -> `0.1.0rc1`, `0.1.0-dev.3` -> `0.1.0.dev3`. Stable
+/// releases and unrecognized prerelease tags pass through unchanged.
+fn pep440(cargo_version: &str) -> String {
+    let (version, suffix) = match cargo_version.split_once('-') {
+        Some(pair) => pair,
+        None => return cargo_version.to_string(),
+    };
+    let normalized = match suffix.split_once('.') {
+        Some(("alpha", n)) => format!("a{}", n),
+        Some(("beta", n)) => format!("b{}", n),
+        Some(("rc", n)) => format!("rc{}", n),
+        Some(("dev", n)) => format!(".dev{}", n),
+        _ => format!("-{}", suffix),
+    };
+    format!("{}{}", version, normalized)
 }
 
 fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
