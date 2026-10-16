@@ -76,7 +76,7 @@ jobs:
         run: |
           ASSET="${{ steps.pkg.outputs.pkg }}-${{ steps.pkg.outputs.tag_version }}-pkg.tar.gz"
           tar -czf "$ASSET" -C "${{ steps.pkg.outputs.crate_dir }}/pkg" .
-          echo "asset=$ASSET" >> $GITHUB_ENV
+          echo "ASSET=$ASSET" >> $GITHUB_ENV
       - name: Publish GitHub Release with pkg bundle
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

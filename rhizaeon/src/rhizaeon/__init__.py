@@ -6,4 +6,4 @@ parser inside the extension — the CLI surface and output are identical to
 the former standalone Rust binary.
 """
 
-__version__ = "0.1.0b0"
+__version__ = "0.1.0b1"
