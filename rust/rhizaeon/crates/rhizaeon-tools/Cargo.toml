@@ -1,6 +1,6 @@
 [package]
 name = "rhizaeon-tools"
-version = "0.1.0"
+version = "0.1.0-beta"
 edition = "2021"
 authors = ["Sergei L. Kosakovsky Pond", "Antigravity AI Engine"]
 description = "Manuscript/benchmark helper binaries for RhizAeon PA-FF (v2.1) — unpublished dev tooling"
