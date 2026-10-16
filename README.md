@@ -34,8 +34,12 @@ shared Rust workspace:
 and `trace50` are Rust engines wrapped as Python packages (PyO3/maturin); their
 crates live in the `rust/` workspace alongside the shared `aeon-manifold` and
 `aeon-autoclock` libraries and the `*-wasm` browser bundles
-(`wasm-pack build --target web`). Example datasets are shared from the
-root `examples/` directory; chronaeon-specific examples live in `chronaeon/examples/`.
+(`wasm-pack build --target web`). Manuscript/benchmark helper binaries that
+consume engine internals (figure-data exporters, the grand_sweep simulation
+harness) live in the unpublished `rust/rhizaeon/crates/rhizaeon-tools` crate
+(`cargo run -p rhizaeon-tools --bin <name>`) — they are not part of the PyPI
+wheel. Example datasets are shared from the root `examples/` directory;
+chronaeon-specific examples live in `chronaeon/examples/`.
 
 ---
 
@@ -106,11 +110,16 @@ development environment from a fresh clone:
 pip install -e aeon-core -e hyphaeon -e chronaeon
 ```
 
-For the Rust-backed packages, install `maturin` + a Rust toolchain and build the
-extension in place (same commands work inside `rhizaeon/` and `trace50/`):
+For the Rust-backed packages, install `maturin` (`pip install maturin`) + a
+Rust toolchain (`rustup`) and build the extension in place from each package
+directory:
 
 ```bash
 cd aeon-core && maturin develop   # builds aeon_core._native
+cd rhizaeon  && maturin develop   # builds rhizaeon._native → `rhizaeon` CLI
+cd trace50   && maturin develop   # builds trace50._native → `trace50` CLI
+
+# Rust workspace (engines, wasm crates, unpublished rhizaeon-tools bins)
 cd rust && cargo build --workspace && cargo test --workspace
 ```
 
@@ -119,7 +128,8 @@ Run the test suite per-subpackage (each has its own `conftest.py` and `pyproject
 ```bash
 pytest chronaeon/tests/    # ChronAeon tests
 pytest hyphaeon/tests/     # HyphAeon tests
-node rust/trace-5.0/crates/trace50-wasm/test_wasm.mjs   # wasm engine verification
+node rust/rhizaeon/crates/rhizaeon-wasm/test_wasm.mjs  # rhizaeon wasm engine verification
+node rust/trace-5.0/crates/trace50-wasm/test_wasm.mjs  # trace50 wasm engine verification
 ```
 
 > [!NOTE]
