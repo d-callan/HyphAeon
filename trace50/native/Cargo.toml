@@ -7,7 +7,9 @@ workspace = "../../rust"
 
 [lib]
 name = "trace50_native"
-crate-type = ["cdylib"]
+# rlib lets integration tests exercise cli_main in-process; the cdylib
+# remains the Python extension artifact.
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 trace50 = { workspace = true }

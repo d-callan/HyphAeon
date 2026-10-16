@@ -71,6 +71,9 @@ pub struct Cluster {
 }
 
 /// Analyzes connected components from an edge list.
+///
+/// Returns the clusters (components of size >= 2), the per-node cluster id (0 for
+/// unclustered nodes) and the largest cluster size (0 when there are no edges).
 pub fn extract_clusters(
     n_nodes: usize,
     edges: &[(usize, usize, f64)],
@@ -99,11 +102,14 @@ pub fn extract_clusters(
 
     for (_, members) in sorted_comps {
         let size = members.len();
-        if size > max_cluster_size {
-            max_cluster_size = size;
-        }
 
+        // A singleton is not a cluster: max_cluster_size counts only components of
+        // size >= 2 (as run_danno's components() over the edge list), so an edgeless
+        // network has max_cluster_size 0, not 1.
         if size >= 2 {
+            if size > max_cluster_size {
+                max_cluster_size = size;
+            }
             for &m in &members {
                 cluster_assignments[m] = cluster_id;
             }

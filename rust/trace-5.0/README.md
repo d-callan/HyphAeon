@@ -258,6 +258,35 @@ cd crates/trace50-wasm && node test_wasm.mjs
 cd .. && ./scripts/compare_cli_baseline.sh
 ```
 
+### Python parity harness
+
+The Python engine has been retired, but its validated behaviour is kept as
+golden files, so the Rust engine stays pinned to it:
+
+```bash
+cargo test --release -p trace50 --test test_parity_golden -- --nocapture
+```
+
+`test_parity_golden` compares the engine with golden files in
+`crates/trace50/tests/fixtures/parity/`. The cohort is a fixed
+200-sequence subset of the Washington, DC alignment. The golden files were
+produced by `tn93 -t 1.0 -a RMYSKB`, by `validation/run_danno.py` (the Python
+reference) on those distances, by `hivnetworkcsv -t 0.015` and by
+`trace50.chin`.
+
+The test asserts that the following match: the TN93 pair set and distances,
+L, the background calibration, the supported-edge set with BF/PEP/q, the
+cluster and static partitions, and the CHIN values. It checks both the
+internal-TN93 path and the precomputed-distance path, and it runs without
+Python or tn93.
+
+To regenerate the golden files, run `python3 scripts/regen_parity_golden.py`.
+Add `--select` to re-derive the subset from the full DC alignment. This needs
+the retired Python package: set `TRACE50_PY_ORACLE` to a directory containing
+`trace50/`, for example from `git archive 8d5ed64 trace50 | tar -x` in the
+upstream repo. The fixture README records the selection rule, the commands
+and the tool versions.
+
 ---
 
 ## 8. Citation

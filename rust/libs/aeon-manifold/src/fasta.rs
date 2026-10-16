@@ -29,6 +29,10 @@ pub enum ParseMode {
 pub struct FastaRecord {
     /// First whitespace token of the header; `""` when the header is bare `>`.
     pub name: String,
+    /// The full defline (everything after `>`, trimmed). Engines that parse
+    /// metadata such as collection dates from the whole header (e.g. trace50's
+    /// run_danno-style date rules) need this, not just `name`.
+    pub defline: String,
     /// Uppercase ASCII sequence bytes, whitespace stripped.
     pub seq: Vec<u8>,
 }
@@ -50,9 +54,11 @@ pub fn tokenize_fasta(input: &str) -> Result<Vec<FastaRecord>, String> {
             if let Some(rec) = current.take() {
                 records.push(rec);
             }
-            let name = rest.split_whitespace().next().unwrap_or("").to_string();
+            let defline = rest.trim().to_string();
+            let name = defline.split_whitespace().next().unwrap_or("").to_string();
             current = Some(FastaRecord {
                 name,
+                defline,
                 seq: Vec::new(),
             });
         } else if let Some(rec) = current.as_mut() {

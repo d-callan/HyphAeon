@@ -32,14 +32,18 @@ async function run() {
 
     // Test 1: TN93 Genetic Distance
     console.log("[TEST 1] Tamura-Nei 93 (TN93) Pairwise Distance");
-    const s1 = "ACGTACGTACGTACGTACGTACGT";
-    const s2 = "GCGTACGTACGTACGTACGTACGT"; // 1 purine transition in 24 bp
+    // tn93 omits pairs sharing <= 100 sites, so the test pair is 120 bp.
+    // Expected value from `tn93 -t 1.0 -a RMYSKB` (v1.1.0) on the same pair.
+    const s1 = "ACGT".repeat(30);
+    const s2 = "G" + s1.slice(1); // 1 purine transition in 120 bp
     const dist1 = compute_tn93(s1, s1);
     const dist2 = compute_tn93(s1, s2);
+    const distShort = compute_tn93("ACGTACGTACGTACGTACGTACGT", "GCGTACGTACGTACGTACGTACGT");
     console.log(`  Identical distance: ${dist1}`);
-    console.log(`  1 transition / 24 bp distance: ${dist2.toFixed(5)}`);
-    if (dist1 === 0.0 && dist2 > 0.0 && dist2 < 0.1) {
-        console.log("  >>> PASS: TN93 analytical calculation verified!");
+    console.log(`  1 transition / 120 bp distance: ${dist2.toFixed(8)} (tn93: 0.00847543)`);
+    console.log(`  24 bp overlap (below tn93 minimum): ${distShort}`);
+    if (dist1 === 0.0 && Math.abs(dist2 - 0.00847543) <= 5e-7 && Number.isNaN(distShort)) {
+        console.log("  >>> PASS: TN93 matches the tn93 binary");
     } else {
         console.error("  >>> FAIL: Unexpected TN93 distance");
         process.exit(1);
@@ -78,19 +82,16 @@ async function run() {
 
     // Test 4: End-to-End Pipeline returning full JSON Dossier
     console.log("[TEST 4] End-to-End Pipeline returning Full Visualization Dossier JSON");
-    const sampleFasta = `>seqA_2015.0
-ACGTACGTACGTACGTACGTACGTACGTACGT
->seqB_2015.2
-ACGTACGTACGTACGTACGTACGTACGTACGT
->seqC_2015.4
-ACGTACGTACGTACGTACGTACGTACGTACGA
->seqD_2018.0
-TGCATGCATGCATGCATGCATGCATGCATGCA
->seqE_2018.2
-TGCATGCATGCATGCATGCATGCATGCATGCT
->seqF_2018.4
-TGCATGCATGCATGCATGCATGCATGCATGCT
-`;
+    // 128 bp per sequence: tn93 omits pairs sharing <= 100 sites.
+    const A = "ACGT".repeat(32), D = "TGCA".repeat(32);
+    const sampleFasta = [
+        [">seqA_2015.0", A],
+        [">seqB_2015.2", A],
+        [">seqC_2015.4", A.slice(0, -1) + "A"],
+        [">seqD_2018.0", D],
+        [">seqE_2018.2", D.slice(0, -1) + "T"],
+        [">seqF_2018.4", D.slice(0, -1) + "T"],
+    ].map(r => r.join("\n")).join("\n") + "\n";
 
     const config = {
         mu: 2.0e-3,
@@ -113,7 +114,8 @@ TGCATGCATGCATGCATGCATGCATGCATGCT
     console.log(`  Supported transmission edges: ${dossier.kpi.supported_transmission_edges || dossier.kpi.certified_transmission_edges}`);
     console.log(`  Static network giant component: ${dossier.kpi.static_network.max_cluster_size}`);
     console.log(`  DANNO transmission clusters: ${dossier.kpi.danno_network.total_clusters}`);
-    console.log(`  Active transmitting pool N_act: ${dossier.kpi.inferred_active_transmitting_pool.toFixed(1)}`);
+    const nAct = dossier.kpi.inferred_active_transmitting_pool;
+    console.log(`  Active transmitting pool N_act: ${nAct === null ? dossier.kpi.inferred_active_pool_status : nAct.toFixed(1)}`);
     console.log(`  Resolved STEVE communities: ${dossier.communities.length}`);
     console.log(`  Phase space points: ${dossier.phase_space_points.length}`);
 
@@ -166,8 +168,9 @@ TGCATGCATGCATGCATGCATGCATGCATGCT
 
     // Test 7: Info-DANNO Information-Theoretic Transmission Odds
     console.log("[TEST 7] Info-DANNO Information-Theoretic Transmission Odds Score");
-    const seqAcute1 = "ACGTACGTACGTACGTACGTACGTACGTACGT";
-    const seqAcute2 = "ACGTACGTACGTACGTACGTACGTACGTACGA"; // 1 difference
+    // 128 bp: tn93 omits pairs sharing <= 100 sites (the score is then NaN).
+    const seqAcute1 = "ACGT".repeat(32);
+    const seqAcute2 = seqAcute1.slice(0, -1) + "A"; // 1 difference
     const infoScore = compute_info_danno_score(seqAcute1, seqAcute2, 0.1, 2.0e-3);
     console.log(`  Info-DANNO log-odds score (nats): ${infoScore.toFixed(3)}`);
     if (infoScore > 0.0) {

@@ -31,7 +31,9 @@ struct ConformanceDump {
     // JSON cannot represent NaN; unparseable dates serialize as null.
     dates: Vec<Option<f64>>,
     n: usize,
-    distance_matrix_flat: Vec<f64>,
+    // JSON cannot represent NaN; unscored pairs serialize as null.
+    distance_matrix_flat: Vec<Option<f64>>,
+    num_undated: usize,
     communities: Vec<CommunityOut>,
 }
 
@@ -60,25 +62,26 @@ fn main() {
 
     // Mirror the pipeline invocation: min_cluster_size and max_recursion_depth
     // use the pipeline defaults; conductance cut 0.65 as in pipeline.rs.
-    let all_indices: Vec<usize> = (0..n).collect();
+    // AutoClock runs on the dated subset only (undated sequences are excluded,
+    // not imputed); member indices map back to the alignment.
     let dates_raw: Vec<f64> = dates.iter().map(|d| d.unwrap_or(f64::NAN)).collect();
+    let dated: Vec<usize> = (0..n).filter(|&i| dates_raw[i].is_finite()).collect();
     let communities = recursive_autoclock_deconvolution(
-        &all_indices,
-        &dates_raw,
-        &d_matrix,
-        n,
-        3,  // min_cluster_size (pipeline default)
+        &dated, &dates_raw, &d_matrix, n, 3,  // min_cluster_size (pipeline default)
         10, // max_recursion_depth (pipeline default)
         0,  // depth
-        "root",
-        0.65, // conductance_cut (pipeline value)
+        "root", 0.65, // conductance_cut (pipeline value)
     );
 
     let dump = ConformanceDump {
         names: aln.headers.clone(),
         dates,
         n,
-        distance_matrix_flat: d_matrix,
+        distance_matrix_flat: d_matrix
+            .iter()
+            .map(|&d| if d.is_nan() { None } else { Some(d) })
+            .collect(),
+        num_undated: n - dated.len(),
         communities: communities
             .iter()
             .map(|c| CommunityOut {

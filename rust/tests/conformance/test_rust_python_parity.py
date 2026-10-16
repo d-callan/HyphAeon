@@ -14,18 +14,38 @@ criteria) each engine's current output is pinned as a golden so any drift —
 intentional or accidental — fails loudly during the Phase-2 refactor.
 
 Known intentional divergences (audited, NOT parity bugs — do not "fix"):
-  * Saturation ceilings and decimal-year regex coverage differ between the
-    Rust and Python TN93/date kernels.
+  * Date header conventions: Rust scans delimited tokens left-to-right and
+    the FIRST in-range token wins (any-precision decimal years accepted);
+    Python `parse_header_timestamp` prefers ISO/decimal regexes, requires
+    2-4 fractional digits, and adds domain formats the Rust kernel
+    deliberately lacks (Korber LANL strain names, ZR59 anchor, intra-host
+    WPI). Fractional-year conventions also differ: (month-1)/12 +
+    (day-1)/365.25 vs day-of-year (~4e-3 apart on ISO dates).
+  * `chronaeon.r0.extract_dates_from_fasta` resolves each token with the
+    canonical kernel but selects the LAST resolvable token: r0's domain is
+    Nextstrain-style headers (strain-designation year first, sampling date
+    last), where first-wins collapses every date to the designation year.
+  * trace50's pipeline now NEVER imputes dates: NaN-header sequences are
+    excluded from DANNO/network/AutoClock/CHIN (same drop semantics as
+    chronaeon and run_danno.py).
+  * trace50's TN93 is a port of the `tn93` binary (`-t 1.0 -l 100 -a
+    RMYSKB`): pairs sharing <= 100 non-gap sites or with d > 1.0
+    (incl. saturation) are NOT reported and serialize as null in the
+    driver dump. The Python side still uses its own kernel, which
+    reports a finite estimate for every pair.
+  * Rust dates now follow run_danno.py's rules (DC headers, `_YYYY[.NN]`,
+    `|` fields) on the WHOLE defline, with midpoint conventions: a bare
+    year is y + 0.5, a month is mid-month, a day is (doy - 0.5)/days.
 
 AUTOCLOCK UNIFICATION (Phase A, canonical = Rust per Sergei 2026-10-13):
   chronaeon's fit_clock / recursive_spectral_autoclock delegate to
-  aeon_core._native -> aeon-autoclock whenever the extension is
-  importable, so both engines emit the same partitions and fit
-  statistics. The historical divergences (Bartlett n_eff df penalty vs
-  n - 2, relative- vs fixed-horizon tier taxonomies, n < 3 leaf field
-  zeroing, and the Welch-z cohesive stop vs the modularity/conductance
-  gate) survive only in the pure-Python fallback used when the extension
-  is absent — those paths are legacy, not canonical.
+  aeon_core._native -> aeon-autoclock, so both engines emit the same
+  partitions and fit statistics. The historical divergences (Bartlett
+  n_eff df penalty vs n - 2, relative- vs fixed-horizon tier taxonomies,
+  n < 3 leaf field zeroing, and the Welch-z cohesive stop vs the
+  modularity/conductance gate) lived only in the pure-Python fallback
+  bodies, which were deleted in feat/phase2-dedup — _native is
+  hard-required and those paths no longer exist.
 """
 
 import json
@@ -101,9 +121,10 @@ def test_tn93_matrix_parity(fasta, tmp_path):
 
     py_mat = compute_tn93_distance_matrix(seq_dict, names)
     n = rust["n"]
-    rust_mat = np.array(rust["distance_matrix_flat"]).reshape(n, n)
+    # tn93-binary contract: unscored pairs serialize as null -> NaN.
+    rust_mat = np.array(rust["distance_matrix_flat"], dtype=float).reshape(n, n)
 
-    mask = py_mat >= 0
+    mask = (py_mat >= 0) & np.isfinite(rust_mat)
     assert mask.all(), "python TN93 left unresolved pairs on fixture"
 
     # Close pairs (d <= 2%): engines agree to within float32 quantization
@@ -114,11 +135,11 @@ def test_tn93_matrix_parity(fasta, tmp_path):
         err_msg=f"TN93 close-pair parity failed on {fasta.name}",
     )
 
-    # Moderately divergent pairs: observed gap is 1.01e-4 rel (outbreak,
-    # d~0.07) and 3.56e-4 rel (hcv, d~0.35) between the Rust closed-form
-    # estimator and the Python tn93 package. Pin with headroom; growth is a
-    # regression.
-    divergent = mask & ~close & (py_mat < 1.0)
+    # Moderately divergent pairs: both engines share the aeon-manifold
+    # kernel now; residual diff is the conformance driver's float32 JSON
+    # serialization of the Rust matrix. rtol=5e-4 is pure headroom —
+    # growth is a regression.
+    divergent = mask & ~close & (py_mat < 1.0) & (rust_mat <= 1.0)
     if divergent.any():
         np.testing.assert_allclose(
             rust_mat[divergent], py_mat[divergent], rtol=5e-4, atol=1e-6,
@@ -126,27 +147,21 @@ def test_tn93_matrix_parity(fasta, tmp_path):
         )
 
 
-def test_tn93_saturation_unified(tmp_path):
-    """W9: both engines now return the canonical Rust finite estimate.
+def test_tn93_unreportable_pairs_are_null(tmp_path):
+    """PR7: pairs tn93 would not report serialize as null, not a number.
 
-    Pre-W9 the Python `tn93` package capped unresolvable distances at its
-    1.0 ceiling while the Rust closed-form estimator returned d=0.7535 for
-    this MASE pair. With Python delegating to aeon_core._native, the divergence is
-    gone — both sides must agree on the finite estimator.
+    pair_test.fasta's two sequences share far fewer than tn93's 100-site
+    minimum overlap (and are too divergent anyway), so the ported kernel
+    reports no distance: the dump has null. The Python side keeps its own
+    kernel and returns a finite estimate (~0.7535); this is an INTENTIONAL
+    post-PR7 divergence — trace50 distances must equal the tn93 binary.
     """
-    from aeon_core.dataset import compute_tn93_distance_matrix
-
     rust = _run_driver(PAIR_TEST, tmp_path)
-    names, seqs = _read_fasta(PAIR_TEST)
-    py_mat = compute_tn93_distance_matrix(dict(zip(names, seqs)), names)
     n = rust["n"]
-    rust_mat = np.array(rust["distance_matrix_flat"]).reshape(n, n)
+    rust_mat = np.array(rust["distance_matrix_flat"], dtype=float).reshape(n, n)
 
-    assert abs(rust_mat[0, 1] - 0.753507) < 1e-5, (
-        f"rust saturated-pair estimate drifted: {rust_mat[0, 1]}"
-    )
-    assert abs(float(py_mat[0, 1]) - rust_mat[0, 1]) < 1e-6, (
-        f"python no longer unified with rust kernel: {py_mat[0, 1]}"
+    assert np.isnan(rust_mat[0, 1]) and np.isnan(rust_mat[1, 0]), (
+        f"rust must report no distance for low-overlap pairs: {rust_mat[0, 1]}"
     )
 
 
@@ -187,36 +202,38 @@ def test_tn93_unresolvable_pairs_imputed():
 # regexes over bare year tokens and requires 2-4 fractional digits for
 # decimal years.
 EXPECTED_DATES_OUTBREAK = {
-    # Python rejects single-decimal-place years (\d{4}\.\d{2,4} pattern);
-    # Rust's float-token scan accepts them. All Python values are NaN here,
-    # and Rust takes the accession year (first token), not the |suffix.
-    "USA_2015_01|2015.0": (2015.0, None),
-    "USA_2015_02|2015.5": (2015.0, None),
-    "USA_2016_03|2016.2": (2016.0, None),
-    "USA_2016_04|2016.8": (2016.0, None),
-    "USA_2017_05|2017.3": (2017.0, None),
-    "RE-ACCESSION_2013|2013.2": (2013.0, None),
-    "RE-ACCESSION_2017|2017.2": (2017.0, None),
+    # Rust (PR7, run_danno rules): `_YYYY` mid-string -> year midpoint y+0.5
+    # when the next char is `_`/whitespace/end; `|field` decimals in
+    # 1950-2035 are taken literally. `_2015_01` gives 2015.5 (year only);
+    # `RE-ACCESSION_2013` is not a boundary match (next char is `|`), so
+    # the `|2013.2` field wins. Python rejects every header here.
+    "USA_2015_01|2015.0": (2015.5, None),
+    "USA_2015_02|2015.5": (2015.5, None),
+    "USA_2016_03|2016.2": (2016.5, None),
+    "USA_2016_04|2016.8": (2016.5, None),
+    "USA_2017_05|2017.3": (2017.5, None),
+    "RE-ACCESSION_2013|2013.2": (2013.2, None),
+    "RE-ACCESSION_2017|2017.2": (2017.2, None),
     "PASSENGER_BRIDGE|2015.8": (2015.8, None),  # no earlier year token
-    "DYAD_2016_A|2016.1": (2016.0, None),
-    "DYAD_2016_B|2016.7": (2016.0, None),
+    "DYAD_2016_A|2016.1": (2016.5, None),
+    "DYAD_2016_B|2016.7": (2016.5, None),
 }
 
 EXPECTED_DATES_HCV = {
-    # Pure ISO suffix with no earlier year token: both engines parse it.
-    # Rust uses (month-1)/12 + (day-1)/365.25; Python uses day-of-year —
-    # same date, different fractional-year convention (~4e-3 apart).
-    "HCV_PWID_01|2017-03-15": (2017.2049965776866, 2017.2),
-    "HCV_PWID_02|2017-10-20": (2017.8020191649555, 2017.8),
-    "HCV_PWID_03|2018-05-12": (2018.3634496919917, 2018.358904109589),
-    "HCV_PWID_04|2019-02-18": (2019.1298767967146, 2019.131506849315),
-    # First-token-wins divergence: Rust takes the embedded '2015'/'2019'
-    # before reaching the ISO date; Python prefers the ISO date.
-    "HCV_REPEAT_2015|2015-01-10": (2015.0, 2015.0246575342467),
-    "HCV_REPEAT_2019|2019-01-10": (2019.0, 2019.0246575342467),
-    "HCV_DYAD_A|2018-02-14": (2018.118925393566, 2018.1205479452055),
-    "HCV_DYAD_B|2018-08-22": (2018.640828199863, 2018.6383561643836),
-    "HCV_COMMUNITY_CTRL|2017-06-30": (2017.4960643394936, 2017.4931506849316),
+    # Both engines parse the ISO `|` field. Rust now uses run_danno's
+    # day midpoint (doy - 0.5)/365; Python uses day-of-year — same date,
+    # slightly different convention (~1.4e-3 apart). The REPEAT headers'
+    # `_2015|` / `_2019|` are not boundary matches, so the ISO field wins
+    # on the Rust side now too.
+    "HCV_PWID_01|2017-03-15": (2017.2013698630137, 2017.2),
+    "HCV_PWID_02|2017-10-20": (2017.8013698630136, 2017.8),
+    "HCV_PWID_03|2018-05-12": (2018.3602739726027, 2018.358904109589),
+    "HCV_PWID_04|2019-02-18": (2019.1328767123289, 2019.131506849315),
+    "HCV_REPEAT_2015|2015-01-10": (2015.0260273972603, 2015.0246575342467),
+    "HCV_REPEAT_2019|2019-01-10": (2019.0260273972603, 2019.0246575342467),
+    "HCV_DYAD_A|2018-02-14": (2018.1219178082192, 2018.1205479452055),
+    "HCV_DYAD_B|2018-08-22": (2018.6397260273973, 2018.6383561643836),
+    "HCV_COMMUNITY_CTRL|2017-06-30": (2017.4945205479453, 2017.4931506849316),
 }
 
 
@@ -373,7 +390,7 @@ def test_autoclock_partition_unified(tmp_path):
 
     rust = _run_driver(DEMO_OUTBREAK, tmp_path)
     n = rust["n"]
-    d_mat = np.array(rust["distance_matrix_flat"]).reshape(n, n)
+    d_mat = np.array(rust["distance_matrix_flat"], dtype=float).reshape(n, n)
     dates = np.array([d if d is not None else np.nan for d in rust["dates"]])
 
     rust_part = frozenset(frozenset(c["members"]) for c in rust["communities"])

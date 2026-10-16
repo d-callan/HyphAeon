@@ -226,12 +226,13 @@ impl DannoEstimator {
         let k = k.max(0.0);
         let delta_t = delta_t.max(0.0);
 
-        // 1. Triangular temporal density for difference of two uniform arrivals on [0, T_span]
-        let p_delta_t = if delta_t < self.t_span {
-            ((2.0 / self.t_span) * (1.0 - delta_t / self.t_span)).max(1e-6 / self.t_span)
-        } else {
-            1e-6 / self.t_span
-        };
+        // 1. Triangular temporal density for difference of two uniform arrivals on [0, T_span],
+        // floored at dt_b = max(0.5 * T_span, T_span - omega) so finite-sample range extremes
+        // (delta_t -> T_span) cannot drive the null density to zero or invert BF monotonicity.
+        let dt_b = (self.t_span - self.omega).max(0.5 * self.t_span);
+        let dt_eff = delta_t.min(dt_b);
+        let p_delta_t =
+            ((2.0 / self.t_span) * (1.0 - dt_eff / self.t_span)).max(1e-6 / self.t_span);
 
         // 2. Continuous Negative Binomial background genetic likelihood
         let p_scipy = 1.0 - self.p_bg;
@@ -330,8 +331,32 @@ impl DannoEstimator {
         let mut candidates = Vec::new();
 
         // Dynamic transmission envelope: d_crit = (d0 + 2 * mu * dt) * 1.5
-        // Approximation of 99th percentile of NegBin(r=1, p_trans)
-        let d0 = (3.0 / (self.seq_len as f64)).max(0.005);
+        // d0 = Q_trans(0.99) / L, the exact 99th percentile of the ancestral
+        // NegBin(r = 1, p_trans) divergence, matching the manuscript's
+        // d0 = Q_trans(0.99)/L and the Python reference implementation
+        // (stats.nbinom.ppf(0.99, r_trans, 1 - p_trans) / seq_len).
+        //
+        // With r_trans = 1 the marginal is Geometric on k = 0, 1, 2, ... with
+        // P(K <= k) = 1 - p_trans^(k + 1), so the quantile is closed-form:
+        //     Q(q) = ceil( ln(1 - q) / ln(p_trans) - 1 )
+        // Verified equal to scipy's nbinom.ppf(0.99, 1, 1 - p_trans) on all 54
+        // combinations of L in {240, 1000, 1023, 1032, 1568, 2841},
+        // mu in {1.5, 2.0, 3.5}e-3 and tau_bar in {0.05, 1.0, 3.0}.
+        //
+        // The previous value, (3/L).max(0.005), did not depend on mu or tau_bar
+        // and so could not approximate this percentile: at L = 1023 it gave
+        // 0.005 against the correct 0.020528, a 4x tighter envelope that
+        // admitted only near-identical pairs. On the 1,879-sequence DC cohort
+        // that left the prefilter and the clock-adequacy/FDR gates jointly
+        // unsatisfiable and the engine returned zero supported edges.
+        let d0 = if self.p_trans > 0.0 && self.p_trans < 1.0 {
+            let k99 = ((1.0_f64 - 0.99).ln() / self.p_trans.ln() - 1.0).ceil();
+            k99.max(0.0) / (self.seq_len as f64)
+        } else {
+            // p_trans = 0 (no ancestral divergence expected) or 1 (degenerate):
+            // fall back to a single-substitution envelope rather than 0 or inf.
+            1.0 / (self.seq_len as f64)
+        };
 
         for i in 0..n {
             let idx_i = indices[i];
@@ -458,5 +483,39 @@ mod tests {
         // Clock violation: d = 0.0, delta_t = 5.0 years => BF = 0.0
         let bf_viol = danno.compute_bayes_factor(0.0, 5.0);
         assert_eq!(bf_viol, 0.0);
+    }
+
+    #[test]
+    fn test_danno_boundary_monotonicity() {
+        // Verify BF is monotonically non-increasing across [0.30, t_span] at d=0.002
+        // and across [0.05, t_span] at d=0.0, with zero boundary spike at delta_t == t_span.
+        let danno = DannoEstimator::new(1000, 2e-3, 1.0, 2.0, 2.30, 0.05, 0.065, 0.0004);
+        let dt_grid_0 = [0.05, 0.25, 0.50, 1.00, 1.40, 2.29, 2.30, 2.50];
+        let bfs_0: Vec<f64> = dt_grid_0
+            .iter()
+            .map(|&dt| danno.compute_bayes_factor(0.0, dt))
+            .collect();
+        for w in bfs_0.windows(2) {
+            assert!(
+                w[0] >= w[1],
+                "BF(d=0) increased with delta_t: {} < {}",
+                w[0],
+                w[1]
+            );
+        }
+
+        let dt_grid = [1.15, 1.50, 2.00, 2.29, 2.30, 2.50];
+        let bfs: Vec<f64> = dt_grid
+            .iter()
+            .map(|&dt| danno.compute_bayes_factor(0.002, dt))
+            .collect();
+        for w in bfs.windows(2) {
+            assert!(
+                w[0] >= w[1],
+                "BF(d=0.002) increased with delta_t: {} < {}",
+                w[0],
+                w[1]
+            );
+        }
     }
 }
