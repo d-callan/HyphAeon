@@ -533,7 +533,7 @@ checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 
 [[package]]
 name = "trace50"
-version = "5.0.0"
+version = "5.0.0-beta.1"
 dependencies = [
  "aeon-autoclock",
  "aeon-manifold",
@@ -543,7 +543,7 @@ dependencies = [
 
 [[package]]
 name = "trace50-native"
-version = "5.0.0"
+version = "5.0.0-beta.1"
 dependencies = [
  "clap",
  "pyo3",
@@ -553,7 +553,7 @@ dependencies = [
 
 [[package]]
 name = "trace50-wasm"
-version = "5.0.0"
+version = "5.0.0-beta.1"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",

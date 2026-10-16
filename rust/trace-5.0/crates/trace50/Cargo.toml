@@ -1,6 +1,6 @@
 [package]
 name = "trace50"
-version = "5.0.0"
+version = "5.0.0-beta.1"
 edition = "2021"
 authors = ["Sergei L. Kosakovsky Pond", "Antigravity AI Engine"]
 description = "High-performance algorithmic kernel for TRACE-5.0: Dynamic Molecular Surveillance of Viral Transmission Networks"
