@@ -22,8 +22,8 @@ jobs:
       tag_version: ${{ steps.pkg.outputs.tag_version }}
       native: ${{ steps.pkg.outputs.native }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Determine package from tag
@@ -72,7 +72,7 @@ jobs:
         platform: [ubuntu-latest, ubuntu-24.04-arm, macos-15-intel, macos-latest, windows-latest]
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: PyO3/maturin-action@v1
         with:
           working-directory: ${{ needs.verify.outputs.dir }}
@@ -95,7 +95,7 @@ jobs:
     if: needs.verify.outputs.native == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Download all artifacts
@@ -123,8 +123,8 @@ jobs:
     if: needs.verify.outputs.native == 'false'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Build and check distribution
