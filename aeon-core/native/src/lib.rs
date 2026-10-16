@@ -68,7 +68,11 @@ fn fasta_normalize_lengths(
     };
     let mut recs: Vec<FastaRecord> = records
         .into_iter()
-        .map(|(name, seq)| FastaRecord { name, seq })
+        .map(|(name, seq)| FastaRecord {
+            defline: name.clone(),
+            name,
+            seq,
+        })
         .collect();
     let len = normalize_lengths(&mut recs, parsed).map_err(PyValueError::new_err)?;
     Ok((recs.into_iter().map(|r| (r.name, r.seq)).collect(), len))

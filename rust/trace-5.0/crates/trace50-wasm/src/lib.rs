@@ -3,10 +3,10 @@
 //! Exposes the complete molecular transmission network surveillance engine
 //! directly to Web browsers, Observable Framework, D3.js dashboards, and Node.js.
 
-use trace50::tn93::char_to_iupac_mask;
+use trace50::tn93::char_to_tn93_code;
 use trace50::{
     compute_pairwise_tn93, run_trace50, run_trace50_json, run_trace50_json_with_progress,
-    Alignment, DannoEstimator, Trace50Config,
+    Alignment, AmbiguityMode, DannoEstimator, Trace50Config,
 };
 use wasm_bindgen::prelude::*;
 
@@ -23,12 +23,14 @@ pub fn version() -> String {
 }
 
 /// Calculates the analytical Tamura-Nei 93 (TN93) pairwise genetic distance
-/// between two nucleotide sequences with IUPAC ambiguity resolution.
+/// between two nucleotide sequences, as `tn93 -t 1.0 -a RMYSKB`.
+/// Returns NaN when the sequences share 100 or fewer non-gap sites or the
+/// distance exceeds 1.0 (pairs tn93 would not report).
 #[wasm_bindgen]
 pub fn compute_tn93(seq_a: &str, seq_b: &str) -> f64 {
-    let bits_a: Vec<u8> = seq_a.bytes().map(char_to_iupac_mask).collect();
-    let bits_b: Vec<u8> = seq_b.bytes().map(char_to_iupac_mask).collect();
-    compute_pairwise_tn93(&bits_a, &bits_b)
+    let codes_a: Vec<u8> = seq_a.bytes().map(char_to_tn93_code).collect();
+    let codes_b: Vec<u8> = seq_b.bytes().map(char_to_tn93_code).collect();
+    compute_pairwise_tn93(&codes_a, &codes_b, &AmbiguityMode::default())
 }
 
 /// Evaluates the continuous DANNO Bayes Factor for a candidate transmission dyad.
@@ -143,9 +145,13 @@ pub fn run_chin_bayesian_mcmc(
 /// comparing two sequences against an alignment background.
 #[wasm_bindgen]
 pub fn compute_info_danno_score(seq_a: &str, seq_b: &str, delta_t: f64, mu: f64) -> f64 {
-    let bits_a: Vec<u8> = seq_a.bytes().map(char_to_iupac_mask).collect();
-    let bits_b: Vec<u8> = seq_b.bytes().map(char_to_iupac_mask).collect();
-    let dist = compute_pairwise_tn93(&bits_a, &bits_b);
+    let codes_a: Vec<u8> = seq_a.bytes().map(char_to_tn93_code).collect();
+    let codes_b: Vec<u8> = seq_b.bytes().map(char_to_tn93_code).collect();
+    let dist = compute_pairwise_tn93(&codes_a, &codes_b, &AmbiguityMode::default());
+    if !dist.is_finite() {
+        // No reportable TN93 distance (tn93 minimum overlap or d > 1).
+        return f64::NAN;
+    }
     let l = seq_a.len().min(seq_b.len());
     let danno = DannoEstimator::new(l, mu, 1.0, 2.0, 20.0, 0.05, 0.065, 0.0004);
     let base_bf = danno.compute_bayes_factor(dist, delta_t);

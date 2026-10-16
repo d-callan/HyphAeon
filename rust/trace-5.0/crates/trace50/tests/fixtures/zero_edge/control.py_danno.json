@@ -1,0 +1,55 @@
+{
+ "status": "ok",
+ "n_total": 6,
+ "n_dated": 6,
+ "date_precision": {
+  "day": 6
+ },
+ "date_min": 2000.454918032787,
+ "date_max": 2000.954918032787,
+ "date_span": 0.5,
+ "msa_width": 300,
+ "effective_len_median_nongap": 300,
+ "seq_len_used": 300,
+ "params": {
+  "mu": 0.002,
+  "tau_bar": 1.0,
+  "omega": 2.0,
+  "fdr": 0.05,
+  "max_delta_t": 2.0,
+  "prior_odds": 0.01
+ },
+ "calibrated": {
+  "p_bg": 0.0177017938112759,
+  "r_bg": 3079.301023102494,
+  "t_span": 1.0
+ },
+ "pair_coverage": 1.0,
+ "mean_observed_distance": 0.179207,
+ "danno_candidates_q_pass": 3,
+ "danno_dropped_bf0": 0,
+ "danno": {
+  "edges": 3,
+  "nodes": 6,
+  "clusters": 3,
+  "max_cluster": 2,
+  "second_cluster": 2,
+  "cluster_sizes": [
+   2,
+   2,
+   2
+  ]
+ },
+ "static_0.015_on_dated_subset": {
+  "edges": 3,
+  "nodes": 6,
+  "clusters": 3,
+  "max_cluster": 2,
+  "second_cluster": 2,
+  "cluster_sizes": [
+   2,
+   2,
+   2
+  ]
+ }
+}

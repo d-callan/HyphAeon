@@ -1,0 +1,10 @@
+[danno] MSA 200 seqs, width 2841, median non-gap 1023 -> L=1023
+[danno] dates parsed from headers: 200/200 (100.0%) precision={'day': 199, 'year': 1}
+[danno] date range 2011.007-2015.552 (span 4.55 yr)
+[danno] tn93 edges: 16300 rows, 16300 within dated set
+[danno] pair coverage 81.9% of 19900 possible; mean observed d = 0.0555
+[danno] estimator: L=1023 mu=0.002 tau_bar=1.0 omega=2.0 t_span=4.55
+[danno] calibrated: p_bg=0.7889 r_bg=15.185 t_span=4.55
+[danno] supported dyads at q<=0.05: 73
+[danno] RESULT edges=73 nodes=77 clusters=23 max_cluster=7
+[danno] wrote run_danno.json

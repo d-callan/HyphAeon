@@ -187,7 +187,7 @@ pub fn generate_visualization_dossier(
         };
 
         // 4. Detailed Breakpoint Records and Uncertainty Plateaus
-        let is_5p_crossover = ev.is_crossover && ev.u1 <= 5 && ev.u2 < l;
+        let is_5p_crossover = ev.is_crossover && ev.u1.saturating_sub(1) < l.saturating_sub(ev.u2);
 
         if is_5p_crossover {
             // 5' Terminal Crossover: Donor from 1..ev.u2, Breakpoint at ev.u2 transitioning to Home
@@ -235,6 +235,8 @@ pub fn generate_visualization_dossier(
                 ci_left: ci_l,
                 ci_right: ci_r,
                 plateau_width: plat_w,
+                tract_start: ev.u1,
+                tract_end: ev.u2,
                 flanking_p1_site: left_flank,
                 flanking_p2_site: right_flank,
                 log_likelihood_gain: (ev.z_phys * 2.5).max(0.0),
@@ -296,6 +298,8 @@ pub fn generate_visualization_dossier(
                 ci_left: ci_l,
                 ci_right: ci_r,
                 plateau_width: plat_w,
+                tract_start: ev.u1,
+                tract_end: ev.u2,
                 flanking_p1_site: left_flank,
                 flanking_p2_site: right_flank,
                 log_likelihood_gain: (ev.z_phys * 2.5).max(0.0),
@@ -356,6 +360,8 @@ pub fn generate_visualization_dossier(
                     ci_left: ci_l_3p,
                     ci_right: ci_r_3p,
                     plateau_width: plat_w_3p,
+                    tract_start: ev.u1,
+                    tract_end: ev.u2,
                     flanking_p1_site: left_flank_3p,
                     flanking_p2_site: right_flank_3p,
                     log_likelihood_gain: (ev.z_phys * 2.5).max(0.0),
@@ -370,6 +376,33 @@ pub fn generate_visualization_dossier(
         bp_counter += 1;
     }
 
+    // Helper to paint a mosaic segment onto an existing non-overlapping sorted list of segments
+    let paint_mosaic_segment = |segments: &mut Vec<MosaicSegment>, patch: MosaicSegment| {
+        if patch.start > patch.end {
+            return;
+        }
+        let mut next_segs = Vec::with_capacity(segments.len() + 2);
+        for seg in segments.drain(..) {
+            if seg.end < patch.start || seg.start > patch.end {
+                next_segs.push(seg);
+            } else {
+                if seg.start < patch.start {
+                    let mut left_piece = seg.clone();
+                    left_piece.end = patch.start - 1;
+                    next_segs.push(left_piece);
+                }
+                if seg.end > patch.end {
+                    let mut right_piece = seg;
+                    right_piece.start = patch.end + 1;
+                    next_segs.push(right_piece);
+                }
+            }
+        }
+        next_segs.push(patch);
+        next_segs.sort_by_key(|s| s.start);
+        *segments = next_segs;
+    };
+
     // 5. Build Mosaic Tracks for each taxon
     let mut mosaic_taxa = BTreeMap::new();
     for t in &sorted_taxa {
@@ -378,7 +411,12 @@ pub fn generate_visualization_dossier(
             .iter()
             .filter(|e| e.isolates.contains(t))
             .collect();
-        t_events.sort_by_key(|e| e.u1);
+        // Paint broadest events first and narrower nested events on top so nested tracts are never skipped
+        t_events.sort_by(|a, b| {
+            let span_a = a.u2.saturating_sub(a.u1);
+            let span_b = b.u2.saturating_sub(b.u1);
+            span_b.cmp(&span_a).then_with(|| a.u1.cmp(&b.u1))
+        });
 
         if t_events.is_empty() {
             let meta = taxa_meta.get(t).unwrap();
@@ -400,19 +438,23 @@ pub fn generate_visualization_dossier(
                 }],
             );
         } else {
-            let mut segments = Vec::new();
-            let mut curr = 1usize;
             let home_name = &t_events[0].home_name;
             let home_col = parent_colors
                 .get(home_name)
                 .cloned()
                 .unwrap_or_else(|| "#0072b2".to_string());
 
-            for ev in &t_events {
-                if ev.u2 <= curr {
-                    continue;
-                }
+            let mut segments = vec![MosaicSegment {
+                start: 1,
+                end: l,
+                lineage: format!("Parent: {}", home_name),
+                color: home_col.clone(),
+                is_plateau: None,
+                breakpoint_id: None,
+                event_id: None,
+            }];
 
+            for ev in &t_events {
                 let donor_display = if ev.is_ghost_donor {
                     "Ghost (Unsampled)"
                 } else {
@@ -422,81 +464,75 @@ pub fn generate_visualization_dossier(
                     .get(donor_display)
                     .cloned()
                     .unwrap_or_else(|| "#d55e00".to_string());
-                if donor_col == home_col {
+                if donor_col == home_col && donor_display != home_name {
                     if let Some(alt) = PALETTE.iter().find(|&&c| c != home_col) {
                         donor_col = alt.to_string();
                     }
                 }
 
-                let is_5p_crossover = ev.is_crossover && ev.u1 <= 5 && ev.u2 < l;
+                let is_5p_crossover =
+                    ev.is_crossover && ev.u1.saturating_sub(1) < l.saturating_sub(ev.u2);
 
                 if is_5p_crossover {
                     let bp_rec = breakpoints
                         .iter()
-                        .find(|b| b.isolates.contains(t) && b.breakpoint_nt == ev.u2);
+                        .find(|b| b.event_id == ev.event_id && b.breakpoint_nt == ev.u2);
                     let bp_id = bp_rec.map(|b| b.breakpoint_id.clone());
+                    let tract_start = ev.u1.max(1);
                     let ci_l = bp_rec
                         .map(|b| b.ci_left)
                         .unwrap_or(ev.u2.saturating_sub(5).max(1))
-                        .max(curr);
+                        .max(tract_start.saturating_add(1).min(ev.u2));
                     let ci_r = bp_rec
                         .map(|b| b.ci_right)
                         .unwrap_or((ev.u2 + 5).min(l))
                         .max(ci_l);
 
-                    // Donor segment starting from curr up to ci_l - 1
-                    if ci_l > curr {
-                        segments.push(MosaicSegment {
-                            start: curr,
-                            end: ci_l - 1,
-                            lineage: format!("Donor: {}", donor_display),
-                            color: donor_col.clone(),
-                            is_plateau: None,
-                            breakpoint_id: bp_id.clone(),
-                            event_id: Some(ev.event_id),
-                        });
+                    // Donor segment starting from tract_start up to ci_l - 1
+                    if ci_l > tract_start {
+                        paint_mosaic_segment(
+                            &mut segments,
+                            MosaicSegment {
+                                start: tract_start,
+                                end: ci_l - 1,
+                                lineage: format!("Donor: {}", donor_display),
+                                color: donor_col.clone(),
+                                is_plateau: None,
+                                breakpoint_id: bp_id.clone(),
+                                event_id: Some(ev.event_id),
+                            },
+                        );
                     }
 
                     // Plateau around ev.u2
                     let plat_w = if ci_r >= ci_l { ci_r - ci_l } else { 0 };
-                    segments.push(MosaicSegment {
-                        start: ci_l,
-                        end: ci_r,
-                        lineage: format!("Breakpoint [nt {}, Δ={} nt]", ev.u2, plat_w),
-                        color: "#fbbf24".to_string(), // Yellow
-                        is_plateau: Some(true),
-                        breakpoint_id: bp_id,
-                        event_id: None,
-                    });
-
-                    curr = ci_r + 1;
+                    paint_mosaic_segment(
+                        &mut segments,
+                        MosaicSegment {
+                            start: ci_l,
+                            end: ci_r,
+                            lineage: format!("Breakpoint [nt {}, Δ={} nt]", ev.u2, plat_w),
+                            color: "#fbbf24".to_string(),
+                            is_plateau: Some(true),
+                            breakpoint_id: bp_id,
+                            event_id: Some(ev.event_id),
+                        },
+                    );
                 } else {
                     let bp_5p = breakpoints
                         .iter()
-                        .find(|b| b.isolates.contains(t) && b.breakpoint_nt == ev.u1);
+                        .find(|b| b.event_id == ev.event_id && b.breakpoint_nt == ev.u1);
                     let bp_5p_id = bp_5p.map(|b| b.breakpoint_id.clone());
+                    let mid_tract = (ev.u1 + ev.u2) / 2;
                     let ci_l_5p = bp_5p
                         .map(|b| b.ci_left)
                         .unwrap_or(ev.u1.saturating_sub(5).max(1))
-                        .max(curr);
+                        .max(1);
                     let ci_r_5p = bp_5p
                         .map(|b| b.ci_right)
                         .unwrap_or((ev.u1 + 5).min(l))
-                        .min(ev.u2)
+                        .min(mid_tract.max(ci_l_5p))
                         .max(ci_l_5p);
-
-                    // Flank before 5' breakpoint
-                    if ci_l_5p > curr {
-                        segments.push(MosaicSegment {
-                            start: curr,
-                            end: ci_l_5p - 1,
-                            lineage: format!("Parent: {}", home_name),
-                            color: home_col.clone(),
-                            is_plateau: None,
-                            breakpoint_id: None,
-                            event_id: None,
-                        });
-                    }
 
                     // 5' Plateau
                     let plat_5p_w = if ci_r_5p >= ci_l_5p {
@@ -504,40 +540,45 @@ pub fn generate_visualization_dossier(
                     } else {
                         0
                     };
-                    segments.push(MosaicSegment {
-                        start: ci_l_5p,
-                        end: ci_r_5p,
-                        lineage: format!("Breakpoint 5' [nt {}, Δ={} nt]", ev.u1, plat_5p_w),
-                        color: "#fbbf24".to_string(), // Yellow
-                        is_plateau: Some(true),
-                        breakpoint_id: bp_5p_id.clone(),
-                        event_id: None,
-                    });
+                    paint_mosaic_segment(
+                        &mut segments,
+                        MosaicSegment {
+                            start: ci_l_5p,
+                            end: ci_r_5p,
+                            lineage: format!("Breakpoint 5' [nt {}, Δ={} nt]", ev.u1, plat_5p_w),
+                            color: "#fbbf24".to_string(),
+                            is_plateau: Some(true),
+                            breakpoint_id: bp_5p_id.clone(),
+                            event_id: Some(ev.event_id),
+                        },
+                    );
 
                     if ev.is_crossover {
-                        if ci_r_5p + 1 <= l {
-                            segments.push(MosaicSegment {
-                                start: ci_r_5p + 1,
-                                end: l,
-                                lineage: format!("Donor: {}", donor_display),
-                                color: donor_col,
-                                is_plateau: None,
-                                breakpoint_id: bp_5p_id.clone(),
-                                event_id: Some(ev.event_id),
-                            });
+                        let donor_end = ev.u2.max(ci_r_5p + 1).min(l);
+                        if ci_r_5p + 1 <= donor_end {
+                            paint_mosaic_segment(
+                                &mut segments,
+                                MosaicSegment {
+                                    start: ci_r_5p + 1,
+                                    end: donor_end,
+                                    lineage: format!("Donor: {}", donor_display),
+                                    color: donor_col,
+                                    is_plateau: None,
+                                    breakpoint_id: bp_5p_id.clone(),
+                                    event_id: Some(ev.event_id),
+                                },
+                            );
                         }
-                        curr = l + 1;
-                        break;
                     } else {
                         let bp_3p = breakpoints
                             .iter()
-                            .find(|b| b.isolates.contains(t) && b.breakpoint_nt == ev.u2);
+                            .find(|b| b.event_id == ev.event_id && b.breakpoint_nt == ev.u2);
                         let bp_3p_id = bp_3p.map(|b| b.breakpoint_id.clone());
                         let tract_st = (ci_r_5p + 1).min(ev.u2);
                         let ci_l_3p = bp_3p
                             .map(|b| b.ci_left)
                             .unwrap_or(ev.u2.saturating_sub(5).max(1))
-                            .max(tract_st);
+                            .max((mid_tract + 1).max(tract_st + 1).min(ev.u2));
                         let ci_r_3p = bp_3p
                             .map(|b| b.ci_right)
                             .unwrap_or((ev.u2 + 5).min(l))
@@ -545,15 +586,18 @@ pub fn generate_visualization_dossier(
 
                         // Donor tract between 5' and 3' plateaus
                         if ci_l_3p > tract_st {
-                            segments.push(MosaicSegment {
-                                start: tract_st,
-                                end: ci_l_3p - 1,
-                                lineage: format!("Donor: {}", donor_display),
-                                color: donor_col,
-                                is_plateau: None,
-                                breakpoint_id: bp_5p_id.clone(),
-                                event_id: Some(ev.event_id),
-                            });
+                            paint_mosaic_segment(
+                                &mut segments,
+                                MosaicSegment {
+                                    start: tract_st,
+                                    end: ci_l_3p - 1,
+                                    lineage: format!("Donor: {}", donor_display),
+                                    color: donor_col,
+                                    is_plateau: None,
+                                    breakpoint_id: bp_5p_id.clone(),
+                                    event_id: Some(ev.event_id),
+                                },
+                            );
                         }
 
                         // 3' Plateau
@@ -562,32 +606,23 @@ pub fn generate_visualization_dossier(
                         } else {
                             0
                         };
-                        segments.push(MosaicSegment {
-                            start: ci_l_3p,
-                            end: ci_r_3p,
-                            lineage: format!("Breakpoint 3' [nt {}, Δ={} nt]", ev.u2, plat_3p_w),
-                            color: "#fbbf24".to_string(), // Yellow
-                            is_plateau: Some(true),
-                            breakpoint_id: bp_3p_id,
-                            event_id: None,
-                        });
-
-                        curr = ci_r_3p + 1;
+                        paint_mosaic_segment(
+                            &mut segments,
+                            MosaicSegment {
+                                start: ci_l_3p,
+                                end: ci_r_3p,
+                                lineage: format!(
+                                    "Breakpoint 3' [nt {}, Δ={} nt]",
+                                    ev.u2, plat_3p_w
+                                ),
+                                color: "#fbbf24".to_string(),
+                                is_plateau: Some(true),
+                                breakpoint_id: bp_3p_id,
+                                event_id: Some(ev.event_id),
+                            },
+                        );
                     }
                 }
-            }
-
-            // Trailing flank returning to Home
-            if curr <= l {
-                segments.push(MosaicSegment {
-                    start: curr,
-                    end: l,
-                    lineage: format!("Parent: {}", home_name),
-                    color: home_col,
-                    is_plateau: None,
-                    breakpoint_id: None,
-                    event_id: None,
-                });
             }
 
             mosaic_taxa.insert(t.clone(), segments);
@@ -604,7 +639,7 @@ pub fn generate_visualization_dossier(
         for (taxon_name, segments) in mosaic_taxa.iter_mut() {
             if rec_taxa_set.contains(taxon_name) {
                 // Collect primary home colors in this taxon for contrast preservation
-                let mut home_colors = Vec::new();
+                let mut home_colors: Vec<(String, String)> = Vec::new();
                 for seg in segments.iter() {
                     if seg.lineage.starts_with("Parent: ") {
                         let h_name = seg.lineage.trim_start_matches("Parent: ");
@@ -615,7 +650,7 @@ pub fn generate_visualization_dossier(
                             &current_mosaic,
                             &parent_colors,
                         );
-                        home_colors.push(c);
+                        home_colors.push((h_name.to_string(), c));
                     }
                 }
 
@@ -634,11 +669,14 @@ pub fn generate_visualization_dossier(
                             &parent_colors,
                         );
 
-                        // If resolved donor color clashes with home color, ensure visual contrast
-                        if home_colors.iter().any(|hc| hc == &resolved_col) {
+                        // Only switch color if a DIFFERENT home lineage name shares the same palette color
+                        if home_colors
+                            .iter()
+                            .any(|(hn, hc)| hn != donor_target && hc == &resolved_col)
+                        {
                             if let Some(alt) = PALETTE
                                 .iter()
-                                .find(|&&c| !home_colors.contains(&c.to_string()))
+                                .find(|&&c| !home_colors.iter().any(|(_, hc)| hc == c))
                             {
                                 resolved_col = alt.to_string();
                             }

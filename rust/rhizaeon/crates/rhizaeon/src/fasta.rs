@@ -129,14 +129,25 @@ pub fn extract_informative_snp_alignment(aln: &Alignment) -> (Alignment, Vec<usi
             char_counts[c] += 1;
         }
 
-        let mut states_with_ge_2 = 0;
-        for c in 1..=4 {
-            if char_counts[c] >= 2 {
-                states_with_ge_2 += 1;
+        let retain_site = if aln.num_taxa <= 32 {
+            let mut distinct_states = 0;
+            for c in 1..=4 {
+                if char_counts[c] >= 1 {
+                    distinct_states += 1;
+                }
             }
-        }
+            distinct_states >= 2
+        } else {
+            let mut states_with_ge_2 = 0;
+            for c in 1..=4 {
+                if char_counts[c] >= 2 {
+                    states_with_ge_2 += 1;
+                }
+            }
+            states_with_ge_2 >= 2
+        };
 
-        if states_with_ge_2 >= 2 {
+        if retain_site {
             snp_map.push(u);
         }
     }

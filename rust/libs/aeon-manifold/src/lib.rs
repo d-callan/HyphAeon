@@ -147,18 +147,28 @@ pub fn poisson_cdf(k: usize, lambda: f64) -> f64 {
 }
 
 /// Standard normal cumulative distribution function Phi(x).
+/// Phi(x) = erfc(-x / sqrt(2)) / 2, evaluated through `erfc` so the lower tail
+/// keeps relative precision.
 pub fn norm_cdf(x: f64) -> f64 {
-    0.5 * (1.0 + erf(x / SQRT_2))
+    0.5 * erfc(-x / SQRT_2)
 }
 
-/// Error function erf(x) approximation (accurate to 1.5e-7).
+/// Error function erf(x) = 1 - erfc(x).
 pub fn erf(x: f64) -> f64 {
-    let sign = if x < 0.0 { -1.0 } else { 1.0 };
-    let t = 1.0 / (1.0 + 0.3275911 * x.abs());
-    let poly = t
-        * (0.254829592
-            + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
-    sign * (1.0 - poly * (-x * x).exp())
+    1.0 - erfc(x)
+}
+
+/// Complementary error function erfc(x) = Q(1/2, x^2) for x >= 0, 2 - Q(1/2, x^2) for x < 0.
+pub fn erfc(x: f64) -> f64 {
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    let q = gammaincc(0.5, x * x);
+    if x >= 0.0 {
+        q
+    } else {
+        2.0 - q
+    }
 }
 
 /// Standard normal percent-point function (inverse CDF) Phi^-1(p).
@@ -206,7 +216,7 @@ pub fn norm_ppf(p: f64) -> f64 {
     let p_low = 0.02425;
     let p_high = 1.0 - p_low;
 
-    if p < p_low {
+    let x = if p < p_low {
         let q = (-2.0 * p.ln()).sqrt();
         (((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5])
             / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0)
@@ -219,7 +229,17 @@ pub fn norm_ppf(p: f64) -> f64 {
         let q = (-2.0 * (1.0 - p).ln()).sqrt();
         -(((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5])
             / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0)
-    }
+    };
+
+    // One Halley step on e = Phi(x) - p. In the upper half, e is formed as
+    // (1 - p) - (1 - Phi(x)) so the residual does not cancel.
+    let e = if p > 0.5 {
+        (1.0 - p) - 0.5 * erfc(x / SQRT_2)
+    } else {
+        0.5 * erfc(-x / SQRT_2) - p
+    };
+    let u = e * (2.0 * PI).sqrt() * (0.5 * x * x).exp();
+    x - u / (1.0 + 0.5 * x * u)
 }
 
 /// Inverse CDF for Student's t-distribution with `df` degrees of freedom.
@@ -243,6 +263,94 @@ pub fn student_t_ppf(p: f64, df: f64) -> f64 {
     let term3 = (3.0 * z7 + 19.0 * z5 + 17.0 * z3 - 15.0 * z) / (384.0 * df * df * df);
 
     z + term1 + term2 + term3
+}
+
+/// Continued fraction for the regularized incomplete beta function
+/// (modified Lentz's method; Numerical Recipes `betacf`).
+fn beta_cf(a: f64, b: f64, x: f64) -> f64 {
+    let tiny = 1e-300;
+    let qab = a + b;
+    let qap = a + 1.0;
+    let qam = a - 1.0;
+    let mut c = 1.0;
+    let mut d = 1.0 - qab * x / qap;
+    if d.abs() < tiny {
+        d = tiny;
+    }
+    d = 1.0 / d;
+    let mut h = d;
+    for m in 1..500 {
+        let m = m as f64;
+        let m2 = 2.0 * m;
+        let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+        d = 1.0 + aa * d;
+        if d.abs() < tiny {
+            d = tiny;
+        }
+        c = 1.0 + aa / c;
+        if c.abs() < tiny {
+            c = tiny;
+        }
+        d = 1.0 / d;
+        h *= d * c;
+        let aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+        d = 1.0 + aa * d;
+        if d.abs() < tiny {
+            d = tiny;
+        }
+        c = 1.0 + aa / c;
+        if c.abs() < tiny {
+            c = tiny;
+        }
+        d = 1.0 / d;
+        let delta = d * c;
+        h *= delta;
+        if (delta - 1.0).abs() < 1e-16 {
+            break;
+        }
+    }
+    h
+}
+
+/// Regularized incomplete beta I_x(a, b), given both x and xc = 1 - x so callers
+/// can pass a complement computed without cancellation.
+fn betainc_with_complement(a: f64, b: f64, x: f64, xc: f64) -> f64 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    if xc <= 0.0 {
+        return 1.0;
+    }
+    let ln_front = ln_gamma(a + b) - ln_gamma(a) - ln_gamma(b) + a * x.ln() + b * xc.ln();
+    if x < (a + 1.0) / (a + b + 2.0) {
+        (ln_front.exp() * beta_cf(a, b, x) / a).max(0.0).min(1.0)
+    } else {
+        (1.0 - ln_front.exp() * beta_cf(b, a, xc) / b)
+            .max(0.0)
+            .min(1.0)
+    }
+}
+
+/// Regularized incomplete beta function I_x(a, b) (SciPy's `scipy.special.betainc(a, b, x)`).
+pub fn betainc(a: f64, b: f64, x: f64) -> f64 {
+    if a <= 0.0 || b <= 0.0 || x.is_nan() {
+        return f64::NAN;
+    }
+    betainc_with_complement(a, b, x, 1.0 - x)
+}
+
+/// Two-sided Student-t tail probability P(|T| >= |t|) with `df` degrees of freedom:
+/// I_{df/(df+t^2)}(df/2, 1/2), i.e. SciPy's `2 * stats.t.sf(abs(t), df)`.
+pub fn student_t_two_sided_p(t: f64, df: f64) -> f64 {
+    if t.is_nan() || df <= 0.0 {
+        return f64::NAN;
+    }
+    if t.is_infinite() {
+        return 0.0;
+    }
+    let t2 = t * t;
+    let denom = df + t2;
+    betainc_with_complement(0.5 * df, 0.5, df / denom, t2 / denom)
 }
 
 /// Ordinary Least Squares Linear Regression Result.
@@ -308,12 +416,19 @@ pub fn linregress(x: &[f64], y: &[f64]) -> Option<LinearRegression> {
         0.0
     };
 
-    let p_value = if std_err > 1e-15 && df > 0.0 {
-        let t_stat = (slope / std_err).abs();
-        // Approximate two-tailed p-value via normal distribution if df is sufficient
-        2.0 * (1.0 - norm_cdf(t_stat))
+    // Two-sided p-value for slope = 0 exactly as scipy.stats.linregress: Student t
+    // with n - 2 df, t = r * sqrt(df / ((1 - r + TINY) * (1 + r + TINY))); with two
+    // points scipy reports 1 if y[0] == y[1] and 0 otherwise.
+    let p_value = if n == 2 {
+        if y[0] == y[1] {
+            1.0
+        } else {
+            0.0
+        }
     } else {
-        1.0
+        const TINY: f64 = 1.0e-20;
+        let t_stat = r_value * (df / ((1.0 - r_value + TINY) * (1.0 + r_value + TINY))).sqrt();
+        student_t_two_sided_p(t_stat, df)
     };
 
     Some(LinearRegression {
@@ -647,9 +762,8 @@ mod tests {
         assert!((r.intercept - 0.05000000000000071).abs() < 1e-12);
         assert!((r.r_value - 0.9986517555689656).abs() < 1e-12);
         assert!((r.std_err - 0.059721576223897795).abs() < 1e-12);
-        // Note: p_value uses normal approx (not t-dist like scipy); check
-        // it is small rather than matching scipy's 5.94e-05 exactly.
-        assert!(r.p_value < 1e-6);
+        // scipy's p_value is 5.941539111755929e-05 (Student-t, df = 3).
+        assert!((r.p_value - 5.941539111755929e-05).abs() < 1e-12);
     }
 
     #[test]
@@ -689,5 +803,54 @@ mod tests {
         let f0 = res.eigenvectors[0 * n + (n - 2)];
         let f2 = res.eigenvectors[2 * n + (n - 2)];
         assert!(f0 * f2 < 0.0);
+    }
+
+    #[test]
+    fn test_jacobi_eigh_large_laplacian() {
+        // 120x120 normalized graph Laplacian with two weakly coupled 60-node
+        // blocks (upstream trace50-core test_jacobi_eigensystem_large_laplacian,
+        // c195a16). Eigenvalues are descending here: the zero eigenvalue is at
+        // index n-1 and the Fiedler pair at n-2.
+        let n = 120;
+        let mut w: Vec<f64> = vec![0.0; n * n];
+        let mut deg: Vec<f64> = vec![0.0; n];
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let same_block = (i < 60 && j < 60) || (i >= 60 && j >= 60);
+                let weight = if same_block { 1.0 } else { 0.02 };
+                w[i * n + j] = weight;
+                w[j * n + i] = weight;
+                deg[i] += weight;
+                deg[j] += weight;
+            }
+        }
+        let mut l_sym = vec![0.0; n * n];
+        for i in 0..n {
+            l_sym[i * n + i] = 1.0;
+            for j in 0..n {
+                if i != j {
+                    l_sym[i * n + j] = -w[i * n + j] / (deg[i] * deg[j]).sqrt();
+                }
+            }
+        }
+        let res = symmetric_jacobi_eigh(&l_sym, n);
+        // Smallest eigenvalue of normalized Laplacian is 0.0
+        assert!(
+            res.eigenvalues[n - 1].abs() < 1e-9,
+            "lambda_1 = {}",
+            res.eigenvalues[n - 1]
+        );
+        // Second eigenvalue (Fiedler value) for two weakly coupled blocks is small positive
+        let lam2 = res.eigenvalues[n - 2];
+        assert!(lam2 > 0.01 && lam2 < 0.10, "lambda_2 = {}", lam2);
+        // Fiedler vector (column n-2) must cleanly separate block 0..60 from 60..120 by sign
+        let fc = n - 2;
+        let sign_0 = res.eigenvectors[fc].signum();
+        for i in 0..60 {
+            assert_eq!(res.eigenvectors[i * n + fc].signum(), sign_0);
+        }
+        for i in 60..120 {
+            assert_eq!(res.eigenvectors[i * n + fc].signum(), -sign_0);
+        }
     }
 }

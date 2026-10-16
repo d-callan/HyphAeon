@@ -1,0 +1,20 @@
+[package]
+name = "rhizaeon-tools"
+version = "0.1.0"
+edition = "2021"
+authors = ["Sergei L. Kosakovsky Pond", "Antigravity AI Engine"]
+description = "Manuscript/benchmark helper binaries for RhizAeon PA-FF (v2.1) — unpublished dev tooling"
+license = "MIT"
+publish = false
+
+# Auxiliary binaries for figure-data export and simulation sweeps used by
+# the rhizaeon-code manuscript repository. Deliberately NOT shipped in the
+# `rhizaeon` Python wheel — these consume engine internals and are run via
+# `cargo run -p rhizaeon-tools --bin <name>` from a source checkout.
+
+[dependencies]
+rhizaeon.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rayon.workspace = true
