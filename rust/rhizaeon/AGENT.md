@@ -137,10 +137,12 @@ crates/
 └── rhizaeon-wasm/             # WebAssembly client-side library
     └── src/lib.rs             # wasm-bindgen bindings: scan_alignment, generate_dashboard
 
-# NOTE: the clap CLI (`rhizaeon`, `export_figure1_data`) no longer lives in
-# the rhizaeon crate — it sits in the `rhizaeon-native` PyO3 binding at
-# <repo>/rhizaeon/native and ships via `pip install rhizaeon`. The lib crate
-# stays clap-free so rhizaeon-wasm builds clean.
+# NOTE: the clap CLI (`rhizaeon`) no longer lives in the rhizaeon crate —
+# it sits in the `rhizaeon-native` PyO3 binding at <repo>/rhizaeon/native
+# and ships via `pip install rhizaeon`. The lib crate stays clap-free so
+# rhizaeon-wasm builds clean. Manuscript/benchmark helpers
+# (export_figure1_data, export_figure2_data, grand_sweep) live in the
+# unpublished rhizaeon-tools crate alongside rhizaeon-wasm.
 tests/
 ├── empirical/                 # Real-world benchmark alignments & validation runner
 │   ├── data/                  # KAL-153 CRF02_AG, SARS-CoV-2 XBB, Human mtDNA

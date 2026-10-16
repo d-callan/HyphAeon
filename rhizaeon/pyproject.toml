@@ -21,7 +21,6 @@ classifiers = [
 
 [project.scripts]
 rhizaeon = "rhizaeon.cli:main"
-export_figure1_data = "rhizaeon.cli:fig1_main"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
