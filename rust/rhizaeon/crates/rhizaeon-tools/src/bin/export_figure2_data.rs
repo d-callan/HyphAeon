@@ -11,7 +11,9 @@ use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(name = "export_figure2_data")]
-#[command(about = "Exports authentic Tree-RoPE, Markov Prior, and Attention Flux data for Figure 2")]
+#[command(
+    about = "Exports authentic Tree-RoPE, Markov Prior, and Attention Flux data for Figure 2"
+)]
 struct Args {
     /// Path to input alignment FASTA (expected taxa prefixes: B., C.,
     /// CRF07, CRF08 prototypes — see paper/figures in veg/rhizaeon-code)
@@ -332,13 +334,8 @@ fn main() {
     }
 
     let attention_engine = PhyloAttentionEngine::new(args.dim, 1.0);
-    let (a_tensor, _f_tensor, c_tensor) = attention_engine.compute_attention_and_force_tensors(
-        &aln,
-        &landmarks,
-        &m_matrix,
-        &b_prior,
-        &root_seq,
-    );
+    let (a_tensor, _f_tensor, c_tensor) = attention_engine
+        .compute_attention_and_force_tensors(&aln, &landmarks, &m_matrix, &b_prior, &root_seq);
 
     // Identify landmark subtype subsets
     let mut b_landmarks = Vec::new();
@@ -501,10 +498,7 @@ fn main() {
     }
     fs::write(&args.output, json_str).expect("Failed to write output JSON");
 
-    println!(
-        "  [+] Authentic Figure 2 data saved to {:?}",
-        args.output
-    );
+    println!("  [+] Authentic Figure 2 data saved to {:?}", args.output);
     println!("================================================================================");
 }
 
