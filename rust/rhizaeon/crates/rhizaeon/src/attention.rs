@@ -38,6 +38,38 @@ impl PhyloAttentionEngine {
         let mut sum_a = vec![0.0f64; n * num_channels];
         let shift_d = (self.dim as f64) / 2.0;
 
+        // Precompute self- and twin-clone masking matrix (n x k):
+        // Mask landmark p for query i if i == l_global OR if l_global is an identical/sister clone
+        // of i (d < d_sister) AND there is at least one other landmark in i's clade (d <= d_clade).
+        // This prevents co-recombinant twins (e.g. pop1.21 and pop1.23) from absorbing 100% of each
+        // other's attention across both flank and recombinant tract.
+        let (d_sister, d_clade) =
+            crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
+        let mut mask_landmark = vec![false; n * k];
+        for i in 0..n {
+            let mut clade_landmarks = Vec::new();
+            for p in 0..k {
+                let l_global = landmarks.indices[p];
+                if l_global == i {
+                    mask_landmark[i * k + p] = true;
+                } else {
+                    let d = crate::landmarks::compute_pairwise_distance(aln, i, l_global);
+                    if d <= d_clade {
+                        clade_landmarks.push((p, d));
+                    }
+                }
+            }
+            // If there is at least one non-sister landmark in the same clade, mask identical/sister clones
+            let has_non_sister_clade_ref = clade_landmarks.iter().any(|&(_, d)| d >= d_sister);
+            if has_non_sister_clade_ref {
+                for &(p, d) in &clade_landmarks {
+                    if d < d_sister {
+                        mask_landmark[i * k + p] = true;
+                    }
+                }
+            }
+        }
+
         // Pass 1: Site-by-site softmax attention
         for u in 0..l {
             let u_offset = u * n * num_channels;
@@ -76,12 +108,12 @@ impl PhyloAttentionEngine {
                 // Landmark channels 1..=K
                 for p in 0..k {
                     let ch = p + 1;
-                    let l_global = landmarks.indices[p];
-                    if i == l_global {
-                        // Mask self-attention
+                    if mask_landmark[i * k + p] {
+                        // Mask self-attention and co-recombinant twin attention
                         logits[ch] = f64::NEG_INFINITY;
                         continue;
                     }
+                    let l_global = landmarks.indices[p];
 
                     let l_c = aln.get(l_global, u);
                     let m_val = m_matrix[in_offset + ch];

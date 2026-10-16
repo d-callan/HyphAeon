@@ -9,6 +9,7 @@ pub struct CumulativeTrajectoryPolisher {
     pub dyadic_scales: Vec<usize>,
     pub alpha: f64,
     pub stringency: f64,
+    pub compression_ratio: f64,
 }
 
 impl Default for CumulativeTrajectoryPolisher {
@@ -20,6 +21,7 @@ impl Default for CumulativeTrajectoryPolisher {
             dyadic_scales: vec![30, 60, 120, 240, 300, 360, 480, 600, 800],
             alpha: 0.05,
             stringency: 1.0,
+            compression_ratio: 1.0,
         }
     }
 }
@@ -34,13 +36,24 @@ impl CumulativeTrajectoryPolisher {
         self
     }
 
+    pub fn with_compression_ratio(mut self, ratio: f64) -> Self {
+        self.compression_ratio = ratio.clamp(0.005, 1.0);
+        self
+    }
+
     #[inline]
     fn eff_min_tract_length(&self) -> usize {
         let s2 = self.stringency.max(0.1);
-        if (s2 - 1.0).abs() < 1e-9 {
-            self.min_tract_length
+        let base_len = if (s2 - 1.0).abs() < 1e-9 {
+            self.min_tract_length as f64
         } else {
-            ((self.min_tract_length as f64 * s2).round() as usize).clamp(10, 200)
+            (self.min_tract_length as f64 * s2).clamp(10.0, 200.0)
+        };
+        if self.compression_ratio < 0.999 {
+            let min_floor = if s2 < 1.0 { 4 } else { 5 };
+            ((base_len * self.compression_ratio).round() as usize).max(min_floor)
+        } else {
+            base_len.round() as usize
         }
     }
 
@@ -130,15 +143,29 @@ impl CumulativeTrajectoryPolisher {
         sigma_x: f64,
     ) -> Vec<(usize, usize)> {
         let s2 = self.stringency.max(0.1);
-        let m_scales = self.dyadic_scales.len().max(1);
+        let mut effective_scales: Vec<usize> = self
+            .dyadic_scales
+            .iter()
+            .map(|&base_tau| {
+                let scaled_s2 = if s2 < 1.0 {
+                    (base_tau as f64 * s2).max(12.0)
+                } else {
+                    base_tau as f64
+                };
+                if self.compression_ratio < 0.999 {
+                    let min_tau = if s2 < 1.0 { 4 } else { 5 };
+                    ((scaled_s2 * self.compression_ratio).round() as usize).max(min_tau)
+                } else {
+                    scaled_s2.round() as usize
+                }
+            })
+            .collect();
+        effective_scales.sort_unstable();
+        effective_scales.dedup();
+        let m_scales = effective_scales.len().max(1);
         let mut candidates = Vec::new();
 
-        for &base_tau in &self.dyadic_scales {
-            let tau = if s2 < 1.0 {
-                ((base_tau as f64 * s2).round() as usize).max(12)
-            } else {
-                base_tau
-            };
+        for tau in effective_scales {
             if tau >= l {
                 continue;
             }
@@ -152,22 +179,22 @@ impl CumulativeTrajectoryPolisher {
             let se_tau = sigma_x * (tau as f64).sqrt();
             let theta_tau = (self.poisson_floor * s2).max(z_crit_tau * se_tau);
 
-            let mut max_boxcar = f64::NEG_INFINITY;
-            let mut best_k = 0;
-
+            let mut scale_hits: Vec<(usize, usize, f64)> = Vec::new();
             for k in 0..=(l - tau) {
-                // Integral over [k, k + tau]
                 let sum_val = cum_x[k + tau] - cum_x[k];
-                if sum_val > max_boxcar {
-                    max_boxcar = sum_val;
-                    best_k = k;
+                if sum_val >= theta_tau {
+                    scale_hits.push((k + 1, k + tau, sum_val));
                 }
             }
-
-            if max_boxcar >= theta_tau {
-                let s_disc = best_k + 1;
-                let e_disc = best_k + tau;
-                candidates.push((s_disc, e_disc));
+            // Non-maximum suppression across overlapping windows at scale tau
+            scale_hits.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+            let mut kept_at_scale: Vec<(usize, usize)> = Vec::new();
+            for (s_d, e_d, _) in scale_hits {
+                let overlaps = kept_at_scale.iter().any(|&(ks, ke)| s_d <= ke && e_d >= ks);
+                if !overlaps {
+                    kept_at_scale.push((s_d, e_d));
+                    candidates.push((s_d, e_d));
+                }
             }
         }
 
@@ -252,12 +279,9 @@ impl CumulativeTrajectoryPolisher {
             return Vec::new();
         }
 
-        // 3. Recursive Binary Segmentation
+        // 3. Recursive Binary Segmentation + Multiscale Dyadic Cassette Boundaries
         let mut changepoints = self.recursive_binary_segmentation(&x, 1, l, eff_alpha, sigma_x);
-        changepoints.sort();
-        changepoints.dedup();
-
-        if changepoints.is_empty() && !dyadic_hits.is_empty() {
+        if !dyadic_hits.is_empty() {
             for (s_d, e_d) in dyadic_hits {
                 if s_d > 1 {
                     changepoints.push(s_d - 1);
@@ -266,9 +290,9 @@ impl CumulativeTrajectoryPolisher {
                     changepoints.push(e_d);
                 }
             }
-            changepoints.sort();
-            changepoints.dedup();
         }
+        changepoints.sort_unstable();
+        changepoints.dedup();
 
         if changepoints.is_empty() {
             return Vec::new();
@@ -342,11 +366,16 @@ impl CumulativeTrajectoryPolisher {
         // In low-divergence regimes (d <= 0.02), stochastic intervals of 50-100 bp within a true
         // cassette can lack mutations, causing temporary zero-flux dips. Bridging ensures the full
         // continuous introgression cassette is evaluated as a single coherent tract.
+        let max_gap = if self.compression_ratio < 0.999 {
+            ((150.0 * self.compression_ratio).round() as usize).max(3)
+        } else {
+            150
+        };
         let mut donor_segments: Vec<(usize, usize)> = Vec::new();
         for (s, e) in raw_donor_segments {
             if let Some(last) = donor_segments.last_mut() {
                 let gap = s.saturating_sub(last.1 + 1);
-                if gap <= 150 {
+                if gap <= max_gap {
                     let combined_s = last.0;
                     let combined_e = e;
                     let comb_len = (combined_e - combined_s + 1) as f64;

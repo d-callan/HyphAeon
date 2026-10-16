@@ -127,7 +127,7 @@ impl TrajectoryParentalResolver {
         let k_crit_att = (-0.5 * (0.05 / (2.0 * (num_channels as f64))).ln())
             .sqrt()
             .max(1.645);
-        let (d_sister, _d_clade) =
+        let (d_sister, d_clade) =
             crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
 
         // 3. Channel-contiguous trajectory buffer for SIMD cache-friendly dot products
@@ -163,7 +163,6 @@ impl TrajectoryParentalResolver {
         }
 
         // 4. Eligible contemporary landmark channels
-        // 4. Eligible contemporary landmark channels
         let mut contemporary_channels = Vec::new();
         for p in 0..k {
             let l_global = landmarks.indices[p];
@@ -175,6 +174,17 @@ impl TrajectoryParentalResolver {
             contemporary_channels.push(1);
         }
 
+        // Check whether candidate has at least one landmark in its own clade (d <= d_clade)
+        // and at least one landmark outside its clade (d > d_clade)
+        let has_intra_clade_lm = contemporary_channels.iter().any(|&ch| {
+            let l_idx = landmarks.indices[ch - 1];
+            crate::landmarks::compute_pairwise_distance(aln, candidate_idx, l_idx) <= d_clade
+        });
+        let has_inter_clade_lm = contemporary_channels.iter().any(|&ch| {
+            let l_idx = landmarks.indices[ch - 1];
+            crate::landmarks::compute_pairwise_distance(aln, candidate_idx, l_idx) > d_clade
+        });
+
         // 5. Find optimal primary pair across all contemporary pairs
         let mut best_score = -1.0;
         let mut best_pair = (contemporary_channels[0], contemporary_channels[0]);
@@ -184,18 +194,25 @@ impl TrajectoryParentalResolver {
         for i in 0..contemporary_channels.len() {
             let ch_a = contemporary_channels[i];
             let l_a = landmarks.indices[ch_a - 1];
-            let is_sister_a =
-                crate::landmarks::compute_pairwise_distance(aln, candidate_idx, l_a) < d_sister;
+            let d_ca = crate::landmarks::compute_pairwise_distance(aln, candidate_idx, l_a);
+            let is_sister_a = d_ca < d_sister;
+            let in_clade_a = d_ca <= d_clade;
             let var_a = cov_c[ch_a * num_channels + ch_a].max(1e-12);
 
             for j in (i + 1)..contemporary_channels.len() {
                 let ch_b = contemporary_channels[j];
                 let l_b = landmarks.indices[ch_b - 1];
-                let is_sister_b =
-                    crate::landmarks::compute_pairwise_distance(aln, candidate_idx, l_b) < d_sister;
+                let d_cb = crate::landmarks::compute_pairwise_distance(aln, candidate_idx, l_b);
+                let is_sister_b = d_cb < d_sister;
+                let in_clade_b = d_cb <= d_clade;
 
                 // Both channels cannot be sisters of candidate (must be different clades)
                 if is_sister_a && is_sister_b {
+                    continue;
+                }
+                // When both intra-clade and inter-clade landmarks exist, disallow two intra-clade channels
+                // from forming a mirror dipole inside the candidate's own lineage cluster
+                if has_intra_clade_lm && has_inter_clade_lm && in_clade_a && in_clade_b {
                     continue;
                 }
 
@@ -213,8 +230,8 @@ impl TrajectoryParentalResolver {
                 if score > best_score {
                     best_score = score;
                     best_pair = (ch_a, ch_b);
-                    best_is_sister_a = is_sister_a;
-                    best_is_sister_b = is_sister_b;
+                    best_is_sister_a = is_sister_a || (in_clade_a && !in_clade_b);
+                    best_is_sister_b = is_sister_b || (in_clade_b && !in_clade_a);
                 }
             }
         }
@@ -253,12 +270,15 @@ impl TrajectoryParentalResolver {
         });
 
         // Test other contemporary channels against home_ch
+        let home_l_idx = landmarks.indices[home_ch.saturating_sub(1)];
         for &d in &contemporary_channels {
             if d == home_ch || d == primary_donor_ch {
                 continue;
             }
             let l_d = landmarks.indices[d - 1];
-            if crate::landmarks::compute_pairwise_distance(aln, candidate_idx, l_d) < d_sister {
+            let d_cd = crate::landmarks::compute_pairwise_distance(aln, candidate_idx, l_d);
+            let d_hd = crate::landmarks::compute_pairwise_distance(aln, home_l_idx, l_d);
+            if d_cd < d_sister || (has_inter_clade_lm && d_cd <= d_clade && d_hd <= d_clade) {
                 continue;
             }
 
@@ -325,9 +345,11 @@ impl TrajectoryParentalResolver {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        // Deduplicate candidate donors across sister lineages (d < d_sister)
-        // so multiple sisters from the primary donor clade don't crowd out secondary donor clades in multi-way mosaicism.
+        // Deduplicate candidate donors across clades (`d <= d_clade`) first so a single donor population
+        // cannot consume all 4 slots and crowd out secondary donor populations in multi-way mosaicism;
+        // then fill remaining slots (up to 4) with non-sister channels (`d >= d_sister`).
         let mut distinct_donors: Vec<CandidateDonor> = Vec::new();
+        let mut fallback_clade_sisters: Vec<CandidateDonor> = Vec::new();
         for cd in candidate_donors {
             if cd.is_ghost {
                 distinct_donors.push(cd);
@@ -346,16 +368,36 @@ impl TrajectoryParentalResolver {
                         false
                     }
                 });
-                if !is_sister {
+                if is_sister {
+                    continue;
+                }
+                let is_same_clade = distinct_donors.iter().any(|existing| {
+                    if existing.is_ghost {
+                        return false;
+                    }
+                    let ex_k = existing.channel.saturating_sub(1);
+                    if let Some(ex_g) = landmarks.indices.get(ex_k).copied() {
+                        crate::landmarks::compute_pairwise_distance(aln, dg, ex_g) <= d_clade
+                    } else {
+                        false
+                    }
+                });
+                if !is_same_clade {
                     distinct_donors.push(cd);
+                } else {
+                    fallback_clade_sisters.push(cd);
                 }
             } else {
                 distinct_donors.push(cd);
             }
+        }
+        for cd in fallback_clade_sisters {
             if distinct_donors.len() >= 4 {
                 break;
             }
+            distinct_donors.push(cd);
         }
+        distinct_donors.truncate(4);
         let candidate_donors = distinct_donors;
 
         // 7. Construct TrajectoryParentalPairs
@@ -367,7 +409,7 @@ impl TrajectoryParentalResolver {
             .unwrap_or_else(|| "Home".to_string());
         let home_global = landmarks.indices.get(home_k).copied();
 
-        let mut pairs = Vec::with_capacity(candidate_donors.len());
+        let mut pairs = Vec::with_capacity(candidate_donors.len() + 4);
         for cd in &candidate_donors {
             let (donor_k, donor_name, donor_global) = if cd.is_ghost {
                 (None, "Ghost".to_string(), None)
@@ -398,6 +440,70 @@ impl TrajectoryParentalResolver {
                 swing_home: swings[home_ch],
                 swing_donor: swings[cd.channel],
             });
+        }
+
+        // Clonal Medoid Reference Augmentation:
+        // In `select_landmarks_from_pool`, the first landmarks are the pure clonal medoids of each lineage cluster.
+        // If `home_ch` is a partially mosaic sub-lineage sister rather than the purest clade medoid (minimum mean
+        // intra-clade distance to candidate's clade), also evaluate dipoles anchored on the purest intra-clade medoid
+        // against the top external clade medoids so shared sub-lineage tracts (e.g. 1169-1269 in pop2) are not masked!
+        let mut best_medoid_ch = None;
+        let mut min_intra_d = f64::INFINITY;
+        for &ch in &contemporary_channels {
+            let l_idx = landmarks.indices[ch - 1];
+            let d_cl = crate::landmarks::compute_pairwise_distance(aln, candidate_idx, l_idx);
+            if d_cl <= d_clade && d_cl >= d_sister {
+                // Check mean distance of l_idx to all landmarks in the same clade
+                let mut sum_d = 0.0;
+                let mut cnt = 0usize;
+                for &ch2 in &contemporary_channels {
+                    let l2 = landmarks.indices[ch2 - 1];
+                    if crate::landmarks::compute_pairwise_distance(aln, l_idx, l2) <= d_clade {
+                        sum_d += crate::landmarks::compute_pairwise_distance(aln, l_idx, l2);
+                        cnt += 1;
+                    }
+                }
+                let mean_d = if cnt > 0 { sum_d / (cnt as f64) } else { d_cl };
+                if mean_d < min_intra_d {
+                    min_intra_d = mean_d;
+                    best_medoid_ch = Some(ch);
+                }
+            }
+        }
+        if let Some(med_h_ch) = best_medoid_ch {
+            if med_h_ch != home_ch {
+                let mh_k = med_h_ch - 1;
+                let mh_name = landmarks
+                    .taxa
+                    .get(mh_k)
+                    .cloned()
+                    .unwrap_or_else(|| "Home".to_string());
+                let mh_global = landmarks.indices.get(mh_k).copied();
+                for cd in &candidate_donors {
+                    if cd.is_ghost {
+                        continue;
+                    }
+                    let dk = cd.channel.saturating_sub(1);
+                    pairs.push(TrajectoryParentalPair {
+                        candidate_idx,
+                        home_channel: med_h_ch,
+                        donor_channel: cd.channel,
+                        home_landmark_idx: Some(mh_k),
+                        donor_landmark_idx: Some(dk),
+                        is_ghost_donor: false,
+                        home_name: mh_name.clone(),
+                        donor_name: landmarks
+                            .taxa
+                            .get(dk)
+                            .cloned()
+                            .unwrap_or_else(|| "Donor".to_string()),
+                        home_global_idx: mh_global,
+                        donor_global_idx: landmarks.indices.get(dk).copied(),
+                        swing_home: swings[med_h_ch],
+                        swing_donor: swings[cd.channel],
+                    });
+                }
+            }
         }
 
         // Multi-Way Mosaicism: Also evaluate secondary reticulation dipoles between distinct donor clades
@@ -464,6 +570,39 @@ impl TrajectoryParentalResolver {
                         });
                     }
                 }
+            }
+        }
+
+        // Unsampled Outgroup / Ghost Cassette Dipole:
+        // Even when a candidate also carries contemporary inter-clade transfers (so r_root < 0.50 overall),
+        // an additional localized cassette from an unsampled outgroup produces a significant excursion
+        // in Channel 0 (Root) opposing the candidate's clonal clade medoid.
+        if !pairs.iter().any(|p| p.is_ghost_donor)
+            && (allow_ghost || n >= 16)
+            && (z_swings[0] >= k_crit_att * s2 || swings[0] >= self.min_root_swing * s2)
+        {
+            if let Some(ghost_home_ch) =
+                best_medoid_ch.or(if allow_ghost { Some(home_ch) } else { None })
+            {
+                let gh_k = ghost_home_ch.saturating_sub(1);
+                pairs.push(TrajectoryParentalPair {
+                    candidate_idx,
+                    home_channel: ghost_home_ch,
+                    donor_channel: 0,
+                    home_landmark_idx: Some(gh_k),
+                    donor_landmark_idx: None,
+                    is_ghost_donor: true,
+                    home_name: landmarks
+                        .taxa
+                        .get(gh_k)
+                        .cloned()
+                        .unwrap_or_else(|| "Home".to_string()),
+                    donor_name: "Ghost".to_string(),
+                    home_global_idx: landmarks.indices.get(gh_k).copied(),
+                    donor_global_idx: None,
+                    swing_home: swings[ghost_home_ch],
+                    swing_donor: swings[0],
+                });
             }
         }
 

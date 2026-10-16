@@ -35,7 +35,7 @@ pub fn jukes_cantor_distance(p: f64) -> f64 {
 
 /// Computes empirical scale-invariant sister and clade distance thresholds from the alignment.
 /// - d_sister: Poisson transmission drift floor, bounded below by 3 / L
-/// - d_clade: 10th percentile of positive pairwise distances, bounded below by 5 / L
+/// - d_clade: Spectral gap separating intra-lineage from inter-lineage distances (or 10th percentile fallback), bounded below by 5 / L
 pub fn compute_scale_invariant_distance_thresholds(aln: &Alignment) -> (f64, f64) {
     let l_f64 = aln.length.max(1) as f64;
     let sister_floor = 0.008f64.max(3.0 / l_f64);
@@ -74,11 +74,65 @@ pub fn compute_scale_invariant_distance_thresholds(aln: &Alignment) -> (f64, f64
     let d_sister = dists[idx_01.min(dists.len() - 1)].max(sister_floor);
 
     let idx_10 = (0.10 * (dists.len() as f64)).floor() as usize;
-    let d_clade = dists[idx_10.min(dists.len() - 1)]
+    let d_p10 = dists[idx_10.min(dists.len() - 1)]
         .max(clade_floor)
         .max(1.5 * d_sister);
 
+    // Search for a multimodal inter-lineage spectral gap in [p05, p60]
+    let mut d_clade = d_p10;
+    if dists.len() >= 10 {
+        let s_idx = ((0.05 * (dists.len() as f64)).floor() as usize).max(1);
+        let e_idx = ((0.60 * (dists.len() as f64)).floor() as usize).min(dists.len() - 1);
+        if e_idx > s_idx {
+            let mut max_gap = 0.0f64;
+            let mut best_k = s_idx;
+            let span_ref = (dists[e_idx] - dists[s_idx]).max(1e-9);
+            for k in s_idx..e_idx {
+                if dists[k] >= d_sister {
+                    let gap = dists[k + 1] - dists[k];
+                    if gap > max_gap {
+                        max_gap = gap;
+                        best_k = k;
+                    }
+                }
+            }
+            // Adopt the spectral gap midpoint when a clear inter-population jump exists
+            let rel_ratio = dists[best_k + 1] / dists[best_k].max(1e-9);
+            if max_gap >= 0.15 * span_ref && rel_ratio >= 1.25 {
+                let gap_mid = 0.5 * (dists[best_k] + dists[best_k + 1]);
+                d_clade = gap_mid.max(d_p10);
+            }
+        }
+    }
+
     (d_sister, d_clade)
+}
+
+/// Partitions alignment taxa into connected lineage clusters at distance threshold `d_clade`
+pub fn partition_lineage_clusters(aln: &Alignment, d_clade: f64) -> Vec<Vec<usize>> {
+    let n = aln.num_taxa;
+    let mut visited = vec![false; n];
+    let mut clusters = Vec::new();
+
+    for i in 0..n {
+        if !visited[i] {
+            let mut comp = Vec::new();
+            let mut queue = vec![i];
+            visited[i] = true;
+            while let Some(curr) = queue.pop() {
+                comp.push(curr);
+                for j in 0..n {
+                    if !visited[j] && compute_pairwise_distance(aln, curr, j) <= d_clade {
+                        visited[j] = true;
+                        queue.push(j);
+                    }
+                }
+            }
+            comp.sort_unstable();
+            clusters.push(comp);
+        }
+    }
+    clusters
 }
 
 /// Builds Full-Cohort LandmarkSet when N <= 64 (zero-subsampling manifold tracking)
@@ -193,29 +247,77 @@ pub fn select_landmarks_from_pool(
     };
 
     let pool_len = pool.len();
-    let k = target_k.min(pool_len).max(1);
+    let max_k = target_k.min(pool_len).max(1);
+    let (_d_sister, d_clade) = compute_scale_invariant_distance_thresholds(alignment);
 
-    // 1. Sequence 1: sequence in pool with fewest gaps/missing data
-    let mut best_first_idx = pool[0];
-    let mut max_valid = 0;
-    for &i in &pool {
-        let row = aln_row_valid_count(alignment, i);
-        if row > max_valid {
-            max_valid = row;
-            best_first_idx = i;
+    // 1. Seed with the clonal medoid of each lineage cluster present in the pool
+    // Pure non-recombinant strains minimize mean intra-cluster distance, ensuring
+    // every population has a clean clonal representative before farthest-point sampling.
+    let clusters = partition_lineage_clusters(alignment, d_clade);
+    let mut selected_indices = Vec::with_capacity(max_k);
+
+    for comp in &clusters {
+        if selected_indices.len() >= max_k {
+            break;
+        }
+        let comp_in_pool: Vec<usize> = comp.iter().copied().filter(|i| pool.contains(i)).collect();
+        if comp_in_pool.is_empty() {
+            continue;
+        }
+        let mut best_medoid = comp_in_pool[0];
+        let mut best_mean_d = f64::INFINITY;
+        let mut best_valid = 0usize;
+        for &i in &comp_in_pool {
+            let sum_d: f64 = comp_in_pool
+                .iter()
+                .map(|&j| {
+                    if i == j {
+                        0.0
+                    } else {
+                        compute_pairwise_distance(alignment, i, j)
+                    }
+                })
+                .sum();
+            let mean_d = sum_d / (comp_in_pool.len() as f64);
+            let valid = aln_row_valid_count(alignment, i);
+            if mean_d < best_mean_d - 1e-12
+                || ((mean_d - best_mean_d).abs() <= 1e-12 && valid > best_valid)
+            {
+                best_mean_d = mean_d;
+                best_valid = valid;
+                best_medoid = i;
+            }
+        }
+        if !selected_indices.contains(&best_medoid) {
+            selected_indices.push(best_medoid);
         }
     }
 
-    let mut selected_indices = Vec::with_capacity(k);
-    selected_indices.push(best_first_idx);
+    if selected_indices.is_empty() {
+        let mut best_first_idx = pool[0];
+        let mut max_valid = 0;
+        for &i in &pool {
+            let row = aln_row_valid_count(alignment, i);
+            if row > max_valid {
+                max_valid = row;
+                best_first_idx = i;
+            }
+        }
+        selected_indices.push(best_first_idx);
+    }
 
-    if k > 1 {
+    if max_k > selected_indices.len() {
         let mut min_dists: Vec<f64> = pool
             .iter()
-            .map(|&i| compute_pairwise_distance(alignment, i, best_first_idx))
+            .map(|&i| {
+                selected_indices
+                    .iter()
+                    .map(|&s| compute_pairwise_distance(alignment, i, s))
+                    .fold(f64::INFINITY, f64::min)
+            })
             .collect();
 
-        for _ in 1..k {
+        while selected_indices.len() < max_k {
             let mut best_cand = pool[0];
             let mut max_min_d = -1.0;
             for (idx, &i) in pool.iter().enumerate() {
@@ -223,6 +325,10 @@ pub fn select_landmarks_from_pool(
                     max_min_d = min_dists[idx];
                     best_cand = i;
                 }
+            }
+            // Stop adding duplicate haplotypes once all distinct sequences are covered
+            if max_min_d <= 1e-12 {
+                break;
             }
             selected_indices.push(best_cand);
 
@@ -235,6 +341,7 @@ pub fn select_landmarks_from_pool(
         }
     }
 
+    let k = selected_indices.len();
     let landmark_taxa: Vec<String> = selected_indices
         .iter()
         .map(|&i| alignment.taxa[i].clone())

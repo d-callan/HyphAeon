@@ -5,6 +5,7 @@ pub struct SequenceDueDiligence {
     pub poisson_floor: usize,
     pub alpha: f64,
     pub stringency: f64,
+    pub compression_ratio: f64,
     pub d_sister: Option<f64>,
     log_factorials: Vec<f64>,
 }
@@ -28,6 +29,7 @@ impl SequenceDueDiligence {
             poisson_floor,
             alpha,
             stringency: 1.0,
+            compression_ratio: 1.0,
             d_sister: None,
             log_factorials: log_facts,
         }
@@ -35,6 +37,11 @@ impl SequenceDueDiligence {
 
     pub fn with_stringency(mut self, stringency: f64) -> Self {
         self.stringency = stringency;
+        self
+    }
+
+    pub fn with_compression_ratio(mut self, ratio: f64) -> Self {
+        self.compression_ratio = ratio.clamp(0.005, 1.0);
         self
     }
 
@@ -115,10 +122,15 @@ impl SequenceDueDiligence {
         let u2 = tract.u2_discrete;
         let tract_len = if u2 >= u1 { u2 - u1 + 1 } else { 0 };
 
-        let min_len = if (s3 - 1.0).abs() < 1e-9 {
-            20
+        let base_min_len = if (s3 - 1.0).abs() < 1e-9 {
+            20.0
         } else {
-            ((20.0 * s3).round() as usize).clamp(8, 150)
+            (20.0 * s3).clamp(8.0, 150.0)
+        };
+        let min_len = if self.compression_ratio < 0.999 {
+            ((base_min_len * self.compression_ratio).round() as usize).max(4)
+        } else {
+            base_min_len.round() as usize
         };
         if tract_len < min_len || !tract.is_physically_significant {
             return None;
@@ -136,8 +148,19 @@ impl SequenceDueDiligence {
         }
 
         // Candidate recombinants cannot serve as Home parental reference for ghost donors
+        // unless the entire cohort was admitted as candidates (pervasive recombination regime,
+        // where no unscreened clonal_backbone_indices exist) AND `home_global` is the clonal
+        // medoid of `cand_idx`'s lineage cluster (`d <= d_clade`).
         if parental.is_ghost_donor && candidate_indices.contains(&home_global) {
-            return None;
+            if candidate_indices.len() + rate_burst_indices.len() < aln.num_taxa {
+                return None;
+            }
+            let (_d_sister, d_clade) =
+                crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
+            let d_ch = crate::landmarks::compute_pairwise_distance(aln, cand_idx, home_global);
+            if d_ch > d_clade {
+                return None;
+            }
         }
 
         let cand_row = aln.row(cand_idx);
@@ -234,11 +257,31 @@ impl SequenceDueDiligence {
                             s_donor += 1;
                         }
                     } else {
-                        valid_flank += 1;
-                        if rc != rh {
-                            mismatch_flank_home += 1;
-                        } else {
-                            s_home_flank += 1;
+                        // In a multi-way mosaic candidate within a multi-lineage cohort (N >= 16),
+                        // the flank outside [s_idx, e_idx] may contain a separate contemporary introgression
+                        // tract where `rc != rh` because `rc` matches a sampled external landmark (`rl == rc`)
+                        // at `d(cand, l_idx) > d_clade`. Excluding such contemporary-donor flank sites prevents
+                        // a large contemporary tract elsewhere in the genome from artificially inflating the
+                        // clonal Home-mismatch baseline `c` in the Ghost Fisher test.
+                        let matches_ext_landmark = aln.num_taxa >= 16 && rc != rh && {
+                            let (_d_sister, d_clade) =
+                                crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
+                            _landmarks.indices.iter().any(|&l_idx| {
+                                l_idx != cand_idx
+                                    && l_idx != home_global
+                                    && crate::landmarks::compute_pairwise_distance(
+                                        aln, cand_idx, l_idx,
+                                    ) > d_clade
+                                    && aln.row(l_idx)[u] == rc
+                            })
+                        };
+                        if !matches_ext_landmark {
+                            valid_flank += 1;
+                            if rc != rh {
+                                mismatch_flank_home += 1;
+                            } else {
+                                s_home_flank += 1;
+                            }
                         }
                     }
                 }
@@ -253,6 +296,128 @@ impl SequenceDueDiligence {
         };
         if s_donor < eff_poisson_floor {
             return None;
+        }
+
+        // Lineage Majority Polarity Invariant:
+        // When a candidate C belongs to a multi-isolate lineage cluster (|L_C| >= 4 at d <= d_clade)
+        // and its putative Home parent H (or Donor D) is a mosaic member of the same lineage cluster,
+        // an inverted mirror artifact occurs if C actually carries the majority clonal consensus of L_C
+        // inside [s_idx, e_idx] while H (or D) is the minority mosaic recombinant inside [s_idx, e_idx].
+        // A true recent recombinant departs from its lineage's majority inside the tract; a pure clonal
+        // strain remains close to its lineage's median/consensus inside the tract.
+        if aln.num_taxa >= 6 {
+            let (d_sister, d_clade) =
+                crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
+            let mut lineage_peers = Vec::new();
+            for t_idx in 0..aln.num_taxa {
+                if crate::landmarks::compute_pairwise_distance(aln, cand_idx, t_idx) <= d_clade {
+                    lineage_peers.push(t_idx);
+                }
+            }
+
+            if lineage_peers.len() >= 4 {
+                // Compute candidate's and Home's mean distance to lineage peers inside the tract
+                let mut sum_tr_cand = 0.0f64;
+                let mut sum_tr_home = 0.0f64;
+                let mut peer_count = 0usize;
+
+                for &p_idx in &lineage_peers {
+                    let p_row = aln.row(p_idx);
+                    let mut mc = 0usize;
+                    let mut mh = 0usize;
+                    let mut v = 0usize;
+                    for u in s_idx..e_idx {
+                        let rp = p_row[u];
+                        let rc = cand_row[u];
+                        let rh = home_row[u];
+                        if rp > 0 && rc > 0 && rh > 0 {
+                            v += 1;
+                            if rc != rp {
+                                mc += 1;
+                            }
+                            if rh != rp {
+                                mh += 1;
+                            }
+                        }
+                    }
+                    if v > 0 {
+                        sum_tr_cand += (mc as f64) / (v as f64);
+                        sum_tr_home += (mh as f64) / (v as f64);
+                        peer_count += 1;
+                    }
+                }
+
+                if peer_count >= 4 {
+                    let mean_tr_cand = sum_tr_cand / (peer_count as f64);
+                    let mean_tr_home = sum_tr_home / (peer_count as f64);
+                    let d_ch =
+                        crate::landmarks::compute_pairwise_distance(aln, cand_idx, home_global);
+
+                    // 1. Home Clade Membership Invariant:
+                    // When a candidate belongs to a multi-isolate lineage cluster (|L_C| >= 4 at d <= d_clade),
+                    // its authentic Home backbone parent must belong to its own lineage cluster (d_ch <= d_clade),
+                    // preventing foreign-clade Home assignments (e.g. Home=pop2.14 for a pop1 candidate).
+                    if d_ch > d_clade {
+                        return None;
+                    }
+
+                    // 2. Inverted Home Mirror: Home is in Candidate's lineage cluster, and inside the tract
+                    // Candidate is closer to the lineage cluster consensus than Home is (i.e. Home is the mosaic outlier!)
+                    if mean_tr_cand + d_sister < mean_tr_home {
+                        return None;
+                    }
+
+                    // 3. Intra-lineage Donor Mirror: Donor is in Candidate's own lineage cluster (d_cd <= d_clade),
+                    // which represents an internal sub-lineage split rather than external introgression when external clades exist
+                    if let Some(dg) = parental.donor_global_idx {
+                        let has_external_clade = lineage_peers.len() < aln.num_taxa;
+                        let d_cd = crate::landmarks::compute_pairwise_distance(aln, cand_idx, dg);
+                        let d_hd =
+                            crate::landmarks::compute_pairwise_distance(aln, home_global, dg);
+                        if has_external_clade && d_cd <= d_clade && d_hd <= d_clade {
+                            return None;
+                        }
+                    } else if parental.is_ghost_donor {
+                        // 4. Ghost Donor Authenticity: An event is only an unsampled Ghost donor if NO external
+                        // contemporary landmark matches the candidate inside the tract significantly better than Home does.
+                        let mut best_ext_tr_d = f64::INFINITY;
+                        for &l_idx in &_landmarks.indices {
+                            if l_idx != cand_idx
+                                && crate::landmarks::compute_pairwise_distance(aln, cand_idx, l_idx)
+                                    > d_clade
+                            {
+                                let l_row = aln.row(l_idx);
+                                let mut m = 0usize;
+                                let mut v = 0usize;
+                                for u in s_idx..e_idx {
+                                    let rc = cand_row[u];
+                                    let rl = l_row[u];
+                                    if rc > 0 && rl > 0 {
+                                        v += 1;
+                                        if rc != rl {
+                                            m += 1;
+                                        }
+                                    }
+                                }
+                                if v > 0 {
+                                    let d_tr = (m as f64) / (v as f64);
+                                    if d_tr < best_ext_tr_d {
+                                        best_ext_tr_d = d_tr;
+                                    }
+                                }
+                            }
+                        }
+                        let d_tr_h = if valid_tract > 0 {
+                            (mismatch_tract_home as f64) / (valid_tract as f64)
+                        } else {
+                            1.0
+                        };
+                        if best_ext_tr_d < 0.5 * d_tr_h {
+                            return None;
+                        }
+                    }
+                }
+            }
         }
 
         // Private Autapomorphy Ratio Sieve (DIR-RHIZ-PAFF-012.8 Requirement 1.3)
@@ -889,32 +1054,35 @@ impl SequenceDueDiligence {
                     continue;
                 }
 
-                // Check if e1 cites c2 (as Home or Donor) or a member of c2's closely related lineage
+                // Check if e1 cites c2 (as Home or Donor) AND e2 cites c1 (as Home or Donor):
+                // Do NOT use broad `< d_clade` proximity to the other candidate's Home or Donor here,
+                // because if e1 (pop1 -> pop3) cites pop3.22 as Donor and e2 (pop3 -> pop2) cites pop3.3 as Home,
+                // pop3.22 and pop3.3 are both in pop3 (< d_clade), which would falsely link e1 and e2 into a 2-cycle!
+                // A true mutual 2-cycle requires e1 to cite c2 (or c2's sister clone < d_sister) AND e2 to cite c1 (or c1's sister clone < d_sister).
                 let e1_cites_c2 = (e1.home_name == *c2_name)
                     || (e1.donor_name == *c2_name)
                     || e2.isolates.contains(&e1.home_name)
                     || e2.isolates.contains(&e1.donor_name)
                     || (e1.home_idx.map_or(false, |h| {
                         crate::landmarks::compute_pairwise_distance(_aln, h, e2.candidate_idx)
-                            < d_clade
+                            < d_sister
                     }))
                     || (e1.donor_idx.map_or(false, |d| {
                         crate::landmarks::compute_pairwise_distance(_aln, d, e2.candidate_idx)
-                            < d_clade
+                            < d_sister
                     }));
 
-                // Check if e2 cites c1 (as Home or Donor) or a member of c1's closely related lineage
                 let e2_cites_c1 = (e2.home_name == *c1_name)
                     || (e2.donor_name == *c1_name)
                     || e1.isolates.contains(&e2.home_name)
                     || e1.isolates.contains(&e2.donor_name)
                     || (e2.home_idx.map_or(false, |h| {
                         crate::landmarks::compute_pairwise_distance(_aln, h, e1.candidate_idx)
-                            < d_clade
+                            < d_sister
                     }))
                     || (e2.donor_idx.map_or(false, |d| {
                         crate::landmarks::compute_pairwise_distance(_aln, d, e1.candidate_idx)
-                            < d_clade
+                            < d_sister
                     }));
 
                 if e1_cites_c2 && e2_cites_c1 {
@@ -1000,8 +1168,9 @@ impl SequenceDueDiligence {
         }
 
         // Pass 2: Asymmetric Reflected Parental Adjudication
-        // Resolves cases where candidate e2 cites candidate e1 as its Home or Donor parent
-        // across an overlapping tract, but e1 is already an authentic recombinant.
+        // Resolves cases where candidate e2 cites candidate e1 as its Home parent
+        // across an overlapping tract (causing e2 to appear to depart from e1 when in fact e1 departed!),
+        // OR where e1 and e2 are in the same clade and one cites the other as Donor.
         for i in 0..n_events {
             if pruned[i] {
                 continue;
@@ -1039,11 +1208,45 @@ impl SequenceDueDiligence {
                     continue;
                 }
 
-                // Check if e2 cites e1 (or e1's isolates) as Home or Donor
-                let e2_cites_e1 = (e2.home_name == *c1_name)
-                    || (e2.donor_name == *c1_name)
-                    || e1.isolates.contains(&e2.home_name)
-                    || e1.isolates.contains(&e2.donor_name);
+                // Check if e2 cites e1 (or e1's isolates) as Home (an inverted Home mirror where e1 is actually the recombinant),
+                // OR cites e1 as Donor when e1 and e2 belong to the same clade / swap roles.
+                // Note: If e2 is in clade A and e1 is in clade B (d(c1, c2) > d_clade), and e2 cites e1 as Donor,
+                // e1 can legitimately be a member of the donor clade B even if e1 had a different event elsewhere or from another clade,
+                // UNLESS e1's own event over this overlapping tract comes from e2's clade A!
+                let e2_cites_e1_as_home =
+                    (e2.home_name == *c1_name) || e1.isolates.contains(&e2.home_name);
+                let e2_cites_e1_as_donor =
+                    (e2.donor_name == *c1_name) || e1.isolates.contains(&e2.donor_name);
+                let e1_donor_from_e2_clade = match (e1.donor_idx, e2.home_idx) {
+                    (Some(d1), Some(h2)) => {
+                        crate::landmarks::compute_pairwise_distance(_aln, d1, e2.candidate_idx)
+                            <= d_clade
+                            || crate::landmarks::compute_pairwise_distance(_aln, d1, h2) <= d_clade
+                    }
+                    _ => false,
+                };
+                let same_cand_clade = crate::landmarks::compute_pairwise_distance(
+                    _aln,
+                    e1.candidate_idx,
+                    e2.candidate_idx,
+                ) <= d_clade;
+                let same_donor_clade = e1.donor_name == e2.donor_name
+                    || (e1.is_ghost_donor && e2.is_ghost_donor)
+                    || match (e1.donor_idx, e2.donor_idx) {
+                        (Some(d1), Some(d2)) => {
+                            crate::landmarks::compute_pairwise_distance(_aln, d1, d2) <= d_clade
+                        }
+                        _ => false,
+                    };
+
+                // Note: In population-scale multi-lineage cohorts (N >= 16), if e1 and e2 are in the same
+                // candidate clade and share the same external donor clade over this overlapping tract,
+                // they are co-recombinant sisters (to be resolved by `resolve_donor_chains` and `group_ancestral_events`),
+                // NOT an asymmetric reflected illusion!
+                let is_corecombinant_sister_pair =
+                    _aln.num_taxa >= 16 && same_cand_clade && same_donor_clade;
+                let e2_cites_e1 = (e2_cites_e1_as_home && !is_corecombinant_sister_pair)
+                    || (e2_cites_e1_as_donor && (same_cand_clade || e1_donor_from_e2_clade));
 
                 if e2_cites_e1 {
                     // e2 is citing an active recombinant candidate as parent.
@@ -1088,29 +1291,8 @@ impl SequenceDueDiligence {
                         } else if e1.p_fisher <= e2.p_fisher {
                             pruned[j] = true;
                         } else {
-                            // Tie-break by mosaic reconstruction residual, z_phys, and informative sites
-                            let res1 = e1.d_tract_donor + e1.d_flank_home;
-                            let res2 = e2.d_tract_donor + e2.d_flank_home;
-                            if (res1 - res2).abs() > 1e-4 {
-                                if res1 < res2 {
-                                    pruned[j] = true;
-                                } else {
-                                    pruned[i] = true;
-                                    break;
-                                }
-                            } else if e1.z_phys != e2.z_phys {
-                                if e1.z_phys > e2.z_phys {
-                                    pruned[j] = true;
-                                } else {
-                                    pruned[i] = true;
-                                    break;
-                                }
-                            } else if e1.s_informative >= e2.s_informative {
-                                pruned[j] = true;
-                            } else {
-                                pruned[i] = true;
-                                break;
-                            }
+                            pruned[i] = true;
+                            break;
                         }
                     }
                 }

@@ -188,10 +188,18 @@ impl RhizAeonEngine {
 
         // 6. Pass 2 Polishing & Pass 3 Due Diligence on candidates
         let (d_sister, _) = crate::landmarks::compute_scale_invariant_distance_thresholds(&aln);
+        let compression_ratio = if snp_map_opt.is_some() {
+            (l as f64) / (l_chromosomal.max(1) as f64)
+        } else {
+            1.0
+        };
         let resolver = TrajectoryParentalResolver::new().with_stringency(self.tier2_stringency);
-        let polisher = CumulativeTrajectoryPolisher::new().with_stringency(self.tier2_stringency);
+        let polisher = CumulativeTrajectoryPolisher::new()
+            .with_stringency(self.tier2_stringency)
+            .with_compression_ratio(compression_ratio);
         let due_diligence = SequenceDueDiligence::new(self.poisson_floor, self.alpha, 100_000)
             .with_stringency(self.tier3_stringency)
+            .with_compression_ratio(compression_ratio)
             .with_d_sister(d_sister);
 
         let mut verified_events = Vec::new();
@@ -232,7 +240,7 @@ impl RhizAeonEngine {
                     &screening.ghost_candidate_indices,
                 );
 
-                let tract_opt = due_diligence.verify_tract(
+                let mut tract_opt = due_diligence.verify_tract(
                     &tract,
                     &local_parental,
                     &aln,
@@ -240,6 +248,31 @@ impl RhizAeonEngine {
                     &screening.rate_burst_indices,
                     &screening.candidate_recombinant_indices,
                 );
+
+                // Ghost Donor Fallback for Unsampled Outgroup Cassettes:
+                // When an introgressed tract comes from an unsampled outgroup (Ghost), contemporary
+                // landmarks from external clades can still capture partial softmax flux (because the
+                // candidate departs sharply from its Home clade), causing the polisher to segment the
+                // tract on a contemporary channel while `verify_tract` rejects that contemporary donor
+                // (since the candidate does not match it in the tract). In that case, test whether the
+                // tract is a verified Ghost donor cassette against the resolved Home parent.
+                if tract_opt.is_none() && !local_parental.is_ghost_donor {
+                    let mut ghost_parental = local_parental.clone();
+                    ghost_parental.donor_channel = 0;
+                    ghost_parental.donor_landmark_idx = None;
+                    ghost_parental.is_ghost_donor = true;
+                    ghost_parental.donor_name = "Ghost".to_string();
+                    ghost_parental.donor_global_idx = None;
+
+                    tract_opt = due_diligence.verify_tract(
+                        &tract,
+                        &ghost_parental,
+                        &aln,
+                        &landmarks,
+                        &screening.rate_burst_indices,
+                        &screening.candidate_recombinant_indices,
+                    );
+                }
 
                 if let Some(mut event) = tract_opt {
                     if event.is_verified {
@@ -543,17 +576,18 @@ fn group_ancestral_events(
     for e in events {
         let mut found = false;
         for g in &mut grouped {
-            // Parental compatibility via midpoint bisection against inter-parental divergence:
+            // Parental compatibility via midpoint bisection against inter-parental divergence or clade threshold:
             let d_inter = match (g.home_idx, g.donor_idx) {
                 (Some(gh), Some(gd)) => crate::landmarks::compute_pairwise_distance(aln, gh, gd),
                 _ => d_clade,
             };
+            let clade_rad = d_clade.max(0.5 * d_inter);
 
-            // 1. Home compatibility: exact name match OR home leaves cluster together within midpoint radius
+            // 1. Home compatibility: exact name match OR home leaves cluster together within clade radius
             let home_matches = g.home_name == e.home_name
                 || match (g.home_idx, e.home_idx) {
                     (Some(gh), Some(eh)) => {
-                        crate::landmarks::compute_pairwise_distance(aln, gh, eh) < 0.5 * d_inter
+                        crate::landmarks::compute_pairwise_distance(aln, gh, eh) <= clade_rad
                     }
                     _ => false,
                 };
@@ -562,7 +596,7 @@ fn group_ancestral_events(
             let donor_matches = g.donor_name == e.donor_name
                 || match (g.donor_idx, e.donor_idx) {
                     (Some(gd), Some(ed)) => {
-                        crate::landmarks::compute_pairwise_distance(aln, gd, ed) < 0.5 * d_inter
+                        crate::landmarks::compute_pairwise_distance(aln, gd, ed) <= clade_rad
                     }
                     _ => false,
                 };
@@ -748,6 +782,8 @@ fn group_ancestral_events(
                     } else {
                         1.0
                     };
+                    let (_d_sister, d_clade) =
+                        crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
                     if dist_tr_c < dist_tr_h && dist_tr_h > dist_fl_h && dist_fl_h < d_clade {
                         g.isolates.push(t_name.clone());
                     }
@@ -770,11 +806,81 @@ fn group_ancestral_events(
             })
     });
 
+    // Post-recruitment consolidation: merge redundant events that recruited the same recipient cohort
+    // over the same genomic interval via sister donors/homes from the same lineage cluster.
+    let mut consolidated: Vec<crate::types::RecombinationEvent> = Vec::new();
+    for ev in grouped {
+        let mut merged_into_existing = false;
+        for existing in &mut consolidated {
+            let ov_start = ev.u1.max(existing.u1);
+            let ov_end = ev.u2.min(existing.u2);
+            if ov_end < ov_start {
+                continue;
+            }
+            let ov_len = (ov_end - ov_start + 1) as f64;
+            let min_len = ((ev.u2.saturating_sub(ev.u1) + 1)
+                .min(existing.u2.saturating_sub(existing.u1) + 1)) as f64;
+            let union_len = (ev.u2.max(existing.u2) - ev.u1.min(existing.u1) + 1) as f64;
+            let iou_span = ov_len / union_len.max(1.0);
+            let frac_span = ov_len / min_len.max(1.0);
+            if iou_span < 0.50 && frac_span < 0.70 {
+                continue;
+            }
+
+            // Recipient roster overlap
+            let shared_isolates = ev
+                .isolates
+                .iter()
+                .filter(|iso| existing.isolates.contains(iso))
+                .count();
+            let min_iso = ev.isolates.len().min(existing.isolates.len()).max(1);
+            let union_iso = (ev.isolates.len() + existing.isolates.len() - shared_isolates).max(1);
+            let jaccard_iso = (shared_isolates as f64) / (union_iso as f64);
+            let subset_iso = (shared_isolates as f64) / (min_iso as f64);
+
+            if jaccard_iso >= 0.50 || subset_iso >= 0.75 {
+                let same_home_clade = existing.home_name == ev.home_name
+                    || match (existing.home_idx, ev.home_idx) {
+                        (Some(h1), Some(h2)) => {
+                            crate::landmarks::compute_pairwise_distance(aln, h1, h2) <= d_clade
+                        }
+                        _ => false,
+                    };
+                let same_donor_clade = existing.donor_name == ev.donor_name
+                    || (existing.is_ghost_donor && ev.is_ghost_donor)
+                    || match (existing.donor_idx, ev.donor_idx) {
+                        (Some(d1), Some(d2)) => {
+                            crate::landmarks::compute_pairwise_distance(aln, d1, d2) <= d_clade
+                        }
+                        _ => false,
+                    };
+
+                if same_home_clade && same_donor_clade {
+                    existing.isolates.extend(ev.isolates.clone());
+                    existing.isolates.sort();
+                    existing.isolates.dedup();
+                    if ev.p_fisher < existing.p_fisher {
+                        existing.p_fisher = ev.p_fisher;
+                    }
+                    if ev.z_phys > existing.z_phys {
+                        existing.z_phys = ev.z_phys;
+                    }
+                    existing.s_informative = existing.s_informative.max(ev.s_informative);
+                    merged_into_existing = true;
+                    break;
+                }
+            }
+        }
+        if !merged_into_existing {
+            consolidated.push(ev);
+        }
+    }
+
     // Assign 1-based sequential event ID and sort by it
-    for (i, g) in grouped.iter_mut().enumerate() {
+    for (i, g) in consolidated.iter_mut().enumerate() {
         g.event_id = i + 1;
     }
-    grouped
+    consolidated
 }
 
 /// Deduplicates overlapping verified events across different parental channels for a single candidate taxon.
