@@ -10,8 +10,10 @@ $ pip install rhizaeon
 $ rhizaeon --input alignment.fasta --output scan.json --viz viz.json --html report.html
 ```
 
-A second console script, `export_figure1_data`, ships for paper/benchmark
-reproducibility. `python -m rhizaeon` is equivalent to `rhizaeon`.
+`python -m rhizaeon` is equivalent to `rhizaeon`. Manuscript figure/benchmark
+helpers (`export_figure1_data`, `export_figure2_data`, `grand_sweep`) live in
+the unpublished `rust/rhizaeon/crates/rhizaeon-tools` crate — run them via
+`cargo run -p rhizaeon-tools --release --bin <name>` from a source checkout.
 
 ## Development install
 

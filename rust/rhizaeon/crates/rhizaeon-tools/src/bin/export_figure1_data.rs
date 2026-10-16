@@ -152,25 +152,11 @@ fn compute_local_jc_distance(
     }
 }
 
-/// Entry point forwarded by the `export_figure1_data` Python console
-/// script. `argv` includes the program name at index 0 (clap `parse_from`
-/// semantics); `try_parse_from` keeps clap's exit() from killing the
-/// Python interpreter for programmatic callers. Returns a process exit
-/// code.
-pub fn fig1_export(argv: Vec<String>) -> i32 {
-    let args = match Args::try_parse_from(&argv) {
-        Ok(a) => a,
-        Err(e) => {
-            let _ = e.print();
-            return e.exit_code();
-        }
-    };
-    match run(args) {
-        Ok(()) => 0,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            1
-        }
+fn main() {
+    let args = Args::parse();
+    if let Err(e) = run(args) {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
     }
 }
 
