@@ -299,8 +299,18 @@ impl LocalFluxScreener {
             }
         }
 
+        let med_v_root = median(&v_root);
+        let mad_v_root = median(
+            &v_root
+                .iter()
+                .map(|&x| (x - med_v_root).abs())
+                .collect::<Vec<_>>(),
+        );
+        let scale_v_root = (1.4826 * mad_v_root).max(0.05);
+
         for i in 0..n {
             let z_r = (logit_r[i] - med_logit) / scale_logit;
+            let z_v_root = (v_root[i] - med_v_root) / scale_v_root;
 
             let is_isolated_leaf = !has_sister[i];
             if z_r > z_alpha_r
@@ -310,9 +320,11 @@ impl LocalFluxScreener {
             {
                 is_rate_burst[i] = true;
                 rate_burst_indices.push(i);
-            } else if (z_r > z_alpha_r || r_root[i] > self.root_ratio_threshold)
-                && root_pulse_stat[i] >= k_crit_root
-                && gamma_root[i] > self.spatial_coherence_threshold
+            } else if (z_r > z_alpha_r
+                || r_dim[i] > self.root_ratio_threshold
+                || z_v_root > 2.0)
+                && (root_pulse_stat[i] >= k_crit_root || root_pulse[i] >= 3.0)
+                && (!is_isolated_leaf || gamma_root[i] > self.spatial_coherence_threshold)
             {
                 is_ghost_candidate[i] = true;
                 ghost_candidate_indices.push(i);

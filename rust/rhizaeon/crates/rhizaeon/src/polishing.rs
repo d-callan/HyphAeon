@@ -198,9 +198,9 @@ impl CumulativeTrajectoryPolisher {
                     kept_at_scale.push((s_d, e_d, sc));
                 }
             }
-            // In full-length viral genomes (l >= 3000), take the single dominant window per scale;
-            // in smaller or SNP-compressed alignments, allow multiple non-overlapping cassettes per scale.
-            let max_per_scale = if self.compression_ratio < 0.999 || l < 3000 {
+            // In long full-length viral genomes (l > 6000), take the single dominant window per scale;
+            // in standard or SNP-compressed alignments, allow multiple non-overlapping cassettes per scale.
+            let max_per_scale = if self.compression_ratio < 0.999 || l <= 6000 {
                 kept_at_scale.len()
             } else {
                 1
@@ -210,9 +210,9 @@ impl CumulativeTrajectoryPolisher {
             }
         }
 
-        // When scanning full-length viral genomes (l >= 3000), apply cross-scale NMS
+        // When scanning long full-length viral genomes (l > 6000) with many windows, apply cross-scale NMS
         // so concentric scales (30..800) over a single cassette do not fragment it.
-        if l >= 3000 && self.compression_ratio >= 0.999 {
+        if l > 6000 && self.compression_ratio >= 0.999 && candidates.len() > 4 {
             candidates.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
             let mut final_hits: Vec<(usize, usize)> = Vec::new();
             for (s_d, e_d, _) in candidates {

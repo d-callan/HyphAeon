@@ -78,17 +78,17 @@ pub fn compute_scale_invariant_distance_thresholds(aln: &Alignment) -> (f64, f64
         .max(clade_floor)
         .max(1.5 * d_sister);
 
-    // Search for a multimodal inter-lineage spectral gap in [p05, p35]
+    // Search for a multimodal inter-lineage spectral gap in [p05, p50]
     let mut d_clade = d_p10;
     if dists.len() >= 28 {
         let s_idx = ((0.05 * (dists.len() as f64)).floor() as usize).max(1);
-        let e_idx = ((0.35 * (dists.len() as f64)).floor() as usize).min(dists.len() - 1);
+        let e_idx = ((0.50 * (dists.len() as f64)).floor() as usize).min(dists.len() - 1);
         if e_idx > s_idx {
             let mut max_gap = 0.0f64;
             let mut best_k = s_idx;
             let span_ref = (dists[e_idx] - dists[s_idx]).max(1e-9);
             for k in s_idx..e_idx {
-                if dists[k] >= d_sister {
+                if dists[k] >= d_sister && dists[k] <= 3.0 * d_p10 {
                     let gap = dists[k + 1] - dists[k];
                     if gap > max_gap {
                         max_gap = gap;

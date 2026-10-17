@@ -246,10 +246,40 @@ impl TrajectoryParentalResolver {
             (best_pair.1, best_pair.0)
         };
 
-        // If there's an undisputed sequence-wide dominant backbone channel among contemporary channels:
-        for &ch in &contemporary_channels {
-            if mean_a[ch] > 1.3 * mean_a[home_ch] && swings[ch] < swings[home_ch] {
-                home_ch = ch;
+        // Co-recombinant sisters (d < d_sister) cannot serve as Home parental reference
+        // when non-sister contemporary landmarks (d >= d_sister) exist:
+        let non_sister_channels: Vec<usize> = contemporary_channels
+            .iter()
+            .copied()
+            .filter(|&ch| {
+                let l_idx = landmarks.indices[ch - 1];
+                crate::landmarks::compute_pairwise_distance(aln, candidate_idx, l_idx) >= d_sister
+            })
+            .collect();
+
+        if !non_sister_channels.is_empty() {
+            let h_idx = landmarks.indices[home_ch.saturating_sub(1)];
+            if crate::landmarks::compute_pairwise_distance(aln, candidate_idx, h_idx) < d_sister {
+                let mut best_ns_home = non_sister_channels[0];
+                let mut best_ns_mean = -1.0f64;
+                for &ch in &non_sister_channels {
+                    if mean_a[ch] > best_ns_mean {
+                        best_ns_mean = mean_a[ch];
+                        best_ns_home = ch;
+                    }
+                }
+                home_ch = best_ns_home;
+            }
+            for &ch in &non_sister_channels {
+                if mean_a[ch] > 1.3 * mean_a[home_ch] && swings[ch] < swings[home_ch] {
+                    home_ch = ch;
+                }
+            }
+        } else {
+            for &ch in &contemporary_channels {
+                if mean_a[ch] > 1.3 * mean_a[home_ch] && swings[ch] < swings[home_ch] {
+                    home_ch = ch;
+                }
             }
         }
 
@@ -715,7 +745,18 @@ impl TrajectoryParentalResolver {
         }
 
         if is_ghost {
-            let home_candidates = contemporary_channels.clone();
+            let mut home_candidates: Vec<usize> = contemporary_channels
+                .iter()
+                .copied()
+                .filter(|&ch| {
+                    let l_idx = landmarks.indices[ch - 1];
+                    crate::landmarks::compute_pairwise_distance(aln, candidate_idx, l_idx)
+                        >= d_sister
+                })
+                .collect();
+            if home_candidates.is_empty() {
+                home_candidates = contemporary_channels.clone();
+            }
             let mut best_home_ch = home_candidates[0];
             let mut max_w_fl = f64::NEG_INFINITY;
             for &ch in &home_candidates {
@@ -941,8 +982,21 @@ impl TrajectoryParentalResolver {
         let mut home_candidates: Vec<usize> = contemporary_channels
             .iter()
             .cloned()
-            .filter(|&ch| ch != final_donor_ch)
+            .filter(|&ch| {
+                if ch == final_donor_ch {
+                    return false;
+                }
+                let l_idx = landmarks.indices[ch - 1];
+                crate::landmarks::compute_pairwise_distance(aln, candidate_idx, l_idx) >= d_sister
+            })
             .collect();
+        if home_candidates.is_empty() {
+            home_candidates = contemporary_channels
+                .iter()
+                .cloned()
+                .filter(|&ch| ch != final_donor_ch)
+                .collect();
+        }
         if home_candidates.is_empty() {
             home_candidates = contemporary_channels.clone();
         }
