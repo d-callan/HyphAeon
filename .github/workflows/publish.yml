@@ -73,10 +73,27 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
       - uses: PyO3/maturin-action@v1
         with:
           working-directory: ${{ needs.verify.outputs.dir }}
           args: --release --out dist
+      - name: Smoke-test the built wheel
+        shell: bash
+        run: |
+          python -m pip install "${{ needs.verify.outputs.dir }}"/dist/*.whl
+          cd "$RUNNER_TEMP"  # exercise the installed wheel, not the source tree
+          if [ "${{ needs.verify.outputs.dir }}" = "aeon-core" ]; then
+            # aeon-core ships no console script; importing the extension
+            # is the smoke check.
+            python -c "import aeon_core._native"
+          else
+            # Console-script name matches the package dir for rhizaeon
+            # and trace50; --version exits 0 without touching data files.
+            ${{ needs.verify.outputs.dir }} --version
+          fi
       - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
@@ -133,6 +150,15 @@ jobs:
           cd ${{ needs.verify.outputs.dir }}
           python -m build
           twine check dist/*
+      - name: Smoke-test the built wheel
+        run: |
+          # CPU torch keeps dep resolution small; the wheel's declared
+          # floors (incl. hyphaeon-core) are still resolved from PyPI, so
+          # this also catches a bad dependency pin before upload.
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install "${{ needs.verify.outputs.dir }}"/dist/*.whl
+          cd "$(mktemp -d)"  # exercise the installed wheel, not the source tree
+          ${{ needs.verify.outputs.dir }} --version
       - name: Upload to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:

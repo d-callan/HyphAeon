@@ -19,6 +19,8 @@ import pytest
 from chronaeon.autoclock import (
     AutoClockDeconvolution,
     HierarchicalAutoClock,
+    fit_clock,
+    recursive_spectral_autoclock,
     run_autoclock_deconvolution,
     run_hierarchical_autoclock,
     select_adaptive_n_landmarks,
@@ -189,3 +191,80 @@ class TestHierarchicalAutoClock:
         )
 
         assert result["n_leaves"] == 1
+
+
+class TestNativeReshapeContract:
+    """``fit_clock`` / ``recursive_spectral_autoclock`` delegate to
+    ``aeon_core._native`` and reshape the serialized SteveCommunity JSON
+    into the chronaeon fit-dict. These tests pin that contract so a
+    Rust-side field rename fails here rather than silently producing
+    missing keys downstream. (The legacy pure-Python kernel was removed;
+    chronaeon hard-depends on the native extension, so there is no
+    fallback path to parity-test.)"""
+
+    FIT_KEYS = {
+        "n", "mu", "se", "r2", "rss", "tot_var", "aicc", "tmrca",
+        "ci_mrca", "fieller_status", "mean_dist", "max_dist", "span",
+        "d0", "n_eff", "ci_mu", "is_active_outbreak", "operational_tier",
+    }
+
+    def _additive_clock(self, n=10, mu=0.004, t0=2020.0, span=4.0):
+        dates = np.array([t0 + span * i / (n - 1) for i in range(n)])
+        D = np.abs(dates[:, None] - dates[None, :]) * mu
+        return dates, D
+
+    def _two_clusters(self, nh=8):
+        n = 2 * nh
+        dates = np.array([2020.0 + 0.1 * (i % nh) for i in range(n)])
+        D = np.zeros((n, n))
+        for i in range(n):
+            for j in range(n):
+                if i != j:
+                    D[i, j] = 0.002 if (i < nh) == (j < nh) else 0.4
+        return dates, D
+
+    def test_fit_clock_returns_full_fit_dict(self):
+        n = 10
+        dates, D = self._additive_clock(n)
+        fit = fit_clock(np.arange(n), dates, D)
+        assert self.FIT_KEYS <= set(fit.keys()), (
+            f"missing keys: {self.FIT_KEYS - set(fit.keys())}"
+        )
+        # Perfectly additive clock: exact recovery of mu and t0.
+        assert fit["mu"] == pytest.approx(0.004, abs=1e-9)
+        assert fit["tmrca"] == pytest.approx(2020.0, abs=1e-9)
+        assert fit["n"] == n
+
+    def test_recursive_autoclock_tuple_contract(self):
+        nh, n = 8, 16
+        dates, D = self._two_clusters(nh)
+        leaves = recursive_spectral_autoclock(np.arange(n), dates, D)
+        assert len(leaves) == 2
+        for sub_idx, fit, stop_reason, path in leaves:
+            assert isinstance(sub_idx, np.ndarray)
+            assert self.FIT_KEYS <= set(fit.keys())
+            assert isinstance(stop_reason, str) and stop_reason
+            assert isinstance(path, str) and path.startswith("root.")
+        members = sorted(int(m) for leaf in leaves for m in leaf[0])
+        assert members == list(range(n))
+
+    def test_is_ref_is_currently_inert(self):
+        # `is_ref` is threaded through for signature parity but documented
+        # as inert on both sides (reserved for reference-anchor
+        # weighting). If it ever becomes active this test should fail
+        # loudly rather than silently change partitioning.
+        nh, n = 8, 16
+        dates, D = self._two_clusters(nh)
+        is_ref = np.zeros(n, dtype=bool)
+        is_ref[:4] = True
+        plain = recursive_spectral_autoclock(np.arange(n), dates, D)
+        with_ref = recursive_spectral_autoclock(
+            np.arange(n), dates, D, is_ref_array=is_ref
+        )
+        assert len(plain) == len(with_ref)
+        for (idx_a, fit_a, stop_a, path_a), (idx_b, fit_b, stop_b, path_b) in zip(
+            plain, with_ref
+        ):
+            np.testing.assert_array_equal(idx_a, idx_b)
+            assert stop_a == stop_b and path_a == path_b
+            assert fit_a == fit_b
