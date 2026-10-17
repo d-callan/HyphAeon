@@ -23,7 +23,13 @@ struct CliArgs {
     ///
     /// `-i`/`--input` aliases keep parity with `rhizaeon -i/--input` so
     /// muscle memory carries across the Aeon command-line tools.
-    #[arg(short, long, required = true, visible_short_alias = 'i', visible_alias = "input")]
+    #[arg(
+        short,
+        long,
+        required = true,
+        visible_short_alias = 'i',
+        visible_alias = "input"
+    )]
     fasta: PathBuf,
 
     /// Optional metadata CSV/TSV file with taxon IDs and collection dates
