@@ -853,7 +853,9 @@ mod tests {
                 }
             }
         }
-        let fiedler: Vec<f64> = (0..n).map(|i| if i < n_half { -0.5 } else { 0.5 }).collect();
+        let fiedler: Vec<f64> = (0..n)
+            .map(|i| if i < n_half { -0.5 } else { 0.5 })
+            .collect();
         (w, fiedler, n)
     }
 
@@ -886,9 +888,7 @@ mod tests {
     /// distance `d_in`, cross-cluster `d_out`, spread-out dates.
     fn two_cluster_fixture(n_half: usize, d_in: f64, d_out: f64) -> (Vec<f64>, Vec<f64>) {
         let n = 2 * n_half;
-        let dates: Vec<f64> = (0..n)
-            .map(|i| 2020.0 + 0.1 * (i % n_half) as f64)
-            .collect();
+        let dates: Vec<f64> = (0..n).map(|i| 2020.0 + 0.1 * (i % n_half) as f64).collect();
         let mut d = vec![0.0; n * n];
         for i in 0..n {
             for j in 0..n {
@@ -947,7 +947,8 @@ mod tests {
         // All-zero distances: no nonzero entries -> identical_submanifold.
         let (dates, d_zero) = two_cluster_fixture(4, 0.0, 0.0);
         let idx: Vec<usize> = (0..8).collect();
-        let leaves = recursive_autoclock_deconvolution(&idx, &dates, &d_zero, 8, 3, 5, 0, "root", 0.65);
+        let leaves =
+            recursive_autoclock_deconvolution(&idx, &dates, &d_zero, 8, 3, 5, 0, "root", 0.65);
         assert_eq!(leaves.len(), 1);
         assert_eq!(leaves[0].stop_reason, "identical_submanifold");
 
