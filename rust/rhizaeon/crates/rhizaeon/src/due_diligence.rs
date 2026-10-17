@@ -328,7 +328,9 @@ impl SequenceDueDiligence {
                     // over the clonal peers (or all peers if the entire lineage was screened as candidates),
                     // preventing an expanded recombinant swarm from outvoting its true clonal Home parent.
                     if candidate_indices.contains(&p_idx)
-                        && lineage_peers.iter().any(|&q| !candidate_indices.contains(&q))
+                        && lineage_peers
+                            .iter()
+                            .any(|&q| !candidate_indices.contains(&q))
                     {
                         continue;
                     }
