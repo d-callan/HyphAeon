@@ -206,8 +206,10 @@ fn tn93_reporting_gates_are_explicit() {
 
 // ---- Header-date parsers --------------------------------------------------
 
-/// The parsers share one format exactly: a `|`-delimited decimal year in
-/// [1950, 2035]. Pin the agreement.
+/// The parsers share the calendar-correct core exactly: `|`-delimited
+/// decimal years in [1950, 2035], ISO calendar dates via the shared
+/// ymd_to_decimal/ym_to_decimal helpers (calendar-precise midpoints), and
+/// rejection of impossible calendar days. Pin the agreement.
 #[test]
 fn date_parsers_agree_on_pipe_decimal_year() {
     for h in ["seq|2013.81", "ID|2001.0", "x|1950.0"] {
@@ -216,15 +218,25 @@ fn date_parsers_agree_on_pipe_decimal_year() {
         assert_eq!(t, m, "decimal-year divergence on {h:?}");
         assert!(t.is_finite());
     }
-    // Both refuse headers with no parseable date.
+    // ISO calendar dates resolve identically through the shared helpers.
+    for h in ["ID|2021-04-15", "seq|2020-12-31", "x|2000-02-29"] {
+        let t = trace50_parse_date(h);
+        let m = manifold_parse_date(h);
+        assert_eq!(t, m, "ISO-date divergence on {h:?}");
+        assert!(t.is_finite());
+    }
+    // Both reject impossible calendar days and dateless headers.
+    assert!(trace50_parse_date("ID|2020-02-30").is_nan());
+    assert!(manifold_parse_date("ID|2020-02-30").is_nan());
     assert!(trace50_parse_date("no date in this").is_nan());
     assert!(manifold_parse_date("no date in this").is_nan());
 }
 
-/// Everywhere else the two parsers diverge *by design* — trace50 uses
-/// calendar-precise DANNO path-b semantics, manifold uses the simpler
-/// first-token rules it inherited from the old trace50 header parser.
-/// These pins are the checklist a merge refactor must resolve explicitly.
+/// The remaining divergences are semantic, not arithmetic: trace50 uses
+/// DANNO path-b midpoint conventions and format-priority scanning, manifold
+/// keeps the simpler first-token rules it inherited from the old trace50
+/// header parser. These pins are the checklist the chronaeon migration
+/// must resolve explicitly.
 #[test]
 fn date_parsers_documented_divergences() {
     // Bare year in a `|` field: trace50 mid-year (+0.5), manifold the
@@ -236,18 +248,14 @@ fn date_parsers_documented_divergences() {
     assert_eq!(trace50_parse_date("HCV_2015"), 2015.5);
     assert_eq!(manifold_parse_date("HCV_2015"), 2015.0);
 
-    // ISO calendar date: trace50 converts via day-of-year/year-length;
-    // manifold approximates with (month-1)/12 + (day-1)/365.25.
-    let t = trace50_parse_date("ID|2021-04-15");
-    let m = manifold_parse_date("ID|2021-04-15");
-    assert_eq!(t, dates::ymd_to_decimal(2021, 4, 15).unwrap());
-    assert!((m - (2021.0 + 3.0 / 12.0 + 14.0 / 365.25)).abs() < 1e-9);
-    assert!((t - m).abs() > 1e-3, "ISO formulas must stay distinct");
-
-    // Invalid calendar day (Feb 30): trace50 validates and rejects the
-    // field; manifold's formula accepts any numeric day.
-    assert!(trace50_parse_date("ID|2020-02-30").is_nan());
-    assert!(manifold_parse_date("ID|2020-02-30").is_finite());
+    // Precedence: manifold is first-token-wins over a `|_/` tokenizer, so
+    // the leading `_2015` wins; trace50's format-priority scan skips it
+    // (boundary rules) and resolves the ISO field instead.
+    assert_eq!(manifold_parse_date("X_2015|2020-06-01"), 2015.0);
+    assert_eq!(
+        trace50_parse_date("X_2015|2020-06-01"),
+        dates::ymd_to_decimal(2020, 6, 1).unwrap()
+    );
 
     // DC (Perez-Losada) header: DANNO-specific, only trace50 resolves it.
     assert_eq!(trace50_parse_date("B.US.2013.DC9_0121022_PR.X"), 2013.5);

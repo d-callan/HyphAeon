@@ -109,19 +109,24 @@ pub fn parse_date_from_header(header: &str) -> f64 {
                 return val;
             }
         }
-        // ISO 8601 calendar date parse (e.g. 2021-04-15 or 2021-04)
+        // ISO 8601 calendar date (e.g. 2021-04-15 or 2021-04): calendar-
+        // precise midpoints via the shared helpers; impossible months or
+        // days are rejected rather than silently folded into a wrong date.
         let parts: Vec<&str> = token.split('-').collect();
         if parts.len() == 2 || parts.len() == 3 {
-            if let Ok(year) = parts[0].parse::<f64>() {
-                if (1950.0..=2035.0).contains(&year) {
-                    if let Ok(month) = parts[1].parse::<f64>() {
-                        if (1.0..=12.0).contains(&month) {
-                            let day = if parts.len() == 3 {
-                                parts[2].parse::<f64>().unwrap_or(15.0)
-                            } else {
-                                15.0
-                            };
-                            return year + (month - 1.0) / 12.0 + (day - 1.0) / 365.25;
+            if let Ok(year) = parts[0].parse::<i64>() {
+                if (1950..=2035).contains(&year) {
+                    if let Ok(month) = parts[1].parse::<u32>() {
+                        let d = if parts.len() == 3 {
+                            parts[2]
+                                .parse::<u32>()
+                                .ok()
+                                .and_then(|day| ymd_to_decimal(year, month, day))
+                        } else {
+                            ym_to_decimal(year, month)
+                        };
+                        if let Some(d) = d {
+                            return d;
                         }
                     }
                 }
@@ -143,12 +148,15 @@ mod tests {
 
     #[test]
     fn test_iso_dates() {
-        // 2021-04-15 -> 2021 + 3/12 + 14/365.25
+        // Calendar-precise midpoints, identical to ymd_to_decimal /
+        // ym_to_decimal (April 15 2021 is day 105 of 365).
         let d = parse_date_from_header("seq|2021-04-15");
-        assert!((d - (2021.0 + 3.0 / 12.0 + 14.0 / 365.25)).abs() < 1e-12);
-        // YYYY-MM defaults to day 15
+        assert_eq!(d, ymd_to_decimal(2021, 4, 15).unwrap());
         let m = parse_date_from_header("seq|2021-04");
-        assert!((m - (2021.0 + 3.0 / 12.0 + 14.0 / 365.25)).abs() < 1e-12);
+        assert_eq!(m, ym_to_decimal(2021, 4).unwrap());
+        // Impossible calendar dates are rejected, not approximated.
+        assert!(parse_date_from_header("seq|2020-02-30").is_nan());
+        assert!(parse_date_from_header("seq|2021-13-01").is_nan());
     }
 
     #[test]
