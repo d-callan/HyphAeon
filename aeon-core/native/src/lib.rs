@@ -80,38 +80,53 @@ fn fasta_normalize_lengths(
 
 /// Flat row-major `N x N` TN93 distance matrix from raw ASCII sequences.
 /// Ragged inputs truncate each pair to the shorter length (the historical
-/// kernel/package contract — real MASE inputs are ragged). Non-IUPAC bytes
-/// encode as mask 0 and are skipped; pairs with zero valid sites return
-/// NaN so the caller can impute them rather than treat them as identical.
+/// kernel/package contract — real MASE inputs are ragged). Non-alphabet
+/// bytes encode as the gap code and are skipped; pairs with zero valid
+/// sites return NaN so the caller can impute them rather than treat them
+/// as identical.
+///
+/// Uses `Tn93Options::legacy_all_pairs`: the pre-unification counting
+/// scheme with every comparable pair scored, bit-identical to the
+/// distances these bindings produced before the kernels were unified
+/// (chronaeon's contract). See `aeon_manifold::tn93::Counting` for the
+/// pending revalidation of Legacy under the faithful scheme.
 #[pyfunction]
 fn tn93_distance_matrix(seqs: Vec<Vec<u8>>) -> Vec<f64> {
     let enc: Vec<Vec<u8>> = seqs
         .iter()
         .map(|s| {
             s.iter()
-                .map(|&c| aeon_manifold::char_to_iupac_mask(c))
+                .map(|&c| aeon_manifold::tn93::char_to_tn93_code(c))
                 .collect()
         })
         .collect();
-    aeon_manifold::tn93::distance_matrix_nan(&enc)
+    aeon_manifold::tn93::distance_matrix_nan(
+        &enc,
+        &aeon_manifold::tn93::Tn93Options::legacy_all_pairs(),
+    )
 }
 
 /// Flat row-major `N x M` TN93 cross-distance matrix: each sequence in
 /// `seqs_a` (rows) against each in `seqs_b` (columns, e.g. landmarks).
 /// Pairs truncate to the shorter length; pairs with zero valid sites
-/// return NaN.
+/// return NaN. Same `legacy_all_pairs` contract as
+/// [`tn93_distance_matrix`].
 #[pyfunction]
 fn tn93_cross_distance_matrix(seqs_a: Vec<Vec<u8>>, seqs_b: Vec<Vec<u8>>) -> Vec<f64> {
     let encode = |v: &[Vec<u8>]| -> Vec<Vec<u8>> {
         v.iter()
             .map(|s| {
                 s.iter()
-                    .map(|&c| aeon_manifold::char_to_iupac_mask(c))
+                    .map(|&c| aeon_manifold::tn93::char_to_tn93_code(c))
                     .collect()
             })
             .collect()
     };
-    aeon_manifold::tn93::cross_distance_matrix_nan(&encode(&seqs_a), &encode(&seqs_b))
+    aeon_manifold::tn93::cross_distance_matrix_nan(
+        &encode(&seqs_a),
+        &encode(&seqs_b),
+        &aeon_manifold::tn93::Tn93Options::legacy_all_pairs(),
+    )
 }
 
 /// MEME mixture-null p-values: 1/3·δ(0) + 2/3·(0.45·χ²₁ + 0.55·χ²₂).
