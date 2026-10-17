@@ -20,7 +20,16 @@ use trace50::{run_trace50_with_matrix, Alignment, Trace50Config, VisualizationDo
 )]
 struct CliArgs {
     /// Path to input nucleotide FASTA alignment
-    #[arg(short, long, required = true)]
+    ///
+    /// `-i`/`--input` aliases keep parity with `rhizaeon -i/--input` so
+    /// muscle memory carries across the Aeon command-line tools.
+    #[arg(
+        short,
+        long,
+        required = true,
+        visible_short_alias = 'i',
+        visible_alias = "input"
+    )]
     fasta: PathBuf,
 
     /// Optional metadata CSV/TSV file with taxon IDs and collection dates
@@ -250,6 +259,14 @@ fn load_distance_csv(path: &Path, headers: &[String]) -> Result<(Vec<f64>, usize
 /// console script still sees the same exit codes (0 help, 2 usage) as the
 /// standalone binary. Returns a process exit code.
 pub fn cli_main(argv: Vec<String>) -> i32 {
+    // Intercept --version/-V ahead of clap so the printed version is the
+    // PEP 440 form `pip show trace50` reports (Cargo semver writes
+    // `5.0.0-beta.1`; PyPI normalizes it to `5.0.0b1`). Same
+    // short-circuit semantics as clap's built-in version flag.
+    if argv.iter().skip(1).any(|a| a == "--version" || a == "-V") {
+        println!("trace50 {}", pep440(env!("CARGO_PKG_VERSION")));
+        return 0;
+    }
     let args = match CliArgs::try_parse_from(&argv) {
         Ok(a) => a,
         Err(e) => {
@@ -260,10 +277,29 @@ pub fn cli_main(argv: Vec<String>) -> i32 {
     match run(args) {
         Ok(()) => 0,
         Err(e) => {
-            eprintln!("{}", e);
+            eprintln!("Error: {}", e);
             1
         }
     }
+}
+
+/// Render a cargo semver string in PEP 440 form (the version `pip show`
+/// reports): `5.0.0-beta.1` -> `5.0.0b1`, `5.0.0-rc.1` -> `5.0.0rc1`.
+/// Stable releases and unrecognized prerelease tags pass through
+/// unchanged.
+fn pep440(cargo_version: &str) -> String {
+    let (version, suffix) = match cargo_version.split_once('-') {
+        Some(pair) => pair,
+        None => return cargo_version.to_string(),
+    };
+    let normalized = match suffix.split_once('.') {
+        Some(("alpha", n)) => format!("a{}", n),
+        Some(("beta", n)) => format!("b{}", n),
+        Some(("rc", n)) => format!("rc{}", n),
+        Some(("dev", n)) => format!(".dev{}", n),
+        _ => format!("-{}", suffix),
+    };
+    format!("{}{}", version, normalized)
 }
 
 fn run(args: CliArgs) -> Result<(), Box<dyn std::error::Error>> {
