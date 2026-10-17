@@ -50,11 +50,22 @@ jobs:
           echo "dir=$DIR" >> $GITHUB_OUTPUT
           echo "tag_version=${TAG##*-v}" >> $GITHUB_OUTPUT
           echo "native=$NATIVE" >> $GITHUB_OUTPUT
-      - name: Verify tag matches pyproject version
+      - name: Verify tag matches package version
         run: |
-          PKG_VERSION=$(python -c "import tomllib; print(tomllib.load(open('${{ steps.pkg.outputs.dir }}/pyproject.toml','rb'))['project']['version'])")
+          # Static pyproject projects carry [project].version; maturin
+          # packages (rhizaeon, trace50) declare dynamic version and the
+          # canonical string lives in native/Cargo.toml.
+          PKG_VERSION=$(python - "${{ steps.pkg.outputs.dir }}" <<'PY'
+          import sys, tomllib
+          d = sys.argv[1]
+          v = tomllib.load(open(f"{d}/pyproject.toml", "rb"))["project"].get("version")
+          if v is None:
+              v = tomllib.load(open(f"{d}/native/Cargo.toml", "rb"))["package"]["version"]
+          print(v)
+          PY
+          )
           if [ "$PKG_VERSION" != "${{ steps.pkg.outputs.tag_version }}" ]; then
-            echo "::error::Tag version '${{ steps.pkg.outputs.tag_version }}' does not match pyproject.toml version '$PKG_VERSION'"
+            echo "::error::Tag version '${{ steps.pkg.outputs.tag_version }}' does not match package version '$PKG_VERSION'"
             exit 1
           fi
 
