@@ -148,7 +148,7 @@ async function run() {
     console.log(`  Subspaces partition 1 taxa: ${Object.keys(dossier.subspaces.partition_1).length}`);
     console.log(`  Canonical manifold colinear: ${dossier.canonical_manifold.is_colinear} (cos theta = ${dossier.canonical_manifold.cos_theta})`);
 
-    if (dossier.metadata.query_id === 'R' && dossier.breakpoints.length === 20 && dossier.signals.trajectory_x.length > 100) {
+    if (dossier.metadata.query_id === 'R' && dossier.breakpoints.length === 8 && dossier.signals.trajectory_x.length > 100) {
         console.log("  >>> PASS: WASM generated complete, valid Visualization Dossier JSON!");
     } else {
         fail("Dossier JSON validation failed");

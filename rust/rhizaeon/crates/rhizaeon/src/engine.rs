@@ -187,7 +187,8 @@ impl RhizAeonEngine {
         let num_channels = landmarks.num_landmarks + 1;
 
         // 6. Pass 2 Polishing & Pass 3 Due Diligence on candidates
-        let (d_sister, _) = crate::landmarks::compute_scale_invariant_distance_thresholds(&aln);
+        let (d_sister, d_clade) =
+            crate::landmarks::compute_scale_invariant_distance_thresholds(&aln);
         let compression_ratio = if snp_map_opt.is_some() {
             (l as f64) / (l_chromosomal.max(1) as f64)
         } else {
@@ -200,7 +201,8 @@ impl RhizAeonEngine {
         let due_diligence = SequenceDueDiligence::new(self.poisson_floor, self.alpha, 100_000)
             .with_stringency(self.tier3_stringency)
             .with_compression_ratio(compression_ratio)
-            .with_d_sister(d_sister);
+            .with_d_sister(d_sister)
+            .with_d_clade(d_clade);
 
         let mut verified_events = Vec::new();
 
@@ -256,7 +258,12 @@ impl RhizAeonEngine {
                 // tract on a contemporary channel while `verify_tract` rejects that contemporary donor
                 // (since the candidate does not match it in the tract). In that case, test whether the
                 // tract is a verified Ghost donor cassette against the resolved Home parent.
-                if tract_opt.is_none() && !local_parental.is_ghost_donor {
+                if tract_opt.is_none()
+                    && !local_parental.is_ghost_donor
+                    && n >= 16
+                    && (screening.ghost_candidate_indices.contains(&cand_idx)
+                        || snp_map_opt.is_some())
+                {
                     let mut ghost_parental = local_parental.clone();
                     ghost_parental.donor_channel = 0;
                     ghost_parental.donor_landmark_idx = None;

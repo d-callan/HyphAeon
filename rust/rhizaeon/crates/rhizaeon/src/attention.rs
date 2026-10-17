@@ -46,26 +46,29 @@ impl PhyloAttentionEngine {
         let (d_sister, d_clade) =
             crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
         let mut mask_landmark = vec![false; n * k];
+        let mut is_non_sister_landmark = vec![false; n * k];
         for i in 0..n {
-            let mut clade_landmarks = Vec::new();
+            let mut sister_landmarks = Vec::new();
+            let mut has_non_sister_clade_ref = false;
             for p in 0..k {
                 let l_global = landmarks.indices[p];
                 if l_global == i {
                     mask_landmark[i * k + p] = true;
                 } else {
                     let d = crate::landmarks::compute_pairwise_distance(aln, i, l_global);
-                    if d <= d_clade {
-                        clade_landmarks.push((p, d));
+                    if d < d_sister {
+                        sister_landmarks.push(p);
+                    } else if d <= d_clade {
+                        has_non_sister_clade_ref = true;
+                        is_non_sister_landmark[i * k + p] = true;
+                    } else {
+                        is_non_sister_landmark[i * k + p] = true;
                     }
                 }
             }
-            // If there is at least one non-sister landmark in the same clade, mask identical/sister clones
-            let has_non_sister_clade_ref = clade_landmarks.iter().any(|&(_, d)| d >= d_sister);
             if has_non_sister_clade_ref {
-                for &(p, d) in &clade_landmarks {
-                    if d < d_sister {
-                        mask_landmark[i * k + p] = true;
-                    }
+                for &p in &sister_landmarks {
+                    mask_landmark[i * k + p] = true;
                 }
             }
         }
@@ -85,27 +88,8 @@ impl PhyloAttentionEngine {
                 let mut logits = [0.0f64; 128]; // Max K+1 <= 128
                 assert!(num_channels <= 128, "K+1 exceeds stack buffer limit");
 
-                // Root channel 0
-                let m_root = m_matrix[in_offset + 0];
-                let root_affinity = m_root + shift_d;
-                let root_dot = if root_c > 0 {
-                    if valid_q && qi_c == root_c {
-                        root_affinity
-                    } else {
-                        0.0
-                    }
-                } else if valid_q {
-                    root_affinity * self.root_sink_factor
-                } else {
-                    0.0
-                };
-                let s_root = b_prior[in_offset + 0] + (root_dot / self.sqrt_d);
-                logits[0] = s_root;
-                if s_root > max_s {
-                    max_s = s_root;
-                }
-
                 // Landmark channels 1..=K
+                let mut any_non_sister_match = false;
                 for p in 0..k {
                     let ch = p + 1;
                     if mask_landmark[i * k + p] {
@@ -118,17 +102,38 @@ impl PhyloAttentionEngine {
                     let l_c = aln.get(l_global, u);
                     let m_val = m_matrix[in_offset + ch];
                     let match_aff = m_val + shift_d;
-                    let dot = if valid_q && l_c > 0 && qi_c == l_c {
-                        match_aff
-                    } else {
-                        0.0
-                    };
+                    let is_match = valid_q && l_c > 0 && qi_c == l_c;
+                    if is_match && is_non_sister_landmark[i * k + p] {
+                        any_non_sister_match = true;
+                    }
+                    let dot = if is_match { match_aff } else { 0.0 };
 
                     let s = b_prior[in_offset + ch] + (dot / self.sqrt_d);
                     logits[ch] = s;
                     if s > max_s {
                         max_s = s;
                     }
+                }
+
+                // Root channel 0:
+                // Matches the ancestral consensus allele (`qi_c == root_c`), AND acts as the
+                // autapomorphy / unsampled-outgroup sink (`root_affinity * root_sink_factor`)
+                // when a valid query base mismatches all non-sister contemporary landmarks.
+                let m_root = m_matrix[in_offset + 0];
+                let root_affinity = m_root + shift_d;
+                let root_dot = if !valid_q {
+                    0.0
+                } else if root_c > 0 && qi_c == root_c {
+                    root_affinity
+                } else if !any_non_sister_match {
+                    root_affinity * self.root_sink_factor
+                } else {
+                    0.0
+                };
+                let s_root = b_prior[in_offset + 0] + (root_dot / self.sqrt_d);
+                logits[0] = s_root;
+                if s_root > max_s {
+                    max_s = s_root;
                 }
 
                 // Softmax
