@@ -101,7 +101,9 @@ def test_fasta_normalize_lengths_modes():
 
 def test_parse_date_from_header():
     d = native.parse_date_from_header("seq_2021-07-15")
-    assert abs(d - 2021.538) < 1e-3
+    # ISO dates take the calendar-precise day-of-year midpoint:
+    # 2021-07-15 is day 196 of 365, so (196 - 0.5) / 365 + 2021.
+    assert abs(d - 2021.5356) < 1e-3
     assert native.parse_date_from_header("seq|2021.5|x") == 2021.5
     assert math.isnan(native.parse_date_from_header("no_date_here"))
 
