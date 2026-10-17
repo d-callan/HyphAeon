@@ -73,48 +73,12 @@ struct Args {
 /// programmatic caller never has its process exited underneath it. The
 /// console script still sees the same exit codes (0 help, 2 usage) as the
 /// standalone binary. Returns a process exit code.
+///
+/// Implementation lives in `aeon_cli_utils::cli_main` (shared with
+/// trace50-native); `rhizaeon/tests/test_rhizaeon_cli.py` pins the
+/// observable contract end-to-end.
 pub fn cli_main(argv: Vec<String>) -> i32 {
-    // Intercept --version/-V ahead of clap so the printed version is the
-    // PEP 440 form `pip show rhizaeon` reports (Cargo semver writes
-    // `0.1.0-beta.1`; PyPI normalizes it to `0.1.0b1`). Same
-    // short-circuit semantics as clap's built-in version flag.
-    if argv.iter().skip(1).any(|a| a == "--version" || a == "-V") {
-        println!("rhizaeon {}", pep440(env!("CARGO_PKG_VERSION")));
-        return 0;
-    }
-    let args = match Args::try_parse_from(&argv) {
-        Ok(a) => a,
-        Err(e) => {
-            let _ = e.print();
-            return e.exit_code();
-        }
-    };
-    match run(args) {
-        Ok(()) => 0,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            1
-        }
-    }
-}
-
-/// Render a cargo semver string in PEP 440 form (the version `pip show`
-/// reports): `0.1.0-beta.1` -> `0.1.0b1`, `0.1.0-alpha.2` -> `0.1.0a2`,
-/// `0.1.0-rc.1` -> `0.1.0rc1`, `0.1.0-dev.3` -> `0.1.0.dev3`. Stable
-/// releases and unrecognized prerelease tags pass through unchanged.
-fn pep440(cargo_version: &str) -> String {
-    let (version, suffix) = match cargo_version.split_once('-') {
-        Some(pair) => pair,
-        None => return cargo_version.to_string(),
-    };
-    let normalized = match suffix.split_once('.') {
-        Some(("alpha", n)) => format!("a{}", n),
-        Some(("beta", n)) => format!("b{}", n),
-        Some(("rc", n)) => format!("rc{}", n),
-        Some(("dev", n)) => format!(".dev{}", n),
-        _ => format!("-{}", suffix),
-    };
-    format!("{}{}", version, normalized)
+    aeon_cli_utils::cli_main::<Args, _>("rhizaeon", env!("CARGO_PKG_VERSION"), argv, run)
 }
 
 fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
