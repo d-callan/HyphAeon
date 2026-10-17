@@ -278,7 +278,9 @@ impl TrajectoryParentalResolver {
             let l_d = landmarks.indices[d - 1];
             let d_cd = crate::landmarks::compute_pairwise_distance(aln, candidate_idx, l_d);
             let d_hd = crate::landmarks::compute_pairwise_distance(aln, home_l_idx, l_d);
-            if d_cd < d_sister || (n >= 8 && has_inter_clade_lm && d_cd <= d_clade && d_hd <= d_clade) {
+            if d_cd < d_sister
+                || (n >= 8 && has_inter_clade_lm && d_cd <= d_clade && d_hd <= d_clade)
+            {
                 continue;
             }
 
