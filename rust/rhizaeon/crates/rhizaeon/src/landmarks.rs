@@ -78,11 +78,11 @@ pub fn compute_scale_invariant_distance_thresholds(aln: &Alignment) -> (f64, f64
         .max(clade_floor)
         .max(1.5 * d_sister);
 
-    // Search for a multimodal inter-lineage spectral gap in [p05, p60]
+    // Search for a multimodal inter-lineage spectral gap in [p05, p35]
     let mut d_clade = d_p10;
-    if dists.len() >= 10 {
+    if dists.len() >= 28 {
         let s_idx = ((0.05 * (dists.len() as f64)).floor() as usize).max(1);
-        let e_idx = ((0.60 * (dists.len() as f64)).floor() as usize).min(dists.len() - 1);
+        let e_idx = ((0.35 * (dists.len() as f64)).floor() as usize).min(dists.len() - 1);
         if e_idx > s_idx {
             let mut max_gap = 0.0f64;
             let mut best_k = s_idx;
@@ -261,7 +261,7 @@ pub fn select_landmarks_from_pool(
             break;
         }
         let comp_in_pool: Vec<usize> = comp.iter().copied().filter(|i| pool.contains(i)).collect();
-        if comp_in_pool.is_empty() {
+        if comp_in_pool.is_empty() || (comp_in_pool.len() < 2 && pool_len > max_k) {
             continue;
         }
         let mut best_medoid = comp_in_pool[0];

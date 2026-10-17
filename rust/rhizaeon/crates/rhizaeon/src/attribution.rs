@@ -278,7 +278,7 @@ impl TrajectoryParentalResolver {
             let l_d = landmarks.indices[d - 1];
             let d_cd = crate::landmarks::compute_pairwise_distance(aln, candidate_idx, l_d);
             let d_hd = crate::landmarks::compute_pairwise_distance(aln, home_l_idx, l_d);
-            if d_cd < d_sister || (has_inter_clade_lm && d_cd <= d_clade && d_hd <= d_clade) {
+            if d_cd < d_sister || (n >= 8 && has_inter_clade_lm && d_cd <= d_clade && d_hd <= d_clade) {
                 continue;
             }
 
@@ -574,16 +574,13 @@ impl TrajectoryParentalResolver {
         }
 
         // Unsampled Outgroup / Ghost Cassette Dipole:
-        // Even when a candidate also carries contemporary inter-clade transfers (so r_root < 0.50 overall),
-        // an additional localized cassette from an unsampled outgroup produces a significant excursion
-        // in Channel 0 (Root) opposing the candidate's clonal clade medoid.
+        // When a candidate is screened as a Ghost candidate (`allow_ghost`), ensure Channel 0 (Root)
+        // is evaluated against the candidate's clonal clade medoid (or Home channel).
         if !pairs.iter().any(|p| p.is_ghost_donor)
-            && (allow_ghost || n >= 16)
+            && allow_ghost
             && (z_swings[0] >= k_crit_att * s2 || swings[0] >= self.min_root_swing * s2)
         {
-            if let Some(ghost_home_ch) =
-                best_medoid_ch.or(if allow_ghost { Some(home_ch) } else { None })
-            {
+            if let Some(ghost_home_ch) = best_medoid_ch.or(Some(home_ch)) {
                 let gh_k = ghost_home_ch.saturating_sub(1);
                 pairs.push(TrajectoryParentalPair {
                     candidate_idx,

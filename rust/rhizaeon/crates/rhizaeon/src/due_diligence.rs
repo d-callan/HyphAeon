@@ -7,6 +7,7 @@ pub struct SequenceDueDiligence {
     pub stringency: f64,
     pub compression_ratio: f64,
     pub d_sister: Option<f64>,
+    pub d_clade: Option<f64>,
     log_factorials: Vec<f64>,
 }
 
@@ -31,6 +32,7 @@ impl SequenceDueDiligence {
             stringency: 1.0,
             compression_ratio: 1.0,
             d_sister: None,
+            d_clade: None,
             log_factorials: log_facts,
         }
     }
@@ -47,6 +49,11 @@ impl SequenceDueDiligence {
 
     pub fn with_d_sister(mut self, d_sister: f64) -> Self {
         self.d_sister = Some(d_sister);
+        self
+    }
+
+    pub fn with_d_clade(mut self, d_clade: f64) -> Self {
+        self.d_clade = Some(d_clade);
         self
     }
 
@@ -147,18 +154,35 @@ impl SequenceDueDiligence {
             return None;
         }
 
+        let (d_sister, d_clade) = match (self.d_sister, self.d_clade) {
+            (Some(ds), Some(dc)) => (ds, dc),
+            (Some(ds), None) => {
+                let (_, dc) = crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
+                (ds, dc)
+            }
+            _ => crate::landmarks::compute_scale_invariant_distance_thresholds(aln),
+        };
+
+        // Precompute lineage peers at `d <= d_clade` once per tract
+        let mut lineage_peers = Vec::new();
+        if aln.num_taxa >= 6 {
+            for t_idx in 0..aln.num_taxa {
+                if crate::landmarks::compute_pairwise_distance(aln, cand_idx, t_idx) <= d_clade {
+                    lineage_peers.push(t_idx);
+                }
+            }
+        }
+
         // Candidate recombinants cannot serve as Home parental reference for ghost donors
         // unless the entire cohort was admitted as candidates (pervasive recombination regime,
         // where no unscreened clonal_backbone_indices exist) AND `home_global` is the clonal
-        // medoid of `cand_idx`'s lineage cluster (`d <= d_clade`).
+        // medoid of `cand_idx`'s multi-isolate lineage cluster (`|L_C| >= 4` at `d <= d_clade`).
         if parental.is_ghost_donor && candidate_indices.contains(&home_global) {
             if candidate_indices.len() + rate_burst_indices.len() < aln.num_taxa {
                 return None;
             }
-            let (_d_sister, d_clade) =
-                crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
             let d_ch = crate::landmarks::compute_pairwise_distance(aln, cand_idx, home_global);
-            if d_ch > d_clade {
+            if d_ch > d_clade || lineage_peers.len() < 4 {
                 return None;
             }
         }
@@ -174,9 +198,6 @@ impl SequenceDueDiligence {
                 return None;
             }
             // Co-recombinant sister taxa or candidate's own sister cannot serve as donor
-            let d_sister = self.d_sister.unwrap_or_else(|| {
-                crate::landmarks::compute_scale_invariant_distance_thresholds(aln).0
-            });
             let d_cd = crate::landmarks::compute_pairwise_distance(aln, cand_idx, dg);
             let d_hd = crate::landmarks::compute_pairwise_distance(aln, home_global, dg);
             if d_cd < d_sister || d_hd < d_sister {
@@ -257,31 +278,11 @@ impl SequenceDueDiligence {
                             s_donor += 1;
                         }
                     } else {
-                        // In a multi-way mosaic candidate within a multi-lineage cohort (N >= 16),
-                        // the flank outside [s_idx, e_idx] may contain a separate contemporary introgression
-                        // tract where `rc != rh` because `rc` matches a sampled external landmark (`rl == rc`)
-                        // at `d(cand, l_idx) > d_clade`. Excluding such contemporary-donor flank sites prevents
-                        // a large contemporary tract elsewhere in the genome from artificially inflating the
-                        // clonal Home-mismatch baseline `c` in the Ghost Fisher test.
-                        let matches_ext_landmark = aln.num_taxa >= 16 && rc != rh && {
-                            let (_d_sister, d_clade) =
-                                crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
-                            _landmarks.indices.iter().any(|&l_idx| {
-                                l_idx != cand_idx
-                                    && l_idx != home_global
-                                    && crate::landmarks::compute_pairwise_distance(
-                                        aln, cand_idx, l_idx,
-                                    ) > d_clade
-                                    && aln.row(l_idx)[u] == rc
-                            })
-                        };
-                        if !matches_ext_landmark {
-                            valid_flank += 1;
-                            if rc != rh {
-                                mismatch_flank_home += 1;
-                            } else {
-                                s_home_flank += 1;
-                            }
+                        valid_flank += 1;
+                        if rc != rh {
+                            mismatch_flank_home += 1;
+                        } else {
+                            s_home_flank += 1;
                         }
                     }
                 }
@@ -306,15 +307,6 @@ impl SequenceDueDiligence {
         // A true recent recombinant departs from its lineage's majority inside the tract; a pure clonal
         // strain remains close to its lineage's median/consensus inside the tract.
         if aln.num_taxa >= 6 {
-            let (d_sister, d_clade) =
-                crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
-            let mut lineage_peers = Vec::new();
-            for t_idx in 0..aln.num_taxa {
-                if crate::landmarks::compute_pairwise_distance(aln, cand_idx, t_idx) <= d_clade {
-                    lineage_peers.push(t_idx);
-                }
-            }
-
             if lineage_peers.len() >= 4 {
                 // Compute candidate's and Home's mean distance to lineage peers inside the tract
                 let mut sum_tr_cand = 0.0f64;
@@ -379,8 +371,10 @@ impl SequenceDueDiligence {
                         }
                     } else if parental.is_ghost_donor {
                         // 4. Ghost Donor Authenticity: An event is only an unsampled Ghost donor if NO external
-                        // contemporary landmark matches the candidate inside the tract significantly better than Home does.
+                        // contemporary landmark matches the candidate inside the tract significantly better than Home does,
+                        // or explains >= 50% of the substitutions separating the candidate from Home inside the tract.
                         let mut best_ext_tr_d = f64::INFINITY;
+                        let mut max_ext_match_frac = 0.0f64;
                         for &l_idx in &_landmarks.indices {
                             if l_idx != cand_idx
                                 && crate::landmarks::compute_pairwise_distance(aln, cand_idx, l_idx)
@@ -389,13 +383,22 @@ impl SequenceDueDiligence {
                                 let l_row = aln.row(l_idx);
                                 let mut m = 0usize;
                                 let mut v = 0usize;
+                                let mut m_diff = 0usize;
+                                let mut v_diff = 0usize;
                                 for u in s_idx..e_idx {
                                     let rc = cand_row[u];
                                     let rl = l_row[u];
+                                    let rh = home_row[u];
                                     if rc > 0 && rl > 0 {
                                         v += 1;
                                         if rc != rl {
                                             m += 1;
+                                        }
+                                        if rh > 0 && rc != rh {
+                                            v_diff += 1;
+                                            if rl == rc {
+                                                m_diff += 1;
+                                            }
                                         }
                                     }
                                 }
@@ -405,6 +408,12 @@ impl SequenceDueDiligence {
                                         best_ext_tr_d = d_tr;
                                     }
                                 }
+                                if v_diff > 0 {
+                                    let frac = (m_diff as f64) / (v_diff as f64);
+                                    if frac > max_ext_match_frac {
+                                        max_ext_match_frac = frac;
+                                    }
+                                }
                             }
                         }
                         let d_tr_h = if valid_tract > 0 {
@@ -412,7 +421,7 @@ impl SequenceDueDiligence {
                         } else {
                             1.0
                         };
-                        if best_ext_tr_d < 0.5 * d_tr_h {
+                        if best_ext_tr_d < 0.5 * d_tr_h || max_ext_match_frac >= 0.50 {
                             return None;
                         }
                     }

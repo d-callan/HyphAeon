@@ -183,22 +183,48 @@ impl CumulativeTrajectoryPolisher {
             for k in 0..=(l - tau) {
                 let sum_val = cum_x[k + tau] - cum_x[k];
                 if sum_val >= theta_tau {
-                    scale_hits.push((k + 1, k + tau, sum_val));
+                    let score = sum_val / theta_tau.max(1e-9);
+                    scale_hits.push((k + 1, k + tau, score));
                 }
             }
             // Non-maximum suppression across overlapping windows at scale tau
             scale_hits.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
-            let mut kept_at_scale: Vec<(usize, usize)> = Vec::new();
-            for (s_d, e_d, _) in scale_hits {
-                let overlaps = kept_at_scale.iter().any(|&(ks, ke)| s_d <= ke && e_d >= ks);
+            let mut kept_at_scale: Vec<(usize, usize, f64)> = Vec::new();
+            for (s_d, e_d, sc) in scale_hits {
+                let overlaps = kept_at_scale
+                    .iter()
+                    .any(|&(ks, ke, _)| s_d <= ke && e_d >= ks);
                 if !overlaps {
-                    kept_at_scale.push((s_d, e_d));
-                    candidates.push((s_d, e_d));
+                    kept_at_scale.push((s_d, e_d, sc));
                 }
+            }
+            // In full-length viral genomes (l >= 3000), take the single dominant window per scale;
+            // in smaller or SNP-compressed alignments, allow multiple non-overlapping cassettes per scale.
+            let max_per_scale = if self.compression_ratio < 0.999 || l < 3000 {
+                kept_at_scale.len()
+            } else {
+                1
+            };
+            for &(s_d, e_d, sc) in kept_at_scale.iter().take(max_per_scale) {
+                candidates.push((s_d, e_d, sc));
             }
         }
 
-        candidates
+        // When scanning full-length viral genomes (l >= 3000), apply cross-scale NMS
+        // so concentric scales (30..800) over a single cassette do not fragment it.
+        if l >= 3000 && self.compression_ratio >= 0.999 {
+            candidates.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+            let mut final_hits: Vec<(usize, usize)> = Vec::new();
+            for (s_d, e_d, _) in candidates {
+                let overlaps = final_hits.iter().any(|&(ks, ke)| s_d <= ke && e_d >= ks);
+                if !overlaps {
+                    final_hits.push((s_d, e_d));
+                }
+            }
+            final_hits
+        } else {
+            candidates.into_iter().map(|(s, e, _)| (s, e)).collect()
+        }
     }
 
     /// Deconvolves continuous recombination breakpoints for a candidate taxon
@@ -281,6 +307,8 @@ impl CumulativeTrajectoryPolisher {
 
         // 3. Recursive Binary Segmentation + Multiscale Dyadic Cassette Boundaries
         let mut changepoints = self.recursive_binary_segmentation(&x, 1, l, eff_alpha, sigma_x);
+        changepoints.sort_unstable();
+        changepoints.dedup();
         if !dyadic_hits.is_empty() {
             for (s_d, e_d) in dyadic_hits {
                 if s_d > 1 {
@@ -290,9 +318,9 @@ impl CumulativeTrajectoryPolisher {
                     changepoints.push(e_d);
                 }
             }
+            changepoints.sort_unstable();
+            changepoints.dedup();
         }
-        changepoints.sort_unstable();
-        changepoints.dedup();
 
         if changepoints.is_empty() {
             return Vec::new();
