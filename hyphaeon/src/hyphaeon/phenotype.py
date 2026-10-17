@@ -28,7 +28,8 @@ from aeon_core.dataset import (
     CODON_TO_AA,
     load_alignment_and_tree,
     parse_alignment_sequences,
-    extract_tree_from_string_or_file
+    extract_tree_from_string_or_file,
+    calc_tree_depths
 )
 from aeon_core.model import PhyloAxialTransformer
 from aeon_core.stats import cauchy_combination_p, benjamini_hochberg
@@ -274,18 +275,7 @@ def compute_phylogenetic_covariance(tree: Phylo.BaseTree.Tree, taxa: List[str]) 
     M = len(taxa)
     taxa_idx = {name: i for i, name in enumerate(taxa)}
     root = tree.root
-    depths = {}
-    term_nodes = {}
-
-    def calc_depths(node, current_d=0.0):
-        depths[id(node)] = current_d
-        if node.is_terminal():
-            term_nodes[node.name] = node
-        for child in node.clades:
-            bl = child.branch_length if child.branch_length is not None else 0.0
-            calc_depths(child, current_d + bl)
-
-    calc_depths(root, 0.0)
+    depths, term_nodes = calc_tree_depths(root)
     V = np.zeros((M, M), dtype=np.float64)
 
     def traverse(node):

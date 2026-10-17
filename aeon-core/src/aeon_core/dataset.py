@@ -510,6 +510,31 @@ def enforce_nonzero_branch_lengths(tree_obj: Phylo.BaseTree.Tree, min_len: float
             clade.branch_length = min_len
     return tree_obj
 
+def calc_tree_depths(root: Phylo.BaseTree.Clade) -> Tuple[Dict[int, float], Dict[str, Phylo.BaseTree.Clade]]:
+    """Root-to-node patristic depths for every clade, plus terminal lookup.
+
+    Returns ``(depths, terminals)`` where ``depths`` maps ``id(clade)`` to
+    cumulative branch length from ``root`` (``None`` lengths treated as 0.0)
+    and ``terminals`` maps terminal names to their clade objects. Shared by
+    ``compute_fast_dist_matrix`` and ``hyphaeon.phenotype`` — the
+    phylogenetic VCV traversal there needs both maps; only the
+    terminal-collection differs from a plain depth pass, so it rides along.
+    """
+    depths: Dict[int, float] = {}
+    terminals: Dict[str, Phylo.BaseTree.Clade] = {}
+
+    def _walk(node, current_depth=0.0):
+        depths[id(node)] = current_depth
+        if node.is_terminal():
+            terminals[node.name] = node
+        for child in node.clades:
+            bl = child.branch_length if child.branch_length is not None else 0.0
+            _walk(child, current_depth + bl)
+
+    _walk(root)
+    return depths, terminals
+
+
 def compute_fast_dist_matrix(tree: Phylo.BaseTree.Tree, taxa: List[str], strict: bool = False) -> np.ndarray:
     """
     Computes all-pairs patristic distance matrix across taxa from phylogenetic tree.
@@ -537,13 +562,7 @@ def compute_fast_dist_matrix(tree: Phylo.BaseTree.Tree, taxa: List[str], strict:
         warnings.warn(msg, UserWarning, stacklevel=2)
 
     root = tree.root
-    depths = {}
-    def calc_depths(node, current_depth=0.0):
-        depths[id(node)] = current_depth
-        for child in node.clades:
-            bl = child.branch_length if child.branch_length is not None else 0.0
-            calc_depths(child, current_depth + bl)
-    calc_depths(root)
+    depths, _ = calc_tree_depths(root)
     
     parents = {}
     def get_parents(node):

@@ -16,6 +16,19 @@ import torch.nn.functional as F
 # the inline and pre-cached forward paths. Shared constant ensures both paths
 # stay in sync.
 EPS0 = 0.05
+
+
+def _coral_cutoffs(b0, theta_steps):
+    """Cumulative-softplus ordinal cutoffs (CORAL, Cao et al. 2020).
+
+    Shared by ``RankConsistentCoralHead`` and ``CoralHead``: guarantees
+    monotonic b_1 > b_2 > ... > b_K from a learnable base ``b0`` and
+    step params ``theta_steps``.
+    """
+    cum_steps = torch.cumsum(F.softplus(theta_steps), dim=0)
+    return torch.cat([b0.unsqueeze(0), b0 - cum_steps])
+
+
 class BlockLinear(nn.Module):
     """
     Block-Diagonal Linear Projection.
@@ -175,10 +188,7 @@ class RankConsistentCoralHead(nn.Module):
         nn.init.normal_(self.fc2.weight, mean=0.0, std=1.0 / (256 ** 0.5))
         
     def get_cutoffs(self):
-        steps = F.softplus(self.theta_steps)
-        cum_steps = torch.cumsum(steps, dim=0)
-        cutoffs = torch.cat([self.b0.unsqueeze(0), self.b0 - cum_steps])
-        return cutoffs
+        return _coral_cutoffs(self.b0, self.theta_steps)
 
     def forward(self, x):
         # x: [batch_size, embed_dim]
@@ -642,9 +652,7 @@ class CoralHead(nn.Module):
         nn.init.normal_(self.fc.weight, mean=0.0, std=1.0 / (in_features ** 0.5))
 
     def get_cutoffs(self):
-        steps = F.softplus(self.theta_steps)
-        cum_steps = torch.cumsum(steps, dim=0)
-        return torch.cat([self.b0.unsqueeze(0), self.b0 - cum_steps])
+        return _coral_cutoffs(self.b0, self.theta_steps)
 
     def forward(self, x):
         proj = self.fc(x)

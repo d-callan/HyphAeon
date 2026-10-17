@@ -17,6 +17,7 @@ import torch
 from aeon_core.inference import get_device
 from aeon_core.weights import print_available_variants
 from aeon_core.cli import handle_cli_errors, add_weights_args, weights_kwargs
+from aeon_core.io import write_json, write_csv
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 EXAMPLES_DIR = _REPO_ROOT / "chronaeon" / "examples"
@@ -259,8 +260,7 @@ def cmd_dating(args):
 
     if getattr(args, "csv", None):
         csv_path = args.csv
-        pd.DataFrame(res['taxa_records']).to_csv(csv_path, index=False)
-        print(f"[✓] Per-taxon dating diagnostics saved to: {csv_path}")
+        write_csv(csv_path, res['taxa_records'], "Per-taxon dating diagnostics")
 
     plot_path = getattr(args, "plot_path", None)
     if plot_path:
@@ -398,8 +398,7 @@ def cmd_phylogeo(args):
 
     if getattr(args, "csv", None):
         csv_path = args.csv
-        pd.DataFrame(res["routes"]).to_csv(csv_path, index=False)
-        print(f"[✓] Transmission routes saved to: {csv_path}")
+        write_csv(csv_path, res["routes"], "Transmission routes")
 
 
 def cmd_dynamics(args):
@@ -461,14 +460,11 @@ def cmd_dynamics(args):
             "reproduction_number": res["reproduction_number"],
             "rt_skyline": res["rt_skyline"],
         }
-        with open(out_path, "w") as f:
-            json.dump(clean_res, f, indent=2)
-        print(f"[✓] Phylodynamic R0 results saved to: {out_path}")
+        write_json(out_path, clean_res, "Phylodynamic R0 results")
 
     if getattr(args, "csv", None) and len(res.get("rt_skyline", [])) > 0:
         csv_path = args.csv
-        pd.DataFrame(res["rt_skyline"]).to_csv(csv_path, index=False)
-        print(f"[✓] Dynamic R(t) skyline saved to: {csv_path}")
+        write_csv(csv_path, res["rt_skyline"], "Dynamic R(t) skyline")
 
 
 def cmd_triage(args):
@@ -532,8 +528,7 @@ def cmd_triage(args):
 
     # 4. Save Outputs
     out_csv = args.output or "sieve_triage_report.csv"
-    df_results.to_csv(out_csv, index=False)
-    print(f"\n[✓] Diagnostic triage report written to: {out_csv}")
+    write_csv(out_csv, df_results, "Diagnostic triage report")
 
     # Optionally write segregated FASTAs
     if getattr(args, "clean_out", None) or getattr(args, "sus_out", None):
@@ -645,9 +640,7 @@ def cmd_autoclock(args):
     if getattr(args, "output", None) and not str(args.output).endswith("/"):
         out_p = Path(args.output)
         if out_p.suffix.lower() == ".json":
-            with open(out_p, "w") as f:
-                json.dump(results, f, indent=2, default=str)
-            print(f"[✓] AutoClock JSON summary copied to: {out_p}")
+            write_json(out_p, results, "AutoClock JSON summary", default=str)
 
     if getattr(args, "csv", None):
         shutil.copyfile(results["classified_metadata_path"], args.csv)
@@ -699,9 +692,7 @@ def cmd_sketch(args):
         "n_total": len(seqs),
     }
     if args.output:
-        with open(args.output, "w") as f:
-            json.dump(output, f, indent=2, default=str)
-        print(f"[✓] Sketch binning results written to: {args.output}")
+        write_json(args.output, output, "Sketch binning results", default=str)
     else:
         print(json.dumps(output, indent=2, default=str))
 

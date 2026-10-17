@@ -41,7 +41,7 @@ from aeon_core.inference import (
 from aeon_core.splits import (
     extract_cross_taxa_attentions_and_embeddings,
 )
-from aeon_core.io import ensure_parent_directory, write_json
+from aeon_core.io import ensure_parent_directory, write_json, write_csv
 
 
 
@@ -380,12 +380,10 @@ def _export_dating_results(
             'taxa_summary': taxon_records
         }
         json_file = out_p.with_suffix('.json') if not str(out_p).endswith('.json') else out_p
-        write_json(json_file, json_data)
-        print(f"[✓] Saved JSON summary: {json_file}")
+        write_json(json_file, json_data, "JSON summary")
 
         csv_file = out_p.with_suffix('.csv') if not str(out_p).endswith('.csv') else out_p
-        pd.DataFrame(taxon_records).to_csv(csv_file, index=False)
-        print(f"[✓] Saved per-taxon CSV: {csv_file}")
+        write_csv(csv_file, taxon_records, "Per-taxon CSV")
 
     if plot:
         fig_path = f"{output_prefix}_diagnostic.pdf" if output_prefix else "mrca_dating_diagnostic.pdf"

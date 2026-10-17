@@ -22,6 +22,8 @@ from typing import Dict, List, Tuple, Optional, Set, Any
 import numpy as np
 import pandas as pd
 
+from aeon_core.io import vprint
+
 
 def get_canonical_kmer(kmer: str) -> str:
     """Returns the lexicographically smaller of kmer and its reverse complement."""
@@ -124,8 +126,7 @@ class AlignmentFreeBinner:
         self.sketcher = CanonicalMinHashSketcher(k=k, sketch_size=sketch_size)
 
     def _log(self, msg: str):
-        if not self.quiet:
-            print(msg, flush=True)
+        vprint(msg, self.quiet)
 
     def bin_dataset(
         self,
