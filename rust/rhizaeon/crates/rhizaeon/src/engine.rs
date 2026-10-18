@@ -676,6 +676,16 @@ impl RhizAeonEngine {
         resolve_donor_chains(&mut verified_events, &raw_aln);
         prune_inverted_backbone_events(&mut verified_events, &raw_aln);
 
+        // Align multi-segment double-recombinants whose two donor tracts exceed 50% of the genome
+        // with the dominant cohort backbone orientation when they share breakpoints with a multi-isolate clade
+        reorient_cohort_complementary_mosaics(
+            &mut verified_events,
+            &raw_aln,
+            &due_diligence,
+            &landmarks,
+            &screening,
+        );
+
         // Group ancestral events
         verified_events = group_ancestral_events(verified_events, &raw_aln);
 
@@ -777,6 +787,301 @@ fn prune_inverted_backbone_events(
         idx += 1;
         keep
     });
+}
+
+/// Checks if two overlapping events with the same (Home, Donor) clade have a long (>= 450 bp)
+/// 5' or 3' non-overlapping overhang where one candidate carries Donor and the other carries Home
+/// (`d_overhang(c1, c2) > d_clade`), indicating two distinct recombination breakpoints (e.g., an
+/// extended 3' event or a partial reversion) rather than breakpoint estimation noise.
+fn has_divergent_overhang(
+    aln: &crate::types::Alignment,
+    c1: usize,
+    u1_a: usize,
+    u2_a: usize,
+    c2: usize,
+    u1_b: usize,
+    u2_b: usize,
+    home_idx: Option<usize>,
+    donor_idx: Option<usize>,
+    d_clade: f64,
+) -> bool {
+    if c1 == c2 {
+        return false;
+    }
+    let (Some(hg), Some(dg)) = (home_idx, donor_idx) else {
+        return false;
+    };
+    let min_overhang = 450usize;
+    let mut overhangs = Vec::new();
+    let l_diff = u1_a.abs_diff(u1_b);
+    if l_diff >= min_overhang {
+        let s = u1_a.min(u1_b).saturating_sub(1);
+        let e = u1_a.max(u1_b).saturating_sub(1).min(aln.length);
+        let c_in = if u1_a < u1_b { c1 } else { c2 };
+        let c_out = if u1_a < u1_b { c2 } else { c1 };
+        overhangs.push((s, e, c_in, c_out));
+    }
+    let r_diff = u2_a.abs_diff(u2_b);
+    if r_diff >= min_overhang {
+        let s = u2_a.min(u2_b).min(aln.length);
+        let e = u2_a.max(u2_b).min(aln.length);
+        let c_in = if u2_a > u2_b { c1 } else { c2 };
+        let c_out = if u2_a > u2_b { c2 } else { c1 };
+        overhangs.push((s, e, c_in, c_out));
+    }
+
+    let h_row = aln.row(hg);
+    let d_row = aln.row(dg);
+    for (s, e, c_in, c_out) in overhangs {
+        if e <= s {
+            continue;
+        }
+        let r_in = aln.row(c_in);
+        let r_out = aln.row(c_out);
+        let mut diffs_12 = 0usize;
+        let mut v_12 = 0usize;
+        let mut in_d = 0usize;
+        let mut in_h = 0usize;
+        let mut out_d = 0usize;
+        let mut out_h = 0usize;
+        for u in s..e {
+            let a = r_in[u];
+            let b = r_out[u];
+            let rh = h_row[u];
+            let rd = d_row[u];
+            if a > 0 && b > 0 {
+                v_12 += 1;
+                if a != b {
+                    diffs_12 += 1;
+                }
+            }
+            if a > 0 && b > 0 && rh > 0 && rd > 0 && rh != rd {
+                if a == rd {
+                    in_d += 1;
+                } else if a == rh {
+                    in_h += 1;
+                }
+                if b == rd {
+                    out_d += 1;
+                } else if b == rh {
+                    out_h += 1;
+                }
+            }
+        }
+        if v_12 > 0 {
+            let d_12 = (diffs_12 as f64) / (v_12 as f64);
+            if d_12 > d_clade && in_d > in_h + 5 && out_h > out_d + 5 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Aligns multi-segment double-recombinants whose two donor tracts sum to >50% of the genome
+/// with the dominant cohort backbone orientation when they share breakpoints with a multi-isolate clade.
+fn reorient_cohort_complementary_mosaics(
+    events: &mut Vec<crate::types::RecombinationEvent>,
+    aln: &crate::types::Alignment,
+    due_diligence: &crate::due_diligence::SequenceDueDiligence,
+    landmarks: &crate::types::LandmarkSet,
+    screening: &crate::types::ScreeningResult,
+) {
+    if events.len() <= 1 {
+        return;
+    }
+    let (_d_sister, d_clade) = crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
+    let l = aln.length;
+    let bp_tol = 100usize;
+
+    let mut cand_indices: Vec<usize> = events.iter().map(|e| e.candidate_idx).collect();
+    cand_indices.sort_unstable();
+    cand_indices.dedup();
+
+    let snapshot = events.clone();
+    let mut replacements: Vec<(usize, Vec<crate::types::RecombinationEvent>)> = Vec::new();
+
+    for &c_idx in &cand_indices {
+        let mut c_evs: Vec<crate::types::RecombinationEvent> = snapshot
+            .iter()
+            .filter(|e| e.candidate_idx == c_idx && !e.is_ghost_donor)
+            .cloned()
+            .collect();
+        if c_evs.is_empty() {
+            continue;
+        }
+        c_evs.sort_by_key(|e| e.u1);
+
+        let (Some(hc), Some(dc)) = (c_evs[0].home_idx, c_evs[0].donor_idx) else {
+            continue;
+        };
+
+        let mut same_cands = Vec::new();
+        let mut inv_cands = Vec::new();
+        let mut inv_events = Vec::new();
+
+        for other in &snapshot {
+            if other.candidate_idx == c_idx || other.is_ghost_donor {
+                continue;
+            }
+            let (Some(ho), Some(do_idx)) = (other.home_idx, other.donor_idx) else {
+                continue;
+            };
+            let shares_bp = c_evs.iter().any(|ce| {
+                ce.u1.abs_diff(other.u1) <= bp_tol
+                    || ce.u2.abs_diff(other.u2) <= bp_tol
+                    || ce.u1.abs_diff(other.u2) <= bp_tol
+                    || ce.u2.abs_diff(other.u1) <= bp_tol
+            });
+            if !shares_bp {
+                continue;
+            }
+
+            let is_same_pol = regional_or_global_same_clade(aln, hc, ho, other.u1, other.u2, d_clade)
+                && regional_or_global_same_clade(aln, dc, do_idx, other.u1, other.u2, d_clade);
+            if is_same_pol {
+                if !same_cands.contains(&other.candidate_idx) {
+                    same_cands.push(other.candidate_idx);
+                }
+            }
+
+            let is_inv_pol = regional_or_global_same_clade(aln, dc, ho, other.u1, other.u2, d_clade)
+                && regional_or_global_same_clade(aln, hc, do_idx, other.u1, other.u2, d_clade);
+            if is_inv_pol {
+                if !inv_cands.contains(&other.candidate_idx) {
+                    inv_cands.push(other.candidate_idx);
+                }
+                inv_events.push(other.clone());
+            }
+        }
+
+        if inv_cands.len() < 2 || inv_cands.len() <= same_cands.len() {
+            continue;
+        }
+
+        // Build complementary intervals of `c_evs` on `[1, l]`
+        let mut blocked: Vec<(usize, usize)> = Vec::new();
+        for ce in &c_evs {
+            let s = if ce.u1 <= bp_tol { 1 } else { ce.u1 };
+            let e = if l.saturating_sub(ce.u2) <= bp_tol {
+                l
+            } else {
+                ce.u2
+            };
+            if let Some(last) = blocked.last_mut() {
+                if s <= last.1 + 1 {
+                    last.1 = last.1.max(e);
+                    continue;
+                }
+            }
+            blocked.push((s, e));
+        }
+
+        let mut comp_intervals: Vec<(usize, usize)> = Vec::new();
+        let mut cursor = 1usize;
+        for (bs, be) in &blocked {
+            if *bs > cursor {
+                let cs = cursor;
+                let ce = bs - 1;
+                if ce >= cs + 150 {
+                    comp_intervals.push((cs, ce));
+                }
+            }
+            cursor = be + 1;
+        }
+        if cursor <= l && l >= cursor + 150 {
+            comp_intervals.push((cursor, l));
+        }
+
+        if comp_intervals.is_empty() {
+            continue;
+        }
+
+        let new_home_idx = dc;
+        let new_home_name = aln.taxa[new_home_idx].clone();
+        let mut verified_comps = Vec::new();
+
+        for (r_idx, &(cu1, cu2)) in comp_intervals.iter().enumerate() {
+            // Choose the cohort donor from `inv_events` overlapping `[cu1, cu2]` and sharing a breakpoint
+            let mut best_donor_idx = hc;
+            for ie in &inv_events {
+                let ov_s = cu1.max(ie.u1);
+                let ov_e = cu2.min(ie.u2);
+                if ov_e >= ov_s {
+                    let shares_edge =
+                        cu1.abs_diff(ie.u1) <= bp_tol || cu2.abs_diff(ie.u2) <= bp_tol;
+                    if shares_edge {
+                        if let Some(id_idx) = ie.donor_idx {
+                            best_donor_idx = id_idx;
+                            break;
+                        }
+                    }
+                }
+            }
+            let new_donor_name = aln.taxa[best_donor_idx].clone();
+
+            // Mask the OTHER complementary intervals on `c_idx` so multi-tract flanks are clean
+            let mut aln_comp = aln.clone();
+            for (o_idx, &(ou1, ou2)) in comp_intervals.iter().enumerate() {
+                if o_idx != r_idx {
+                    for u in ou1.saturating_sub(1)..ou2.min(l) {
+                        aln_comp.matrix[c_idx * l + u] = 0;
+                    }
+                }
+            }
+
+            let probe_tract = crate::types::PhysicalTract {
+                candidate_idx: c_idx,
+                home_channel: 0,
+                donor_channel: 0,
+                is_crossover: (cu1 == 1) || (cu2 == l),
+                u1_discrete: cu1,
+                u2_discrete: cu2,
+                u1_continuous: cu1 as f64,
+                u2_continuous: cu2 as f64,
+                delta_c_max: 0.0,
+                z_phys: c_evs[0].z_phys,
+                z_crit: 0.0,
+                is_physically_significant: true,
+            };
+            let probe_parental = crate::attribution::TrajectoryParentalPair {
+                candidate_idx: c_idx,
+                home_channel: 0,
+                donor_channel: 0,
+                home_landmark_idx: None,
+                donor_landmark_idx: None,
+                is_ghost_donor: false,
+                home_name: new_home_name.clone(),
+                donor_name: new_donor_name,
+                home_global_idx: Some(new_home_idx),
+                donor_global_idx: Some(best_donor_idx),
+                swing_home: 0.0,
+                swing_donor: 0.0,
+            };
+
+            if let Some(ev) = due_diligence.verify_tract(
+                &probe_tract,
+                &probe_parental,
+                &aln_comp,
+                landmarks,
+                &screening.rate_burst_indices,
+                &screening.candidate_recombinant_indices,
+            ) {
+                if ev.is_verified {
+                    verified_comps.push(ev);
+                }
+            }
+        }
+
+        if !verified_comps.is_empty() {
+            replacements.push((c_idx, verified_comps));
+        }
+    }
+
+    for (c_idx, mut new_evs) in replacements {
+        events.retain(|e| e.candidate_idx != c_idx);
+        events.append(&mut new_evs);
+    }
 }
 
 /// Resolves transitive donor chains and co-recombinant lineages across overlapping tracts.
@@ -1150,8 +1455,20 @@ fn group_ancestral_events(
                     let min_len = g_len.min(e_len);
                     let union_len = (g.u2.max(e.u2) - g.u1.min(e.u1) + 1).max(1);
                     let iou = (overlap_len as f64) / (union_len as f64);
-                    if iou >= 0.50
-                        || (overlap_len as f64 >= 0.70 * min_len as f64 && min_len * 2 >= union_len)
+                    if (iou >= 0.50
+                        || (overlap_len as f64 >= 0.70 * min_len as f64 && min_len * 2 >= union_len))
+                        && !has_divergent_overhang(
+                            aln,
+                            g.candidate_idx,
+                            g.u1,
+                            g.u2,
+                            e.candidate_idx,
+                            e.u1,
+                            e.u2,
+                            g.home_idx,
+                            g.donor_idx,
+                            d_clade,
+                        )
                     {
                         g.isolates.extend(e.isolates.clone());
                         g.isolates.sort();
@@ -1239,25 +1556,56 @@ fn group_ancestral_events(
                     continue;
                 }
                 // Do not recruit `t_name` into `g` if `t_name` already has a verified or recruited
-                // event with inverted Home<->Donor clade polarity
+                // event with inverted Home<->Donor clade polarity, or an overlapping same-clade
+                // event with a distinct divergent overhang
                 if let Some(dg) = g.donor_idx {
-                    let has_inverted_event = active_isolate_events.iter().any(
+                    let has_conflicting_event = active_isolate_events.iter().any(
                         |(oh_opt, od_opt, ou1, ou2, isos)| {
                             if !isos.contains(t_name) {
                                 return false;
                             }
                             match (oh_opt, od_opt) {
                                 (Some(oh), Some(od)) => {
-                                    regional_or_global_same_clade(aln, *oh, dg, g.u1, g.u2, d_clade)
-                                        && regional_or_global_same_clade(
-                                            aln, *od, hg, *ou1, *ou2, d_clade,
-                                        )
+                                    let is_inv = regional_or_global_same_clade(
+                                        aln, *oh, dg, g.u1, g.u2, d_clade,
+                                    ) && regional_or_global_same_clade(
+                                        aln, *od, hg, *ou1, *ou2, d_clade,
+                                    );
+                                    if is_inv {
+                                        return true;
+                                    }
+                                    let ov_s = g.u1.max(*ou1);
+                                    let ov_e = g.u2.min(*ou2);
+                                    if ov_e >= ov_s {
+                                        let is_same = regional_or_global_same_clade(
+                                            aln, *oh, hg, g.u1, g.u2, d_clade,
+                                        ) && regional_or_global_same_clade(
+                                            aln, *od, dg, g.u1, g.u2, d_clade,
+                                        );
+                                        if is_same
+                                            && has_divergent_overhang(
+                                                aln,
+                                                g.candidate_idx,
+                                                g.u1,
+                                                g.u2,
+                                                t_idx,
+                                                *ou1,
+                                                *ou2,
+                                                g.home_idx,
+                                                g.donor_idx,
+                                                d_clade,
+                                            )
+                                        {
+                                            return true;
+                                        }
+                                    }
+                                    false
                                 }
                                 _ => false,
                             }
                         },
                     );
-                    if has_inverted_event {
+                    if has_conflicting_event {
                         continue;
                     }
                 }
@@ -1565,7 +1913,20 @@ fn group_ancestral_events(
                 gap <= 350 && jaccard_iso >= 0.75
             };
 
-            if is_overlapping_or_contiguous {
+            if is_overlapping_or_contiguous
+                && !has_divergent_overhang(
+                    aln,
+                    existing.candidate_idx,
+                    existing.u1,
+                    existing.u2,
+                    ev.candidate_idx,
+                    ev.u1,
+                    ev.u2,
+                    existing.home_idx,
+                    existing.donor_idx,
+                    d_clade,
+                )
+            {
                 existing.u1 = existing.u1.min(ev.u1);
                 existing.u2 = existing.u2.max(ev.u2);
                 existing.u1_continuous = existing.u1 as f64;

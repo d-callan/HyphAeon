@@ -1929,29 +1929,36 @@ __RHIZAEON_DATA_JSON__
         t1.ctx.lineWidth = 2.0;
         t1.ctx.stroke();
 
-        // Track 2: Log-Likelihood & Plateaus for the Active Focal Taxon
+        // Track 2: Log-Likelihood & Plateaus for the Active Focal Taxon & Parental Pair
         const t2 = setupCanvas(canvasLL);
         t2.ctx.clearRect(0, 0, t2.width, t2.height);
 
-        const myBps = DATA.breakpoints.filter(bp => bp.recombinant === state.focalTaxon || (bp.isolates && bp.isolates.includes(state.focalTaxon)));
+        const allTaxonBps = DATA.breakpoints.filter(bp => bp.recombinant === state.focalTaxon || (bp.isolates && bp.isolates.includes(state.focalTaxon)));
+        const pairMatchedBps = allTaxonBps.filter(bp =>
+          (bp.parent_1 === state.p1Taxon && bp.parent_2 === state.p2Taxon) ||
+          (bp.parent_1 === state.p2Taxon && bp.parent_2 === state.p1Taxon) ||
+          (state.activeEventId && bp.event_id === state.activeEventId)
+        );
+        const myBps = pairMatchedBps.length > 0 ? pairMatchedBps : allTaxonBps;
         const llTitle = document.getElementById('ll-track-title');
         if (llTitle) {
           llTitle.textContent = myBps.length > 0 
-            ? `Profile Log-Likelihood Surface & Physical Plateaus (${state.focalTaxon}: ${myBps.length} event${myBps.length > 1 ? 's' : ''})`
+            ? `Profile Log-Likelihood Surface & Physical Plateaus (${state.focalTaxon}: ${state.p1Taxon} vs ${state.p2Taxon})`
             : `Profile Log-Likelihood Surface (${state.focalTaxon}: Clonal / 0 breakpoints)`;
         }
 
-        // Draw plateaus for this taxon
+        // Draw plateaus for the active event / parental pair
         myBps.forEach(bp => {
+          const isSelectedEvent = !state.activeEventId || bp.event_id === state.activeEventId;
           const xL = ntToX(bp.ci_left, t2.width);
           const xR = ntToX(bp.ci_right, t2.width);
-          t2.ctx.fillStyle = 'rgba(245, 158, 11, 0.3)';
+          t2.ctx.fillStyle = isSelectedEvent ? 'rgba(245, 158, 11, 0.32)' : 'rgba(148, 163, 184, 0.18)';
           t2.ctx.fillRect(xL, 0, Math.max(3, xR - xL), t2.height);
-          t2.ctx.strokeStyle = '#f59e0b';
+          t2.ctx.strokeStyle = isSelectedEvent ? '#f59e0b' : '#64748b';
           t2.ctx.strokeRect(xL, 0, Math.max(3, xR - xL), t2.height);
 
           // Hatching
-          t2.ctx.strokeStyle = 'rgba(245, 158, 11, 0.4)';
+          t2.ctx.strokeStyle = isSelectedEvent ? 'rgba(245, 158, 11, 0.4)' : 'rgba(148, 163, 184, 0.25)';
           t2.ctx.lineWidth = 1;
           for (let hx = xL; hx < xR + t2.height; hx += 8) {
             t2.ctx.beginPath();
@@ -1960,24 +1967,59 @@ __RHIZAEON_DATA_JSON__
             t2.ctx.stroke();
           }
 
-          t2.ctx.fillStyle = '#f59e0b';
+          t2.ctx.fillStyle = isSelectedEvent ? '#f59e0b' : '#94a3b8';
           t2.ctx.font = '9px sans-serif';
           t2.ctx.fillText(`${bp.breakpoint_id} [${bp.ci_left}–${bp.ci_right}]`, Math.max(5, xL + 4), 14);
         });
 
-        if (myBps.length > 0) {
+        // Compute authentic local 2x2 profile log-likelihood gain Delta ln L(u) directly from informative SNPs
+        const infSnps = (sig.informative_snps || []).filter(s => s.type === 'match_p1' || s.type === 'match_p2');
+        if (infSnps.length >= 4) {
+          const halfWin = Math.max(250, Math.min(1200, Math.floor(L_TOTAL / 8)));
+          const stepNt = Math.max(1, Math.floor((state.zoomEnd - state.zoomStart) / 350));
+          const pts = [];
+          let maxLL = 1.0;
+
+          for (let nt = state.zoomStart; nt <= state.zoomEnd; nt += stepNt) {
+            let aL = 0, bL = 0, aR = 0, bR = 0;
+            const leftLim = nt - halfWin;
+            const rightLim = nt + halfWin;
+            for (let i = 0; i < infSnps.length; i++) {
+              const p = infSnps[i].pos;
+              if (p < leftLim) continue;
+              if (p > rightLim) break;
+              const isP1 = infSnps[i].type === 'match_p1';
+              if (p <= nt) {
+                if (isP1) aL++; else bL++;
+              } else {
+                if (isP1) aR++; else bR++;
+              }
+            }
+            const nL = aL + bL;
+            const nR = aR + bR;
+            let deltaLL = 0.0;
+            if (nL >= 2 && nR >= 2) {
+              const nTot = nL + nR;
+              const p1 = (aL + aR) / nTot;
+              const p2 = (bL + bR) / nTot;
+              if (p1 > 0 && p2 > 0) {
+                const term = (c, e) => (c > 0 && e > 0) ? c * Math.log(c / e) : 0.0;
+                deltaLL = Math.max(0.0,
+                  term(aL, nL * p1) + term(bL, nL * p2) +
+                  term(aR, nR * p1) + term(bR, nR * p2)
+                );
+              }
+            }
+            if (deltaLL > maxLL) maxLL = deltaLL;
+            pts.push({ nt, val: deltaLL });
+          }
+
+          maxLL *= 1.12;
           t2.ctx.beginPath();
           let pllStarted = false;
-          const maxSupport = Math.max(10.0, ...myBps.map(b => b.log_likelihood_gain)) * 1.15;
-          const stepNt = Math.max(1, Math.floor(L_TOTAL / 300));
-          for (let nt = state.zoomStart; nt <= state.zoomEnd; nt += stepNt) {
-            let val = 0.0;
-            for (const b of myBps) {
-              const sigma = Math.max(25.0, b.plateau_width * 2.5);
-              val += b.log_likelihood_gain * Math.exp(-Math.pow(nt - b.breakpoint_nt, 2) / (2 * Math.pow(sigma, 2)));
-            }
-            const x = ntToX(nt, t2.width);
-            const y = t2.height - (val / maxSupport) * (t2.height - 14) - 6;
+          for (let i = 0; i < pts.length; i++) {
+            const x = ntToX(pts[i].nt, t2.width);
+            const y = t2.height - (pts[i].val / maxLL) * (t2.height - 14) - 6;
             if (!pllStarted) {
               t2.ctx.moveTo(x, y);
               pllStarted = true;

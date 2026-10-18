@@ -217,6 +217,90 @@ impl SequenceDueDiligence {
             (None, "Ghost".to_string())
         };
 
+        let mut u1 = u1;
+        let mut u2 = u2;
+        let mut is_crossover = tract.is_crossover;
+
+        // Prefix/Suffix Home-Reversion Trimming:
+        // When a coarse landmark tract `[u1, u2]` over-extends across a breakpoint into a flanking
+        // region where the candidate has already reverted to `Home` (`rc == rh != rd`), trim the
+        // leading/trailing Home-reversion sub-interval so cassettes (e.g. `H [7770-8210]`) are not
+        // misclassified as terminal crossovers (`[7770-9594]`).
+        if let Some(donor_row) = donor_row_opt {
+            let s0 = u1 - 1;
+            let e0 = u2.min(l);
+            if e0 > s0 + min_len {
+                let mut cum = 0i64;
+                let mut max_s = 0i64;
+                let mut u_max = e0 - 1;
+                let mut scores = Vec::with_capacity(e0 - s0);
+                for u in s0..e0 {
+                    let rc = cand_row[u];
+                    let rh = home_row[u];
+                    let rd = donor_row[u];
+                    if rc > 0 && rh > 0 && rd > 0 && rh != rd {
+                        if rc == rd {
+                            cum += 1;
+                        } else if rc == rh {
+                            cum -= 1;
+                        }
+                    }
+                    scores.push(cum);
+                    if cum >= max_s {
+                        max_s = cum;
+                        u_max = u;
+                    }
+                }
+                let final_s = cum;
+                let min_revert_span = min_len.max(if self.compression_ratio < 0.999 {
+                    ((150.0 * self.compression_ratio).round() as usize).max(6)
+                } else {
+                    150
+                });
+
+                // 1. Check trailing 3' Home-reversion suffix `(u_max, e0)`
+                let mut e_trimmed = e0;
+                if max_s >= 5
+                    && (final_s - max_s) <= -8
+                    && (e0 - (u_max + 1)) >= min_revert_span
+                    && (u_max + 1 - s0) >= min_revert_span
+                {
+                    e_trimmed = u_max + 1;
+                }
+
+                // 2. Check leading 5' Home-reversion prefix `[s0, u_min]` within `[s0, e_trimmed)`
+                let mut s_trimmed = s0;
+                let end_rel = e_trimmed - s0;
+                let mut min_s = 0i64;
+                let mut u_min_rel = None;
+                for idx in 0..end_rel {
+                    if scores[idx] < min_s {
+                        min_s = scores[idx];
+                        u_min_rel = Some(idx);
+                    }
+                }
+                if let Some(m_rel) = u_min_rel {
+                    let cand_s = s0 + m_rel + 1;
+                    let end_score = scores[end_rel - 1];
+                    if min_s <= -8
+                        && (end_score - min_s) >= 8
+                        && (m_rel + 1) >= min_revert_span
+                        && (e_trimmed - cand_s) >= min_revert_span
+                    {
+                        s_trimmed = cand_s;
+                    }
+                }
+
+                if s_trimmed != s0 || e_trimmed != e0 {
+                    u1 = s_trimmed + 1;
+                    u2 = e_trimmed;
+                    is_crossover = (u1 == 1) || (u2 == l);
+                }
+            }
+        }
+
+        let tract_len = if u2 >= u1 { u2 - u1 + 1 } else { 0 };
+
         // Site counters
         let mut s_donor = 0usize;
         let mut s_home_tract = 0usize;
@@ -302,35 +386,86 @@ impl SequenceDueDiligence {
             }
         }
 
-        // Parental Collapse Invariant:
+        // Parental Collapse & Partition Polarity Invariant:
         // In a genuine recombination event, Home and Donor are distinct parental lineages inside the
-        // recombinant tract (`d_tract_hd > d_clade` and `d_tract_cd < d_tract_hd`). If Home and Donor
-        // collapse into the same clade inside the tract (`d_tract_hd <= d_clade`) while being divergent
-        // on the flanks (`d_tract_hd < 0.5 * d_flank_hd`) or closer to each other than the candidate is
-        // to the donor (`d_tract_hd < 0.5 * d_tract_cd`), then one of (Home, Donor) is itself the
-        // mosaic recombinant and the candidate is a pure parental mirror!
-        if donor_row_opt.is_some() && valid_tract > 0 {
-            let d_tract_hd = (mismatch_tract_hd as f64) / (valid_tract as f64);
-            let d_tract_cd = (mismatch_tract_donor as f64) / (valid_tract as f64);
-            let d_tract_ch = (mismatch_tract_home as f64) / (valid_tract as f64);
-            let d_flank_hd = if valid_flank > 0 {
-                (mismatch_flank_hd as f64) / (valid_flank as f64)
-            } else {
-                d_tract_hd
-            };
-            let d_flank_ch = if valid_flank > 0 {
-                (mismatch_flank_home as f64) / (valid_flank as f64)
-            } else {
-                d_tract_ch
-            };
-            if (d_tract_hd <= d_clade
-                && (d_tract_hd < 0.5 * d_flank_hd || d_tract_hd < 0.5 * d_tract_cd))
-                || (d_tract_hd < 0.40 * d_flank_hd
-                    && d_tract_ch < 2.0 * d_flank_ch
-                    && (d_flank_hd - d_tract_hd > 2.0 * (d_tract_ch - d_flank_ch)))
-                || d_tract_cd >= 0.90 * d_tract_hd
-            {
-                return None;
+        // recombinant tract (`d_tract_hd > d_clade` and `d_tract_cd < d_tract_hd`), and Candidate must
+        // genuinely switch from Home on the adjacent flanks to Donor inside the tract (`s_donor > s_home_tract`
+        // and `d_tract_cd < d_tract_ch`).
+        if let Some(donor_row) = donor_row_opt {
+            if valid_tract > 0 {
+                let d_tract_hd = (mismatch_tract_hd as f64) / (valid_tract as f64);
+                let d_tract_cd = (mismatch_tract_donor as f64) / (valid_tract as f64);
+                let d_tract_ch = (mismatch_tract_home as f64) / (valid_tract as f64);
+                let d_flank_hd = if valid_flank > 0 {
+                    (mismatch_flank_hd as f64) / (valid_flank as f64)
+                } else {
+                    d_tract_hd
+                };
+                let d_flank_ch = if valid_flank > 0 {
+                    (mismatch_flank_home as f64) / (valid_flank as f64)
+                } else {
+                    d_tract_ch
+                };
+                let d_flank_cd = if valid_flank > 0 {
+                    (mismatch_flank_donor as f64) / (valid_flank as f64)
+                } else {
+                    d_tract_cd
+                };
+                if (d_tract_hd <= d_clade
+                    && (d_tract_hd < 0.5 * d_flank_hd || d_tract_hd < 0.5 * d_tract_cd))
+                    || (d_tract_hd < 0.40 * d_flank_hd
+                        && d_tract_ch < 2.0 * d_flank_ch
+                        && (d_flank_hd - d_tract_hd > 2.0 * (d_tract_ch - d_flank_ch)))
+                    || d_tract_cd >= 0.90 * d_tract_hd
+                    || (d_tract_cd >= 0.75 * d_tract_hd && s_donor * 2 <= mismatch_tract_hd)
+                    || s_donor <= s_home_tract
+                    || d_tract_cd >= d_tract_ch
+                {
+                    return None;
+                }
+
+                // If the global flank prefers Donor over Home (`d_flank_cd <= d_flank_ch`), verify whether
+                // at least one immediately adjacent flanking arm (`w = 500 bp`) prefers Home over Donor
+                // (as in multi-event mosaics); if neither adjacent arm prefers Home, Donor is the actual
+                // surrounding backbone and `[u1, u2]` is an internal variation artifact.
+                if valid_flank > 0 && (d_flank_cd <= d_flank_ch || s_donor_flank >= s_home_flank) {
+                    let w_adj = 500usize.min(l / 4).max(50);
+                    let l_start = s_idx.saturating_sub(w_adj);
+                    let r_end = (e_idx + w_adj).min(l);
+                    let mut l_h = 0usize;
+                    let mut l_d = 0usize;
+                    for u in l_start..s_idx {
+                        let rc = cand_row[u];
+                        let rh = home_row[u];
+                        let rd = donor_row[u];
+                        if rc > 0 && rh > 0 && rd > 0 && rh != rd {
+                            if rc == rh {
+                                l_h += 1;
+                            } else if rc == rd {
+                                l_d += 1;
+                            }
+                        }
+                    }
+                    let mut r_h = 0usize;
+                    let mut r_d = 0usize;
+                    for u in e_idx..r_end {
+                        let rc = cand_row[u];
+                        let rh = home_row[u];
+                        let rd = donor_row[u];
+                        if rc > 0 && rh > 0 && rd > 0 && rh != rd {
+                            if rc == rh {
+                                r_h += 1;
+                            } else if rc == rd {
+                                r_d += 1;
+                            }
+                        }
+                    }
+                    let left_prefers_home = l_h > l_d + 2;
+                    let right_prefers_home = r_h > r_d + 2;
+                    if !left_prefers_home && !right_prefers_home {
+                        return None;
+                    }
+                }
             }
         }
 
@@ -1151,11 +1286,11 @@ impl SequenceDueDiligence {
             donor_idx: parental.donor_global_idx,
             donor_name,
             is_ghost_donor: parental.is_ghost_donor,
-            is_crossover: tract.is_crossover,
+            is_crossover,
             u1,
             u2,
-            u1_continuous: tract.u1_continuous,
-            u2_continuous: tract.u2_continuous,
+            u1_continuous: u1 as f64,
+            u2_continuous: u2 as f64,
             tract_length: tract_len,
             s_informative: s_donor,
             p_fisher,
