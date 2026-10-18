@@ -296,9 +296,9 @@ impl SequenceDueDiligence {
                     }
                 }
 
-                // 1. Trailing 3' Home-reversion suffix `(u_max, e0)`
+                // 1. Trailing 3' Home-reversion suffix `(u_max, e0)` when tract reaches 3' boundary or `h_acc >= d_acc`
                 let mut e_trimmed = e0;
-                if u_max + 1 < e0 && (u_max + 1 - s0) >= min_len {
+                if (e0 == l || h_acc >= d_acc) && u_max + 1 < e0 && (u_max + 1 - s0) >= min_len {
                     let idx_max = u_max - s0;
                     let d_core = cum_d[idx_max];
                     let h_core = cum_h[idx_max];
@@ -312,30 +312,33 @@ impl SequenceDueDiligence {
                     }
                 }
 
-                // 2. Leading 5' Home-reversion prefix `[s0, u_min]` within `[s0, e_trimmed)`
+                // 2. Leading 5' Home-reversion prefix `[s0, u_min]` when `h_acc >= d_acc` within `[s0, e_trimmed)`
                 let mut s_trimmed = s0;
                 let end_rel = e_trimmed - s0;
-                let mut min_diff = 0i64;
-                let mut u_min_rel = None;
-                for idx in 0..end_rel {
-                    let diff = (cum_d[idx] as i64) - (cum_h[idx] as i64);
-                    if diff < min_diff {
-                        min_diff = diff;
-                        u_min_rel = Some(idx);
+                if end_rel > 0 && cum_h[end_rel - 1] >= cum_d[end_rel - 1] {
+                    let mut min_diff = 0i64;
+                    let mut u_min_rel = None;
+                    for idx in 0..end_rel {
+                        let diff = (cum_d[idx] as i64) - (cum_h[idx] as i64);
+                        if diff < min_diff {
+                            min_diff = diff;
+                            u_min_rel = Some(idx);
+                        }
                     }
-                }
-                if let Some(m_rel) = u_min_rel {
-                    let cand_s = s0 + m_rel + 1;
-                    if cand_s < e_trimmed && (e_trimmed - cand_s) >= min_len {
-                        let d_pref = cum_d[m_rel];
-                        let h_pref = cum_h[m_rel];
-                        let d_core = cum_d[end_rel - 1] - d_pref;
-                        let h_core = cum_h[end_rel - 1] - h_pref;
-                        if h_pref > d_pref
-                            && d_core > h_core
-                            && self.fisher_exact_2x2(d_core, h_core, d_pref, h_pref) < alpha_split
-                        {
-                            s_trimmed = cand_s;
+                    if let Some(m_rel) = u_min_rel {
+                        let cand_s = s0 + m_rel + 1;
+                        if cand_s < e_trimmed && (e_trimmed - cand_s) >= min_len {
+                            let d_pref = cum_d[m_rel];
+                            let h_pref = cum_h[m_rel];
+                            let d_core = cum_d[end_rel - 1] - d_pref;
+                            let h_core = cum_h[end_rel - 1] - h_pref;
+                            if h_pref > d_pref
+                                && d_core > h_core
+                                && self.fisher_exact_2x2(d_core, h_core, d_pref, h_pref)
+                                    < alpha_split
+                            {
+                                s_trimmed = cand_s;
+                            }
                         }
                     }
                 }

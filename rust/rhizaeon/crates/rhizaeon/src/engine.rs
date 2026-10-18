@@ -814,14 +814,14 @@ fn has_divergent_overhang(
     };
     let alpha_split = 0.05 / (aln.length.max(1) as f64);
     let mut overhangs = Vec::new();
-    if u1_a != u1_b {
+    if u1_a != u1_b && u1_a > 1 && u1_b > 1 {
         let s = u1_a.min(u1_b).saturating_sub(1);
         let e = u1_a.max(u1_b).saturating_sub(1).min(aln.length);
         let c_in = if u1_a < u1_b { c1 } else { c2 };
         let c_out = if u1_a < u1_b { c2 } else { c1 };
         overhangs.push((s, e, c_in, c_out));
     }
-    if u2_a != u2_b {
+    if u2_a != u2_b && u2_a < aln.length && u2_b < aln.length {
         let s = u2_a.min(u2_b).min(aln.length);
         let e = u2_a.max(u2_b).min(aln.length);
         let c_in = if u2_a > u2_b { c1 } else { c2 };
@@ -1812,7 +1812,7 @@ fn group_ancestral_events(
                         true
                     };
 
-                    let mut matches_mosaic = dist_fl_h < dist_fl_d
+                    let matches_mosaic = dist_fl_h < dist_fl_d
                         && dist_loc_fl_h < dist_loc_fl_d
                         && both_arms_ok
                         && dist_tr_d < dist_tr_h
@@ -1822,77 +1822,6 @@ fn group_ancestral_events(
                         && dist_tr_h > dist_loc_fl_h
                         && dist_fl_h < 0.5 * dist_fl_hd
                         && dist_tr_d < 0.5 * dist_tr_hd;
-
-                    // Parameter-free internal homogeneity check: verify that `t_row` does not
-                    // have a statistically significant 5' prefix or 3' suffix inside `[s_idx, e_idx)`
-                    // where `t_row` has reverted to `Home` (`fisher_exact_2x2_static < 0.05 / L`).
-                    if matches_mosaic && e_idx > s_idx {
-                        let alpha_split = 0.05 / (aln.length.max(1) as f64);
-                        let span = e_idx - s_idx;
-                        let mut cum_d = Vec::with_capacity(span);
-                        let mut cum_h = Vec::with_capacity(span);
-                        let mut d_acc = 0usize;
-                        let mut h_acc = 0usize;
-                        let mut max_diff = i64::MIN;
-                        let mut idx_max = span - 1;
-                        let mut min_diff = 0i64;
-                        let mut idx_min = None;
-                        for (idx, u) in (s_idx..e_idx).enumerate() {
-                            let rt = t_row[u];
-                            let rh = home_row[u];
-                            let rd = donor_row[u];
-                            if rt > 0 && rh > 0 && rd > 0 && rh != rd {
-                                if rt == rd {
-                                    d_acc += 1;
-                                } else if rt == rh {
-                                    h_acc += 1;
-                                }
-                            }
-                            cum_d.push(d_acc);
-                            cum_h.push(h_acc);
-                            let diff = (d_acc as i64) - (h_acc as i64);
-                            if diff >= max_diff {
-                                max_diff = diff;
-                                idx_max = idx;
-                            }
-                            if diff < min_diff {
-                                min_diff = diff;
-                                idx_min = Some(idx);
-                            }
-                        }
-                        if idx_max + 1 < span {
-                            let d_core = cum_d[idx_max];
-                            let h_core = cum_h[idx_max];
-                            let d_tail = d_acc - d_core;
-                            let h_tail = h_acc - h_core;
-                            if d_core > h_core
-                                && h_tail > d_tail
-                                && crate::due_diligence::SequenceDueDiligence::fisher_exact_2x2_static(
-                                    d_core, h_core, d_tail, h_tail,
-                                ) < alpha_split
-                            {
-                                matches_mosaic = false;
-                            }
-                        }
-                        if matches_mosaic {
-                            if let Some(m_idx) = idx_min {
-                                if m_idx + 1 < span {
-                                    let d_pref = cum_d[m_idx];
-                                    let h_pref = cum_h[m_idx];
-                                    let d_core = d_acc - d_pref;
-                                    let h_core = h_acc - h_pref;
-                                    if h_pref > d_pref
-                                        && d_core > h_core
-                                        && crate::due_diligence::SequenceDueDiligence::fisher_exact_2x2_static(
-                                            d_core, h_core, d_pref, h_pref,
-                                        ) < alpha_split
-                                    {
-                                        matches_mosaic = false;
-                                    }
-                                }
-                            }
-                        }
-                    }
 
                     if matches_mosaic {
                         g.isolates.push(t_name.clone());
