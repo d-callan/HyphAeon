@@ -510,35 +510,55 @@ impl RhizAeonEngine {
                         && ev_k.u2 < ev_m.u2
                         && k_len * 2 <= m_len * 3;
 
-                    // Case B: Stronger event on `ev_m`'s cited Home or Donor clade (when `ev_m` is in a
-                    // different clade) -> scrub it so pure parents cannot use a recombinant tract as Home/Donor.
-                    let k_is_m_home_or_donor = k_is_stronger
-                        && !same_cand_clade
-                        && (ev_m.home_idx.map_or(false, |h_idx| {
-                            ev_k.candidate_idx == h_idx
-                                || crate::landmarks::compute_pairwise_distance(
-                                    &aln,
-                                    ev_k.candidate_idx,
-                                    h_idx,
-                                ) <= d_clade
-                        }) || ev_m.donor_idx.map_or(false, |d_idx| {
-                            ev_k.candidate_idx == d_idx
-                                || crate::landmarks::compute_pairwise_distance(
-                                    &aln,
-                                    ev_k.candidate_idx,
-                                    d_idx,
-                                ) <= d_clade
-                        }));
+                    // Case B: Stronger overlapping event on a DIFFERENT clade -> scrub it
+                    // so pure parents cannot use a recombinant's tract as a false Home reference.
+                    let is_overlapping_on_other_cand =
+                        k_is_stronger && !same_cand_clade && (ov_len as f64) >= 0.25 * (m_len as f64);
 
                     if is_disjoint_on_same_cand
                         || is_nested_inner_diff_donor
-                        || k_is_m_home_or_donor
+                        || is_overlapping_on_other_cand
                     {
                         let s_u = ev_k.u1.saturating_sub(1).min(l);
                         let e_u = ev_k.u2.min(l);
                         if e_u > s_u {
+                            let cited_home_carries_k = if is_overlapping_on_other_cand && ov_len < m_len {
+                                ev_m.home_idx.filter(|&h_idx| {
+                                    let in_k_cand_clade = crate::landmarks::compute_pairwise_distance(
+                                        &aln,
+                                        ev_k.candidate_idx,
+                                        h_idx,
+                                    ) <= d_clade;
+                                    let not_in_k_donor_clade = ev_k.donor_idx.map_or(true, |kd| {
+                                        crate::landmarks::compute_pairwise_distance(&aln, h_idx, kd)
+                                            > d_clade
+                                    });
+                                    if !in_k_cand_clade || !not_in_k_donor_clade {
+                                        return false;
+                                    }
+                                    let k_row = aln.row(ev_k.candidate_idx);
+                                    let h_row = aln.row(h_idx);
+                                    let mut diffs = 0usize;
+                                    let mut valid = 0usize;
+                                    for u in s_u..e_u {
+                                        let rk = k_row[u];
+                                        let rh = h_row[u];
+                                        if rk > 0 && rh > 0 {
+                                            valid += 1;
+                                            if rk != rh {
+                                                diffs += 1;
+                                            }
+                                        }
+                                    }
+                                    valid > 0 && (diffs as f64) / (valid as f64) < d_sister
+                                })
+                            } else {
+                                None
+                            };
+
                             for t_idx in 0..n {
                                 if t_idx == ev_k.candidate_idx
+                                    || Some(t_idx) == cited_home_carries_k
                                     || crate::landmarks::compute_pairwise_distance(
                                         &aln,
                                         ev_k.candidate_idx,
@@ -649,8 +669,12 @@ impl RhizAeonEngine {
         let mut verified_events =
             due_diligence.adjudicate_reticulation_graph(verified_events, &raw_aln, &screening);
 
+        // Enforce single-backbone polarity consistency per candidate taxon
+        prune_inverted_backbone_events(&mut verified_events, &raw_aln);
+
         // Resolve transitive donor & home chains for co-recombinant isolates
         resolve_donor_chains(&mut verified_events, &raw_aln);
+        prune_inverted_backbone_events(&mut verified_events, &raw_aln);
 
         // Group ancestral events
         verified_events = group_ancestral_events(verified_events, &raw_aln);
@@ -669,11 +693,98 @@ impl RhizAeonEngine {
     }
 }
 
+fn regional_or_global_same_clade(
+    aln: &crate::types::Alignment,
+    t1: usize,
+    t2: usize,
+    u1: usize,
+    u2: usize,
+    d_clade: f64,
+) -> bool {
+    if t1 == t2 || crate::landmarks::compute_pairwise_distance(aln, t1, t2) <= d_clade {
+        return true;
+    }
+    let s_idx = u1.saturating_sub(1).min(aln.length);
+    let e_idx = u2.min(aln.length);
+    if e_idx <= s_idx {
+        return false;
+    }
+    let r1 = aln.row(t1);
+    let r2 = aln.row(t2);
+    let mut diffs = 0usize;
+    let mut valid = 0usize;
+    for u in s_idx..e_idx {
+        if r1[u] > 0 && r2[u] > 0 {
+            valid += 1;
+            if r1[u] != r2[u] {
+                diffs += 1;
+            }
+        }
+    }
+    valid > 0 && (diffs as f64) / (valid as f64) <= d_clade
+}
+
+/// Enforces Single-Backbone Polarity Consistency on each candidate sequence:
+/// A single mosaic sequence has one clonal Home backbone and cannot simultaneously have
+/// a primary event (Home = A, Donor = B) and a weaker disjoint event with inverted
+/// parental clade polarity (Home = B, Donor = A).
+fn prune_inverted_backbone_events(
+    events: &mut Vec<crate::types::RecombinationEvent>,
+    aln: &crate::types::Alignment,
+) {
+    if events.len() <= 1 {
+        return;
+    }
+    let (_d_sister, d_clade) = crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
+    let mut drop_flags = vec![false; events.len()];
+    for i in 0..events.len() {
+        if drop_flags[i] {
+            continue;
+        }
+        for j in 0..events.len() {
+            if i == j || drop_flags[j] {
+                continue;
+            }
+            if events[i].candidate_idx != events[j].candidate_idx {
+                continue;
+            }
+            // Check if events[j] is strictly stronger than events[i]
+            let j_is_stronger = events[j].p_fisher < events[i].p_fisher
+                || (events[j].p_fisher == events[i].p_fisher && events[j].z_phys > events[i].z_phys);
+            if !j_is_stronger {
+                continue;
+            }
+            if let (Some(hi), Some(di), Some(hj), Some(dj)) = (
+                events[i].home_idx,
+                events[i].donor_idx,
+                events[j].home_idx,
+                events[j].donor_idx,
+            ) {
+                let h_matches_d =
+                    regional_or_global_same_clade(aln, hi, dj, events[j].u1, events[j].u2, d_clade);
+                let d_matches_h =
+                    regional_or_global_same_clade(aln, di, hj, events[i].u1, events[i].u2, d_clade);
+                if h_matches_d && d_matches_h {
+                    drop_flags[i] = true;
+                    break;
+                }
+            }
+        }
+    }
+    let mut idx = 0usize;
+    events.retain(|_| {
+        let keep = !drop_flags[idx];
+        idx += 1;
+        keep
+    });
+}
+
 /// Resolves transitive donor chains and co-recombinant lineages across overlapping tracts.
 /// When sequence A is detected with donor B, but B is itself a co-recombinant with donor C
 /// sharing the same Home lineage over an overlapping tract, A inherits donor C from B.
 /// Similarly, if sequence A cites B as Home, but B is a co-recombinant sharing the same donor
-/// over an overlapping tract with Home C, A inherits Home C from B.
+/// over an overlapping tract with Home C, A inherits Home C from B; or if A's cassette is nested
+/// inside B's introgressed tract from Donor D, A's local flanking Home in B is resolved to D.
 fn resolve_donor_chains(
     events: &mut [crate::types::RecombinationEvent],
     aln: &crate::types::Alignment,
@@ -692,12 +803,14 @@ fn resolve_donor_chains(
             let e1_cand = events[i].candidate_name.clone();
             let e1_u1 = events[i].u1;
             let e1_u2 = events[i].u2;
+            let e1_len = e1_u2.saturating_sub(e1_u1) + 1;
 
             // 1. Resolve Donor Chain: e1 -> e2 (e1 cited e2 as Donor)
             if !e1_donor.is_empty() && e1_donor != "Ghost" {
                 let mut resolved_donor_idx = None;
                 let mut resolved_donor_name = None;
                 let mut resolved_is_ghost = false;
+                let mut any_overlapping_donor_event = false;
 
                 for (j, e2) in events.iter().enumerate() {
                     if i == j {
@@ -717,20 +830,25 @@ fn resolve_donor_chains(
                         continue;
                     }
                     let ov_len = ov_end - ov_start + 1;
-                    let min_len =
-                        (e1_u2.saturating_sub(e1_u1) + 1).min(e2.u2.saturating_sub(e2.u1) + 1);
+                    let min_len = e1_len.min(e2.u2.saturating_sub(e2.u1) + 1);
+                    if (ov_len as f64) < 0.25 * (min_len as f64) {
+                        continue;
+                    }
+                    any_overlapping_donor_event = true;
                     if (ov_len as f64) < 0.5 * (min_len as f64) {
                         continue;
                     }
 
-                    // Compatible Home lineage
-                    if e1_home != e2.home_name {
+                    // Compatible Home lineage (or e1's tract is >= 80% inside e2's tract)
+                    let e1_inside_e2 = (ov_len as f64) >= 0.80 * (e1_len as f64);
+                    if e1_home != e2.home_name && !e1_inside_e2 {
                         continue;
                     }
 
-                    // e2's donor must not be e1 (prevent cyclic attribution)
+                    // e2's donor must not be e1 or e1's Home (prevent cyclic attribution)
                     if e2.donor_name.is_empty()
                         || e2.donor_name == e1_cand
+                        || e2.donor_name == e1_home
                         || events[i].isolates.contains(&e2.donor_name)
                     {
                         continue;
@@ -740,6 +858,46 @@ fn resolve_donor_chains(
                     resolved_donor_idx = e2.donor_idx;
                     resolved_is_ghost = e2.is_ghost_donor;
                     break;
+                }
+
+                // Subcase C for Donor: e1 cited a recombinant `e1_donor` at a locus disjoint from
+                // `e1_donor`'s recombinant tracts (i.e. inside `e1_donor`'s un-recombined Home backbone).
+                // Resolve `e1_donor` to its pure non-recombinant Home parent `e2.home_name` if `e2.home_name`
+                // is in the same clade as `e1_donor` at `e1`'s locus.
+                if resolved_donor_name.is_none() && !any_overlapping_donor_event {
+                    let (_d_sister, d_clade) =
+                        crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
+                    for (j, e2) in events.iter().enumerate() {
+                        if i == j {
+                            continue;
+                        }
+                        let e2_is_donor_isolate =
+                            e2.candidate_name == e1_donor || e2.isolates.contains(&e1_donor);
+                        if !e2_is_donor_isolate {
+                            continue;
+                        }
+                        let target_donor_is_recombinant = events.iter().any(|ev| {
+                            ev.candidate_name == e2.home_name || ev.isolates.contains(&e2.home_name)
+                        });
+                        if e2.home_name.is_empty()
+                            || e2.home_name == e1_cand
+                            || e2.home_name == e1_home
+                            || events[i].isolates.contains(&e2.home_name)
+                            || target_donor_is_recombinant
+                        {
+                            continue;
+                        }
+                        if let (Some(d1_idx), Some(h2_idx)) = (events[i].donor_idx, e2.home_idx) {
+                            if regional_or_global_same_clade(
+                                aln, d1_idx, h2_idx, e1_u1, e1_u2, d_clade,
+                            ) {
+                                resolved_donor_name = Some(e2.home_name.clone());
+                                resolved_donor_idx = e2.home_idx;
+                                resolved_is_ghost = false;
+                                break;
+                            }
+                        }
+                    }
                 }
 
                 if let Some(new_donor) = resolved_donor_name {
@@ -794,6 +952,7 @@ fn resolve_donor_chains(
             if !e1_home.is_empty() {
                 let mut resolved_home_idx = None;
                 let mut resolved_home_name = None;
+                let mut any_overlapping_home_event = false;
 
                 for (j, e2) in events.iter().enumerate() {
                     if i == j {
@@ -813,28 +972,84 @@ fn resolve_donor_chains(
                         continue;
                     }
                     let ov_len = ov_end - ov_start + 1;
-                    let min_len =
-                        (e1_u2.saturating_sub(e1_u1) + 1).min(e2.u2.saturating_sub(e2.u1) + 1);
+                    let e2_len = e2.u2.saturating_sub(e2.u1) + 1;
+                    let min_len = e1_len.min(e2_len);
+                    if (ov_len as f64) < 0.25 * (min_len as f64) {
+                        continue;
+                    }
+                    any_overlapping_home_event = true;
                     if (ov_len as f64) < 0.5 * (min_len as f64) {
                         continue;
                     }
 
-                    // Compatible Donor lineage
-                    if events[i].donor_name != e2.donor_name {
-                        continue;
-                    }
-
-                    // e2's home must not be e1
-                    if e2.home_name.is_empty()
-                        || e2.home_name == e1_cand
-                        || events[i].isolates.contains(&e2.home_name)
+                    if events[i].donor_name == e2.donor_name {
+                        // Subcase A: Co-recombinant sisters sharing the same Donor -> inherit e2's Home
+                        if e2.home_name.is_empty()
+                            || e2.home_name == e1_cand
+                            || events[i].isolates.contains(&e2.home_name)
+                        {
+                            continue;
+                        }
+                        resolved_home_name = Some(e2.home_name.clone());
+                        resolved_home_idx = e2.home_idx;
+                        break;
+                    } else if (ov_len as f64) >= 0.80 * (e1_len as f64)
+                        && e1_len * 2 <= e2_len
+                        && !e2.is_ghost_donor
+                        && e2.donor_idx.is_some()
                     {
-                        continue;
+                        // Subcase B: e1 is a nested cassette strictly inside e2's larger introgressed tract.
+                        // Around e1's breakpoints, e2 is physically carrying e2.donor_name!
+                        if e2.donor_name.is_empty()
+                            || e2.donor_name == e1_cand
+                            || e2.donor_name == events[i].donor_name
+                            || events[i].isolates.contains(&e2.donor_name)
+                        {
+                            continue;
+                        }
+                        resolved_home_name = Some(e2.donor_name.clone());
+                        resolved_home_idx = e2.donor_idx;
+                        break;
                     }
+                }
 
-                    resolved_home_name = Some(e2.home_name.clone());
-                    resolved_home_idx = e2.home_idx;
-                    break;
+                // Subcase C: e1 cited a recombinant `e1_home` at a locus disjoint from `e1_home`'s
+                // recombinant tracts (i.e. inside `e1_home`'s un-recombined Home backbone).
+                // Resolve `e1_home` to its pure non-recombinant Home parent `e2.home_name` if `e2.home_name`
+                // is in the same clade as `e1_home` at `e1`'s locus.
+                if resolved_home_name.is_none() && !any_overlapping_home_event {
+                    let (_d_sister, d_clade) =
+                        crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
+                    for (j, e2) in events.iter().enumerate() {
+                        if i == j {
+                            continue;
+                        }
+                        let e2_is_home_isolate =
+                            e2.candidate_name == e1_home || e2.isolates.contains(&e1_home);
+                        if !e2_is_home_isolate {
+                            continue;
+                        }
+                        let target_home_is_recombinant = events.iter().any(|ev| {
+                            ev.candidate_name == e2.home_name || ev.isolates.contains(&e2.home_name)
+                        });
+                        if e2.home_name.is_empty()
+                            || e2.home_name == e1_cand
+                            || e2.home_name == events[i].donor_name
+                            || events[i].isolates.contains(&e2.home_name)
+                            || target_home_is_recombinant
+                        {
+                            continue;
+                        }
+                        if let (Some(h1_idx), Some(h2_idx)) = (events[i].home_idx, e2.home_idx) {
+                            if regional_or_global_same_clade(
+                                aln, h1_idx, h2_idx, e1_u1, e1_u2, d_clade,
+                            ) {
+                                resolved_home_name = Some(e2.home_name.clone());
+                                resolved_home_idx = e2.home_idx;
+                                break;
+                            }
+                        }
+                    }
                 }
 
                 if let Some(new_home) = resolved_home_name {
@@ -908,7 +1123,7 @@ fn group_ancestral_events(
             };
             let clade_rad = d_clade.max(0.5 * d_inter);
 
-            // 1. Direct compatibility: Home~Home and Donor~Donor
+            // Direct compatibility: Home~Home and Donor~Donor
             let home_matches = g.home_name == e.home_name
                 || match (g.home_idx, e.home_idx) {
                     (Some(gh), Some(eh)) => {
@@ -925,33 +1140,19 @@ fn group_ancestral_events(
                     _ => false,
                 };
 
-            // 2. Inverted polarity compatibility: Home~Donor and Donor~Home
-            // Occurs in multi-crossover co-recombinant clades (e.g., PVY I, K, T, W at 302-315 nt)
-            // where an additional downstream crossover shifts which parent constitutes the majority background.
-            let home_matches_donor = g.home_name == e.donor_name
-                || match (g.home_idx, e.donor_idx) {
-                    (Some(gh), Some(ed)) => {
-                        crate::landmarks::compute_pairwise_distance(aln, gh, ed) <= clade_rad
-                    }
-                    _ => false,
-                };
-
-            let donor_matches_home = g.donor_name == e.home_name
-                || match (g.donor_idx, e.home_idx) {
-                    (Some(gd), Some(eh)) => {
-                        crate::landmarks::compute_pairwise_distance(aln, gd, eh) <= clade_rad
-                    }
-                    _ => false,
-                };
-
             if home_matches && donor_matches {
                 let overlap_start = g.u1.max(e.u1);
                 let overlap_end = g.u2.min(e.u2);
                 if overlap_end >= overlap_start {
                     let overlap_len = overlap_end - overlap_start + 1;
-                    let min_len =
-                        (g.u2.saturating_sub(g.u1) + 1).min(e.u2.saturating_sub(e.u1) + 1);
-                    if overlap_len as f64 >= 0.5 * min_len as f64 {
+                    let g_len = g.u2.saturating_sub(g.u1) + 1;
+                    let e_len = e.u2.saturating_sub(e.u1) + 1;
+                    let min_len = g_len.min(e_len);
+                    let union_len = (g.u2.max(e.u2) - g.u1.min(e.u1) + 1).max(1);
+                    let iou = (overlap_len as f64) / (union_len as f64);
+                    if iou >= 0.50
+                        || (overlap_len as f64 >= 0.70 * min_len as f64 && min_len * 2 >= union_len)
+                    {
                         g.isolates.extend(e.isolates.clone());
                         g.isolates.sort();
                         g.isolates.dedup();
@@ -971,126 +1172,6 @@ fn group_ancestral_events(
                         break;
                     }
                 }
-            } else if home_matches_donor && donor_matches_home {
-                let bp_tol = 150usize;
-                let shared_junction = g.u1.abs_diff(e.u2) <= bp_tol
-                    || g.u2.abs_diff(e.u1) <= bp_tol
-                    || (g.u1.abs_diff(e.u1) <= bp_tol && g.u2.abs_diff(e.u2) <= bp_tol);
-                if shared_junction {
-                    g.isolates.extend(e.isolates.clone());
-                    // Also recruit any cohort isolates matching e's complementary interval [e.u1, e.u2] and polarity (e.home_idx, e.donor_idx)
-                    if let (Some(eh), Some(ed)) = (e.home_idx, e.donor_idx) {
-                        let es = e.u1.saturating_sub(1);
-                        let ee = e.u2.min(aln.length);
-                        if ee > es {
-                            let eh_row = aln.row(eh);
-                            let ed_row = aln.row(ed);
-                            for t_idx in 0..aln.num_taxa {
-                                let t_name = &aln.taxa[t_idx];
-                                let t_row = aln.row(t_idx);
-                                let (mut d_tr_h, mut v_tr_h, mut d_fl_h, mut v_fl_h) =
-                                    (0usize, 0usize, 0usize, 0usize);
-                                let (mut d_tr_d, mut v_tr_d, mut d_fl_d, mut v_fl_d) =
-                                    (0usize, 0usize, 0usize, 0usize);
-                                let (mut d_tr_hd, mut v_tr_hd, mut d_fl_hd, mut v_fl_hd) =
-                                    (0usize, 0usize, 0usize, 0usize);
-                                for u in 0..aln.length {
-                                    let (rt, rh, rd) = (t_row[u], eh_row[u], ed_row[u]);
-                                    let in_tr = u >= es && u < ee;
-                                    if rt > 0 && rh > 0 {
-                                        if in_tr {
-                                            v_tr_h += 1;
-                                            if rt != rh {
-                                                d_tr_h += 1;
-                                            }
-                                        } else {
-                                            v_fl_h += 1;
-                                            if rt != rh {
-                                                d_fl_h += 1;
-                                            }
-                                        }
-                                    }
-                                    if rt > 0 && rd > 0 {
-                                        if in_tr {
-                                            v_tr_d += 1;
-                                            if rt != rd {
-                                                d_tr_d += 1;
-                                            }
-                                        } else {
-                                            v_fl_d += 1;
-                                            if rt != rd {
-                                                d_fl_d += 1;
-                                            }
-                                        }
-                                    }
-                                    if rh > 0 && rd > 0 {
-                                        if in_tr {
-                                            v_tr_hd += 1;
-                                            if rh != rd {
-                                                d_tr_hd += 1;
-                                            }
-                                        } else {
-                                            v_fl_hd += 1;
-                                            if rh != rd {
-                                                d_fl_hd += 1;
-                                            }
-                                        }
-                                    }
-                                }
-                                let dist_tr_h = if v_tr_h > 0 {
-                                    d_tr_h as f64 / v_tr_h as f64
-                                } else {
-                                    1.0
-                                };
-                                let dist_fl_h = if v_fl_h > 0 {
-                                    d_fl_h as f64 / v_fl_h as f64
-                                } else {
-                                    1.0
-                                };
-                                let dist_tr_d = if v_tr_d > 0 {
-                                    d_tr_d as f64 / v_tr_d as f64
-                                } else {
-                                    1.0
-                                };
-                                let dist_fl_d = if v_fl_d > 0 {
-                                    d_fl_d as f64 / v_fl_d as f64
-                                } else {
-                                    1.0
-                                };
-                                let dist_tr_hd = if v_tr_hd > 0 {
-                                    d_tr_hd as f64 / v_tr_hd as f64
-                                } else {
-                                    1.0
-                                };
-                                let dist_fl_hd = if v_fl_hd > 0 {
-                                    d_fl_hd as f64 / v_fl_hd as f64
-                                } else {
-                                    1.0
-                                };
-                                if dist_fl_h < dist_fl_d
-                                    && dist_tr_d < dist_tr_h
-                                    && dist_fl_d > dist_tr_d
-                                    && dist_tr_h > dist_fl_h
-                                    && dist_fl_h < 0.5 * dist_fl_hd
-                                    && dist_tr_d < 0.5 * dist_tr_hd
-                                {
-                                    g.isolates.push(t_name.clone());
-                                }
-                            }
-                        }
-                    }
-                    g.isolates.sort();
-                    g.isolates.dedup();
-                    if e.p_fisher < g.p_fisher {
-                        g.p_fisher = e.p_fisher;
-                    }
-                    if e.z_phys > g.z_phys {
-                        g.z_phys = e.z_phys;
-                    }
-                    g.s_informative = g.s_informative.max(e.s_informative);
-                    found = true;
-                    break;
-                }
             }
         }
         if !found {
@@ -1098,15 +1179,43 @@ fn group_ancestral_events(
         }
     }
 
+    // Resolve donor/home chains after merging identical primary events so merged isolate rosters
+    // resolve any remaining co-recombinant parental citations before cohort recruitment
+    resolve_donor_chains(&mut grouped, aln);
+
+    // Sort grouped events by statistical significance before recruitment so the strongest
+    // ancestral events recruit their mosaic cohort isolates first.
+    grouped.sort_by(|a, b| {
+        a.p_fisher
+            .partial_cmp(&b.p_fisher)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                b.z_phys
+                    .partial_cmp(&a.z_phys)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    });
+
+    // Track verified and recruited isolate assignments to:
+    // (a) prevent recruiting an isolate into a complementary event with inverted Home<->Donor polarity
+    // (b) mask disjoint recombinant tracts of multi-event mosaics from global flank accumulators
+    let mut active_isolate_events: Vec<(Option<usize>, Option<usize>, usize, usize, Vec<String>)> =
+        grouped
+            .iter()
+            .map(|ev| (ev.home_idx, ev.donor_idx, ev.u1, ev.u2, ev.isolates.clone()))
+            .collect();
+
     // Cohort Roster Recruitment (DIR-RHIZ-PAFF-013.9)
     // Once an ancestral event is verified between Home and Donor over [u1, u2],
     // enroll all cohort isolates that carry this verified mosaic haplotype into the event roster.
-    // Governed strictly by the 4 canonical physical polarity invariants (Zero Magic Numbers):
-    //   1. d_flank(S, H) < d_flank(S, D)
+    // Governed strictly by the canonical physical polarity invariants across BOTH the global flanks
+    // and the local flanking windows immediately adjacent to [u1, u2], plus strict disjointness
+    // from the designated Home and Donor parental references:
+    //   1. d_flank(S, H) < d_flank(S, D) and d_local_flank(S, H) < d_local_flank(S, D)
     //   2. d_tract(S, D) < d_tract(S, H)
-    //   3. d_flank(S, D) - d_tract(S, D) > 0 (positive recoil towards Donor)
-    //   4. d_tract(S, H) - d_flank(S, H) > 0 (positive departure from Home)
-    for g in &mut grouped {
+    //   3. d_flank(S, D) > d_tract(S, D) and d_local_flank(S, D) > d_tract(S, D) (positive recoil towards Donor)
+    //   4. d_tract(S, H) > d_flank(S, H) and d_tract(S, H) > d_local_flank(S, H) (positive departure from Home)
+    for (g_idx, g) in grouped.iter_mut().enumerate() {
         if let Some(hg) = g.home_idx {
             let s_idx = g.u1.saturating_sub(1);
             let e_idx = g.u2.min(aln.length);
@@ -1115,18 +1224,66 @@ fn group_ancestral_events(
             }
             let home_row = aln.row(hg);
             let donor_row_opt = g.donor_idx.map(|dg| aln.row(dg));
+            let w_loc = (e_idx - s_idx).clamp(300, 1000);
+            let loc_l_start = s_idx.saturating_sub(w_loc);
+            let loc_r_end = (e_idx + w_loc).min(aln.length);
 
             for t_idx in 0..aln.num_taxa {
                 let t_name = &aln.taxa[t_idx];
-                if g.isolates.contains(t_name) {
+                if g.isolates.contains(t_name)
+                    || *t_name == g.home_name
+                    || *t_name == g.donor_name
+                    || Some(t_idx) == g.home_idx
+                    || Some(t_idx) == g.donor_idx
+                {
                     continue;
                 }
+                // Do not recruit `t_name` into `g` if `t_name` already has a verified or recruited
+                // event with inverted Home<->Donor clade polarity
+                if let Some(dg) = g.donor_idx {
+                    let has_inverted_event = active_isolate_events.iter().any(
+                        |(oh_opt, od_opt, ou1, ou2, isos)| {
+                            if !isos.contains(t_name) {
+                                return false;
+                            }
+                            match (oh_opt, od_opt) {
+                                (Some(oh), Some(od)) => {
+                                    regional_or_global_same_clade(aln, *oh, dg, g.u1, g.u2, d_clade)
+                                        && regional_or_global_same_clade(
+                                            aln, *od, hg, *ou1, *ou2, d_clade,
+                                        )
+                                }
+                                _ => false,
+                            }
+                        },
+                    );
+                    if has_inverted_event {
+                        continue;
+                    }
+                }
+                // Collect any disjoint recombinant tracts already carried by `t_name`
+                // so they do not contaminate `t_name`'s global Home-background flank accumulators
+                let disjoint_tracts: Vec<(usize, usize)> = active_isolate_events
+                    .iter()
+                    .filter_map(|(_oh, _od, ou1, ou2, isos)| {
+                        if isos.contains(t_name) && (*ou2 < g.u1 || *ou1 > g.u2) {
+                            Some((ou1.saturating_sub(1), (*ou2).min(aln.length)))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
                 let t_row = aln.row(t_idx);
 
                 let mut d_tr_h = 0usize;
                 let mut v_tr_h = 0usize;
                 let mut d_fl_h = 0usize;
                 let mut v_fl_h = 0usize;
+                let mut d_loc_l_h = 0usize;
+                let mut v_loc_l_h = 0usize;
+                let mut d_loc_r_h = 0usize;
+                let mut v_loc_r_h = 0usize;
                 for u in 0..aln.length {
                     let rt = t_row[u];
                     let rh = home_row[u];
@@ -1137,9 +1294,25 @@ fn group_ancestral_events(
                                 d_tr_h += 1;
                             }
                         } else {
-                            v_fl_h += 1;
-                            if rt != rh {
-                                d_fl_h += 1;
+                            let in_other_tract = disjoint_tracts
+                                .iter()
+                                .any(|&(os, oe)| u >= os && u < oe);
+                            if !in_other_tract {
+                                v_fl_h += 1;
+                                if rt != rh {
+                                    d_fl_h += 1;
+                                }
+                            }
+                            if u >= loc_l_start && u < s_idx {
+                                v_loc_l_h += 1;
+                                if rt != rh {
+                                    d_loc_l_h += 1;
+                                }
+                            } else if u >= e_idx && u < loc_r_end {
+                                v_loc_r_h += 1;
+                                if rt != rh {
+                                    d_loc_r_h += 1;
+                                }
                             }
                         }
                     }
@@ -1154,12 +1327,22 @@ fn group_ancestral_events(
                 } else {
                     1.0
                 };
+                let v_loc_h = v_loc_l_h + v_loc_r_h;
+                let dist_loc_fl_h = if v_loc_h > 0 {
+                    ((d_loc_l_h + d_loc_r_h) as f64) / (v_loc_h as f64)
+                } else {
+                    dist_fl_h
+                };
 
                 if let Some(donor_row) = donor_row_opt {
                     let mut d_tr_d = 0usize;
                     let mut v_tr_d = 0usize;
                     let mut d_fl_d = 0usize;
                     let mut v_fl_d = 0usize;
+                    let mut d_loc_l_d = 0usize;
+                    let mut v_loc_l_d = 0usize;
+                    let mut d_loc_r_d = 0usize;
+                    let mut v_loc_r_d = 0usize;
                     let mut d_tr_hd = 0usize;
                     let mut v_tr_hd = 0usize;
                     let mut d_fl_hd = 0usize;
@@ -1168,6 +1351,8 @@ fn group_ancestral_events(
                         let rt = t_row[u];
                         let rd = donor_row[u];
                         let rh = home_row[u];
+                        let in_other_tract = !(u >= s_idx && u < e_idx)
+                            && disjoint_tracts.iter().any(|&(os, oe)| u >= os && u < oe);
                         if rt > 0 && rd > 0 {
                             if u >= s_idx && u < e_idx {
                                 v_tr_d += 1;
@@ -1175,9 +1360,22 @@ fn group_ancestral_events(
                                     d_tr_d += 1;
                                 }
                             } else {
-                                v_fl_d += 1;
-                                if rt != rd {
-                                    d_fl_d += 1;
+                                if !in_other_tract {
+                                    v_fl_d += 1;
+                                    if rt != rd {
+                                        d_fl_d += 1;
+                                    }
+                                }
+                                if u >= loc_l_start && u < s_idx {
+                                    v_loc_l_d += 1;
+                                    if rt != rd {
+                                        d_loc_l_d += 1;
+                                    }
+                                } else if u >= e_idx && u < loc_r_end {
+                                    v_loc_r_d += 1;
+                                    if rt != rd {
+                                        d_loc_r_d += 1;
+                                    }
                                 }
                             }
                         }
@@ -1187,7 +1385,7 @@ fn group_ancestral_events(
                                 if rh != rd {
                                     d_tr_hd += 1;
                                 }
-                            } else {
+                            } else if !in_other_tract {
                                 v_fl_hd += 1;
                                 if rh != rd {
                                     d_fl_hd += 1;
@@ -1205,6 +1403,12 @@ fn group_ancestral_events(
                     } else {
                         1.0
                     };
+                    let v_loc_d = v_loc_l_d + v_loc_r_d;
+                    let dist_loc_fl_d = if v_loc_d > 0 {
+                        ((d_loc_l_d + d_loc_r_d) as f64) / (v_loc_d as f64)
+                    } else {
+                        dist_fl_d
+                    };
                     let dist_tr_hd = if v_tr_hd > 0 {
                         (d_tr_hd as f64) / (v_tr_hd as f64)
                     } else {
@@ -1216,10 +1420,28 @@ fn group_ancestral_events(
                         1.0
                     };
 
+                    let both_arms_ok = if v_loc_l_h >= 50
+                        && v_loc_l_d >= 50
+                        && v_loc_r_h >= 50
+                        && v_loc_r_d >= 50
+                    {
+                        let l_h = (d_loc_l_h as f64) / (v_loc_l_h as f64);
+                        let l_d = (d_loc_l_d as f64) / (v_loc_l_d as f64);
+                        let r_h = (d_loc_r_h as f64) / (v_loc_r_h as f64);
+                        let r_d = (d_loc_r_d as f64) / (v_loc_r_d as f64);
+                        l_h < l_d || r_h < r_d
+                    } else {
+                        true
+                    };
+
                     let matches_mosaic = dist_fl_h < dist_fl_d
+                        && dist_loc_fl_h < dist_loc_fl_d
+                        && both_arms_ok
                         && dist_tr_d < dist_tr_h
                         && dist_fl_d > dist_tr_d
+                        && dist_loc_fl_d > dist_tr_d
                         && dist_tr_h > dist_fl_h
+                        && dist_tr_h > dist_loc_fl_h
                         && dist_fl_h < 0.5 * dist_fl_hd
                         && dist_tr_d < 0.5 * dist_tr_hd;
 
@@ -1247,13 +1469,35 @@ fn group_ancestral_events(
                     };
                     let (_d_sister, d_clade) =
                         crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
-                    if dist_tr_c < dist_tr_h && dist_tr_h > dist_fl_h && dist_fl_h < d_clade {
+                    if dist_tr_c < dist_tr_h
+                        && dist_tr_h > dist_fl_h
+                        && dist_tr_h > dist_loc_fl_h
+                        && dist_fl_h < d_clade
+                    {
                         g.isolates.push(t_name.clone());
                     }
                 }
             }
+            // Enforce strict disjointness between recombinant isolates and parental references
+            g.isolates
+                .retain(|iso| *iso != g.home_name && *iso != g.donor_name);
+            if g.isolates.is_empty() {
+                g.isolates.push(g.candidate_name.clone());
+            }
             g.isolates.sort();
             g.isolates.dedup();
+            active_isolate_events[g_idx].4 = g.isolates.clone();
+        }
+    }
+
+    // Re-run donor/home chain resolution after cohort recruitment so any event citing a
+    // recruited co-recombinant isolate resolves to its primary non-recombinant parent
+    resolve_donor_chains(&mut grouped, aln);
+    for g in &mut grouped {
+        g.isolates
+            .retain(|iso| *iso != g.home_name && *iso != g.donor_name);
+        if g.isolates.is_empty() {
+            g.isolates.push(g.candidate_name.clone());
         }
     }
 
@@ -1313,10 +1557,12 @@ fn group_ancestral_events(
             let ov_start = ev.u1.max(existing.u1);
             let ov_end = ev.u2.min(existing.u2);
             let is_overlapping_or_contiguous = if ov_end >= ov_start {
-                true
+                let ov_len = ov_end - ov_start + 1;
+                let union_len = (ev.u2.max(existing.u2) - ev.u1.min(existing.u1) + 1).max(1);
+                (ov_len as f64) / (union_len as f64) >= 0.50 || jaccard_iso >= 0.75
             } else {
                 let gap = ov_start - ov_end;
-                gap <= 350
+                gap <= 350 && jaccard_iso >= 0.75
             };
 
             if is_overlapping_or_contiguous {
@@ -1326,6 +1572,12 @@ fn group_ancestral_events(
                 existing.u2_continuous = existing.u2 as f64;
                 existing.tract_length = existing.u2.saturating_sub(existing.u1) + 1;
                 existing.isolates.extend(ev.isolates.clone());
+                existing
+                    .isolates
+                    .retain(|iso| *iso != existing.home_name && *iso != existing.donor_name);
+                if existing.isolates.is_empty() {
+                    existing.isolates.push(existing.candidate_name.clone());
+                }
                 existing.isolates.sort();
                 existing.isolates.dedup();
                 if ev.p_fisher < existing.p_fisher {

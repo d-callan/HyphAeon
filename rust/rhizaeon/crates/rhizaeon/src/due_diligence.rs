@@ -312,13 +312,23 @@ impl SequenceDueDiligence {
         if donor_row_opt.is_some() && valid_tract > 0 {
             let d_tract_hd = (mismatch_tract_hd as f64) / (valid_tract as f64);
             let d_tract_cd = (mismatch_tract_donor as f64) / (valid_tract as f64);
+            let d_tract_ch = (mismatch_tract_home as f64) / (valid_tract as f64);
             let d_flank_hd = if valid_flank > 0 {
                 (mismatch_flank_hd as f64) / (valid_flank as f64)
             } else {
                 d_tract_hd
             };
-            if d_tract_hd <= d_clade
-                && (d_tract_hd < 0.5 * d_flank_hd || d_tract_hd < 0.5 * d_tract_cd)
+            let d_flank_ch = if valid_flank > 0 {
+                (mismatch_flank_home as f64) / (valid_flank as f64)
+            } else {
+                d_tract_ch
+            };
+            if (d_tract_hd <= d_clade
+                && (d_tract_hd < 0.5 * d_flank_hd || d_tract_hd < 0.5 * d_tract_cd))
+                || (d_tract_hd < 0.40 * d_flank_hd
+                    && d_tract_ch < 2.0 * d_flank_ch
+                    && (d_flank_hd - d_tract_hd > 2.0 * (d_tract_ch - d_flank_ch)))
+                || d_tract_cd >= 0.90 * d_tract_hd
             {
                 return None;
             }
@@ -350,8 +360,8 @@ impl SequenceDueDiligence {
         // and its putative Home parent H (or Donor D) is a mosaic member of the same lineage cluster,
         // an inverted mirror artifact occurs if C actually carries the majority clonal consensus of L_C
         // inside [s_idx, e_idx] while H (or D) is the minority mosaic recombinant inside [s_idx, e_idx].
-        // A true recent recombinant departs from its lineage's majority inside the tract; a pure clonal
-        // strain remains close to its lineage's median/consensus inside the tract.
+        // A true recent recombinant departs from its flank-consistent lineage peers inside the tract; a
+        // pure clonal strain remains close to its flank-consistent lineage peers inside the tract.
         if aln.num_taxa >= 6 {
             if lineage_peers.len() >= 4 {
                 // Compute candidate's and Home's mean distance to all lineage peers inside the tract
@@ -452,12 +462,82 @@ impl SequenceDueDiligence {
                     }
 
                     // 2. Inverted Home Mirror: Home is in Candidate's lineage cluster, and inside the tract
-                    // Candidate is closer to the lineage cluster consensus than Home is (i.e. Home is the mosaic outlier!)
+                    // Candidate is closer to the lineage cluster consensus than Home is (i.e. Home is the mosaic outlier!).
+                    // Note: When Candidate genuinely converges to a sampled external Donor (`d_fl_d > d_clade`,
+                    // `d_tr_hd > d_clade`, `d_tr_d < 0.25 * d_fl_d`) and `mean_tr_cand > d_sister`, `mean_tr_cand < mean_tr_home`
+                    // can occur simply because >= 50% of `lineage_peers` are co-recombinants sharing the ancestral event.
+                    // In that case, it is only an Inverted Home Mirror if `Home` itself jumped into an external clade
+                    // or lost all clade support in the tract.
                     if d_ch <= d_clade
                         && (mean_tr_cand + d_sister < mean_tr_home
                             || (mean_tr_home >= 1.4 * mean_tr_cand && mean_tr_home > d_sister))
                     {
-                        return None;
+                        let d_tr_d = if valid_tract > 0 {
+                            (mismatch_tract_donor as f64) / (valid_tract as f64)
+                        } else {
+                            1.0
+                        };
+                        let d_fl_d = if valid_flank > 0 {
+                            (mismatch_flank_donor as f64) / (valid_flank as f64)
+                        } else {
+                            0.0
+                        };
+                        let d_tr_hd = if valid_tract > 0 {
+                            (mismatch_tract_hd as f64) / (valid_tract as f64)
+                        } else {
+                            0.0
+                        };
+                        let cand_has_ext_donor_jump = donor_row_opt.is_some()
+                            && d_fl_d > d_clade
+                            && d_tr_hd > d_clade
+                            && d_tr_d <= d_clade
+                            && d_tr_d < 0.25 * d_fl_d
+                            && mean_tr_cand > d_sister;
+
+                        let is_inverted_home_mirror = if cand_has_ext_donor_jump {
+                            let mut home_jumped_ext = false;
+                            let mut home_clade_support = 0usize;
+                            for x_idx in 0..aln.num_taxa {
+                                if x_idx != home_global && x_idx != cand_idx {
+                                    let d_glob_hx = crate::landmarks::compute_pairwise_distance(
+                                        aln,
+                                        home_global,
+                                        x_idx,
+                                    );
+                                    let x_row = aln.row(x_idx);
+                                    let mut m_hx = 0usize;
+                                    let mut v_hx = 0usize;
+                                    for u in s_idx..e_idx {
+                                        let rh = home_row[u];
+                                        let rx = x_row[u];
+                                        if rh > 0 && rx > 0 {
+                                            v_hx += 1;
+                                            if rh != rx {
+                                                m_hx += 1;
+                                            }
+                                        }
+                                    }
+                                    if v_hx > 0 {
+                                        let d_tr_hx = (m_hx as f64) / (v_hx as f64);
+                                        if d_glob_hx > d_clade {
+                                            if d_tr_hx <= d_clade && d_tr_hx < 0.5 * d_glob_hx {
+                                                home_jumped_ext = true;
+                                                break;
+                                            }
+                                        } else if d_tr_hx <= d_clade {
+                                            home_clade_support += 1;
+                                        }
+                                    }
+                                }
+                            }
+                            home_jumped_ext || home_clade_support == 0
+                        } else {
+                            true
+                        };
+
+                        if is_inverted_home_mirror {
+                            return None;
+                        }
                     }
 
                     // 3. Intra-lineage Donor Mirror: Donor is in Candidate's own lineage cluster (d_cd <= d_clade),
