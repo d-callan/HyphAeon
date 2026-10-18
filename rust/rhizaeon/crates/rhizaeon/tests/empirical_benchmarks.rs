@@ -92,8 +92,8 @@ fn test_pvy_example1_empirical() {
 
     assert_eq!(
         result.events.len(),
-        6,
-        "Expected 6 distinct ancestral recombination events in PVY example1, got {}: {:#?}",
+        7,
+        "Expected 7 distinct ancestral recombination events in PVY example1, got {}: {:#?}",
         result.events.len(),
         result.events
     );
@@ -116,14 +116,21 @@ fn test_pvy_example1_empirical() {
         );
     }
 
-    // Event #1: 5' crossover [1..2258] shared by I, J, N, O, W (H=Q, D=T)
+    // Event #1: 5' crossover [1..2258] shared by I, W only (H=Q, D=T)
     let ev1 = &result.events[0];
     assert_eq!(ev1.u1, 1);
     assert!((2240..=2270).contains(&ev1.u2));
     assert_eq!(ev1.home_name, "Q");
     assert_eq!(ev1.donor_name, "T");
     assert!(ev1.is_crossover);
-    assert_eq!(ev1.isolates, vec!["I", "J", "N", "O", "W"]);
+    assert_eq!(ev1.isolates, vec!["I", "W"]);
+
+    // Event #2: 5' overprinted tract [316..2240] shared by J, N, O (where 1..315 reverted to Q)
+    let ev2 = &result.events[1];
+    assert!((300..=330).contains(&ev2.u1) && (2230..=2265).contains(&ev2.u2));
+    assert_eq!(ev2.home_name, "Q");
+    assert_eq!(ev2.donor_name, "T");
+    assert_eq!(ev2.isolates, vec!["J", "N", "O"]);
 
     // 3' U-donor events in N (~5709-8453), W (~5705-9099), and J (~5643-6587) must remain distinct
     let ev_n = result

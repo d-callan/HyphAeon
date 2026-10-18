@@ -110,6 +110,42 @@ impl SequenceDueDiligence {
         p_sum.min(1.0).max(0.0)
     }
 
+    /// Static exact Fisher 2x2 one-sided test for external callers without a preallocated table
+    pub fn fisher_exact_2x2_static(a: usize, b: usize, c: usize, d: usize) -> f64 {
+        let n = a + b + c + d;
+        if n == 0 {
+            return 1.0;
+        }
+        fn lfact(k: usize) -> f64 {
+            if k <= 1 {
+                0.0
+            } else if k <= 32 {
+                (2..=k).map(|x| (x as f64).ln()).sum()
+            } else {
+                let kf = k as f64;
+                0.5 * (2.0 * std::f64::consts::PI * kf).ln()
+                    + kf * (kf / std::f64::consts::E).ln()
+                    + 1.0 / (12.0 * kf)
+            }
+        }
+        let r1 = a + b;
+        let r2 = c + d;
+        let c1 = a + c;
+        let c2 = b + d;
+        let log_denom = lfact(n);
+        let log_margins = lfact(r1) + lfact(r2) + lfact(c1) + lfact(c2);
+        let max_k = r1.min(c1);
+        let mut p_sum = 0.0;
+        for k in a..=max_k {
+            let cell_b = r1 - k;
+            let cell_c = c1 - k;
+            let cell_d = r2 - cell_c;
+            let log_cells = lfact(k) + lfact(cell_b) + lfact(cell_c) + lfact(cell_d);
+            p_sum += (log_margins - log_denom - log_cells).exp();
+        }
+        p_sum.min(1.0).max(0.0)
+    }
+
     /// Verifies physical tract via orthogonal sequence due diligence
     pub fn verify_tract(
         &self,
@@ -221,73 +257,86 @@ impl SequenceDueDiligence {
         let mut u2 = u2;
         let mut is_crossover = tract.is_crossover;
 
-        // Prefix/Suffix Home-Reversion Trimming:
+        // Prefix/Suffix Home-Reversion Trimming (Parameter-Free 2x2 Fisher Split Test):
         // When a coarse landmark tract `[u1, u2]` over-extends across a breakpoint into a flanking
-        // region where the candidate has already reverted to `Home` (`rc == rh != rd`), trim the
-        // leading/trailing Home-reversion sub-interval so cassettes (e.g. `H [7770-8210]`) are not
-        // misclassified as terminal crossovers (`[7770-9594]`).
+        // region where the candidate has already reverted to `Home` (`rc == rh != rd`), test whether
+        // splitting the interval at the global extremum of the cumulative informative score walk
+        // `S(u) = sum [I(R_u = D_u != H_u) - I(R_u = H_u != D_u)]` separates a Donor-dominant core
+        // from a Home-dominant prefix/suffix at the alignment's Bonferroni threshold `alpha = 0.05 / L`.
+        let alpha_split = 0.05 / (l.max(1) as f64);
         if let Some(donor_row) = donor_row_opt {
             let s0 = u1 - 1;
             let e0 = u2.min(l);
             if e0 > s0 + min_len {
-                let mut cum = 0i64;
-                let mut max_s = 0i64;
+                let span_len = e0 - s0;
+                let mut cum_d = Vec::with_capacity(span_len);
+                let mut cum_h = Vec::with_capacity(span_len);
+                let mut d_acc = 0usize;
+                let mut h_acc = 0usize;
+                let mut max_diff = i64::MIN;
                 let mut u_max = e0 - 1;
-                let mut scores = Vec::with_capacity(e0 - s0);
+
                 for u in s0..e0 {
                     let rc = cand_row[u];
                     let rh = home_row[u];
                     let rd = donor_row[u];
                     if rc > 0 && rh > 0 && rd > 0 && rh != rd {
                         if rc == rd {
-                            cum += 1;
+                            d_acc += 1;
                         } else if rc == rh {
-                            cum -= 1;
+                            h_acc += 1;
                         }
                     }
-                    scores.push(cum);
-                    if cum >= max_s {
-                        max_s = cum;
+                    cum_d.push(d_acc);
+                    cum_h.push(h_acc);
+                    let diff = (d_acc as i64) - (h_acc as i64);
+                    if diff >= max_diff {
+                        max_diff = diff;
                         u_max = u;
                     }
                 }
-                let final_s = cum;
-                let min_revert_span = min_len.max(if self.compression_ratio < 0.999 {
-                    ((150.0 * self.compression_ratio).round() as usize).max(6)
-                } else {
-                    150
-                });
 
-                // 1. Check trailing 3' Home-reversion suffix `(u_max, e0)`
+                // 1. Trailing 3' Home-reversion suffix `(u_max, e0)`
                 let mut e_trimmed = e0;
-                if max_s >= 5
-                    && (final_s - max_s) <= -8
-                    && (e0 - (u_max + 1)) >= min_revert_span
-                    && (u_max + 1 - s0) >= min_revert_span
-                {
-                    e_trimmed = u_max + 1;
+                if u_max + 1 < e0 && (u_max + 1 - s0) >= min_len {
+                    let idx_max = u_max - s0;
+                    let d_core = cum_d[idx_max];
+                    let h_core = cum_h[idx_max];
+                    let d_tail = d_acc - d_core;
+                    let h_tail = h_acc - h_core;
+                    if d_core > h_core
+                        && h_tail > d_tail
+                        && self.fisher_exact_2x2(d_core, h_core, d_tail, h_tail) < alpha_split
+                    {
+                        e_trimmed = u_max + 1;
+                    }
                 }
 
-                // 2. Check leading 5' Home-reversion prefix `[s0, u_min]` within `[s0, e_trimmed)`
+                // 2. Leading 5' Home-reversion prefix `[s0, u_min]` within `[s0, e_trimmed)`
                 let mut s_trimmed = s0;
                 let end_rel = e_trimmed - s0;
-                let mut min_s = 0i64;
+                let mut min_diff = 0i64;
                 let mut u_min_rel = None;
                 for idx in 0..end_rel {
-                    if scores[idx] < min_s {
-                        min_s = scores[idx];
+                    let diff = (cum_d[idx] as i64) - (cum_h[idx] as i64);
+                    if diff < min_diff {
+                        min_diff = diff;
                         u_min_rel = Some(idx);
                     }
                 }
                 if let Some(m_rel) = u_min_rel {
                     let cand_s = s0 + m_rel + 1;
-                    let end_score = scores[end_rel - 1];
-                    if min_s <= -8
-                        && (end_score - min_s) >= 8
-                        && (m_rel + 1) >= min_revert_span
-                        && (e_trimmed - cand_s) >= min_revert_span
-                    {
-                        s_trimmed = cand_s;
+                    if cand_s < e_trimmed && (e_trimmed - cand_s) >= min_len {
+                        let d_pref = cum_d[m_rel];
+                        let h_pref = cum_h[m_rel];
+                        let d_core = cum_d[end_rel - 1] - d_pref;
+                        let h_core = cum_h[end_rel - 1] - h_pref;
+                        if h_pref > d_pref
+                            && d_core > h_core
+                            && self.fisher_exact_2x2(d_core, h_core, d_pref, h_pref) < alpha_split
+                        {
+                            s_trimmed = cand_s;
+                        }
                     }
                 }
 
@@ -389,8 +438,8 @@ impl SequenceDueDiligence {
         // Parental Collapse & Partition Polarity Invariant:
         // In a genuine recombination event, Home and Donor are distinct parental lineages inside the
         // recombinant tract (`d_tract_hd > d_clade` and `d_tract_cd < d_tract_hd`), and Candidate must
-        // genuinely switch from Home on the adjacent flanks to Donor inside the tract (`s_donor > s_home_tract`
-        // and `d_tract_cd < d_tract_ch`).
+        // genuinely switch from Home on the adjacent flanks to Donor inside the tract (`s_donor > s_home_tract`,
+        // `s_donor * 2 > mismatch_tract_hd`, and `d_tract_cd < d_tract_ch`).
         if let Some(donor_row) = donor_row_opt {
             if valid_tract > 0 {
                 let d_tract_hd = (mismatch_tract_hd as f64) / (valid_tract as f64);
@@ -417,52 +466,71 @@ impl SequenceDueDiligence {
                         && d_tract_ch < 2.0 * d_flank_ch
                         && (d_flank_hd - d_tract_hd > 2.0 * (d_tract_ch - d_flank_ch)))
                     || d_tract_cd >= 0.90 * d_tract_hd
-                    || (d_tract_cd >= 0.75 * d_tract_hd && s_donor * 2 <= mismatch_tract_hd)
+                    || s_donor * 2 <= mismatch_tract_hd
                     || s_donor <= s_home_tract
                     || d_tract_cd >= d_tract_ch
                 {
                     return None;
                 }
 
-                // If the global flank prefers Donor over Home (`d_flank_cd <= d_flank_ch`), verify whether
-                // at least one immediately adjacent flanking arm (`w = 500 bp`) prefers Home over Donor
-                // (as in multi-event mosaics); if neither adjacent arm prefers Home, Donor is the actual
-                // surrounding backbone and `[u1, u2]` is an internal variation artifact.
+                // If the pooled global flank prefers Donor over Home (`d_flank_cd <= d_flank_ch` or
+                // `s_donor_flank >= s_home_flank`, as can occur in a multi-event mosaic when another
+                // event occupies the opposite end of the genome), walk outward from `s_idx` (leftward)
+                // and `e_idx` (rightward) to the peak of cumulative Home excess `h - d` and require
+                // that at least one contiguous flanking segment adjacent to the tract prefers `Home`
+                // and forms a statistically significant 2x2 Fisher split (`p < alpha_split`) against the tract.
                 if valid_flank > 0 && (d_flank_cd <= d_flank_ch || s_donor_flank >= s_home_flank) {
-                    let w_adj = 500usize.min(l / 4).max(50);
-                    let l_start = s_idx.saturating_sub(w_adj);
-                    let r_end = (e_idx + w_adj).min(l);
-                    let mut l_h = 0usize;
-                    let mut l_d = 0usize;
-                    for u in l_start..s_idx {
+                    let mut l_h_acc = 0usize;
+                    let mut l_d_acc = 0usize;
+                    let mut best_l_diff = 0i64;
+                    let mut best_l = (0usize, 0usize);
+                    for u in (0..s_idx).rev() {
                         let rc = cand_row[u];
                         let rh = home_row[u];
                         let rd = donor_row[u];
                         if rc > 0 && rh > 0 && rd > 0 && rh != rd {
                             if rc == rh {
-                                l_h += 1;
+                                l_h_acc += 1;
                             } else if rc == rd {
-                                l_d += 1;
+                                l_d_acc += 1;
+                            }
+                            let diff = (l_h_acc as i64) - (l_d_acc as i64);
+                            if diff > best_l_diff {
+                                best_l_diff = diff;
+                                best_l = (l_h_acc, l_d_acc);
                             }
                         }
                     }
-                    let mut r_h = 0usize;
-                    let mut r_d = 0usize;
-                    for u in e_idx..r_end {
+
+                    let mut r_h_acc = 0usize;
+                    let mut r_d_acc = 0usize;
+                    let mut best_r_diff = 0i64;
+                    let mut best_r = (0usize, 0usize);
+                    for u in e_idx..l {
                         let rc = cand_row[u];
                         let rh = home_row[u];
                         let rd = donor_row[u];
                         if rc > 0 && rh > 0 && rd > 0 && rh != rd {
                             if rc == rh {
-                                r_h += 1;
+                                r_h_acc += 1;
                             } else if rc == rd {
-                                r_d += 1;
+                                r_d_acc += 1;
+                            }
+                            let diff = (r_h_acc as i64) - (r_d_acc as i64);
+                            if diff > best_r_diff {
+                                best_r_diff = diff;
+                                best_r = (r_h_acc, r_d_acc);
                             }
                         }
                     }
-                    let left_prefers_home = l_h > l_d + 2;
-                    let right_prefers_home = r_h > r_d + 2;
-                    if !left_prefers_home && !right_prefers_home {
+
+                    let left_valid = best_l.0 > best_l.1
+                        && self.fisher_exact_2x2(s_donor, s_home_tract, best_l.1, best_l.0)
+                            < alpha_split;
+                    let right_valid = best_r.0 > best_r.1
+                        && self.fisher_exact_2x2(s_donor, s_home_tract, best_r.1, best_r.0)
+                            < alpha_split;
+                    if !left_valid && !right_valid {
                         return None;
                     }
                 }

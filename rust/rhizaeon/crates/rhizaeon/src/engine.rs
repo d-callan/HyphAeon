@@ -789,10 +789,11 @@ fn prune_inverted_backbone_events(
     });
 }
 
-/// Checks if two overlapping events with the same (Home, Donor) clade have a long (>= 450 bp)
-/// 5' or 3' non-overlapping overhang where one candidate carries Donor and the other carries Home
-/// (`d_overhang(c1, c2) > d_clade`), indicating two distinct recombination breakpoints (e.g., an
-/// extended 3' event or a partial reversion) rather than breakpoint estimation noise.
+/// Checks if two overlapping events with the same (Home, Donor) clade have a 5' or 3'
+/// non-overlapping overhang where one candidate carries Donor and the other carries Home
+/// (`d_overhang(c1, c2) > d_clade` and 2x2 Fisher exact split `p < 0.05 / L`), indicating
+/// two distinct recombination breakpoints (e.g., an extended 3' event or a partial reversion)
+/// rather than breakpoint estimation uncertainty.
 fn has_divergent_overhang(
     aln: &crate::types::Alignment,
     c1: usize,
@@ -811,18 +812,16 @@ fn has_divergent_overhang(
     let (Some(hg), Some(dg)) = (home_idx, donor_idx) else {
         return false;
     };
-    let min_overhang = 450usize;
+    let alpha_split = 0.05 / (aln.length.max(1) as f64);
     let mut overhangs = Vec::new();
-    let l_diff = u1_a.abs_diff(u1_b);
-    if l_diff >= min_overhang {
+    if u1_a != u1_b {
         let s = u1_a.min(u1_b).saturating_sub(1);
         let e = u1_a.max(u1_b).saturating_sub(1).min(aln.length);
         let c_in = if u1_a < u1_b { c1 } else { c2 };
         let c_out = if u1_a < u1_b { c2 } else { c1 };
         overhangs.push((s, e, c_in, c_out));
     }
-    let r_diff = u2_a.abs_diff(u2_b);
-    if r_diff >= min_overhang {
+    if u2_a != u2_b {
         let s = u2_a.min(u2_b).min(aln.length);
         let e = u2_a.max(u2_b).min(aln.length);
         let c_in = if u2_a > u2_b { c1 } else { c2 };
@@ -870,12 +869,39 @@ fn has_divergent_overhang(
         }
         if v_12 > 0 {
             let d_12 = (diffs_12 as f64) / (v_12 as f64);
-            if d_12 > d_clade && in_d > in_h + 5 && out_h > out_d + 5 {
+            if d_12 > d_clade
+                && in_d > in_h
+                && out_h > out_d
+                && crate::due_diligence::SequenceDueDiligence::fisher_exact_2x2_static(
+                    in_d, in_h, out_d, out_h,
+                ) < alpha_split
+            {
                 return true;
             }
         }
     }
     false
+}
+
+/// Counts informative sites where `h_row` and `d_row` differ in `[u_a.min(u_b), u_a.max(u_b))`.
+fn count_inter_breakpoint_informative(
+    h_row: &[u8],
+    d_row: &[u8],
+    u_a: usize,
+    u_b: usize,
+    l: usize,
+) -> usize {
+    let s = u_a.min(u_b).saturating_sub(1).min(l);
+    let e = u_a.max(u_b).saturating_sub(1).min(l);
+    let mut inf = 0usize;
+    for u in s..e {
+        let rh = h_row[u];
+        let rd = d_row[u];
+        if rh > 0 && rd > 0 && rh != rd {
+            inf += 1;
+        }
+    }
+    inf
 }
 
 /// Aligns multi-segment double-recombinants whose two donor tracts sum to >50% of the genome
@@ -892,7 +918,7 @@ fn reorient_cohort_complementary_mosaics(
     }
     let (_d_sister, d_clade) = crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
     let l = aln.length;
-    let bp_tol = 100usize;
+    let inf_tol = due_diligence.poisson_floor;
 
     let mut cand_indices: Vec<usize> = events.iter().map(|e| e.candidate_idx).collect();
     cand_indices.sort_unstable();
@@ -915,6 +941,8 @@ fn reorient_cohort_complementary_mosaics(
         let (Some(hc), Some(dc)) = (c_evs[0].home_idx, c_evs[0].donor_idx) else {
             continue;
         };
+        let hc_row = aln.row(hc);
+        let dc_row = aln.row(dc);
 
         let mut same_cands = Vec::new();
         let mut inv_cands = Vec::new();
@@ -928,10 +956,10 @@ fn reorient_cohort_complementary_mosaics(
                 continue;
             };
             let shares_bp = c_evs.iter().any(|ce| {
-                ce.u1.abs_diff(other.u1) <= bp_tol
-                    || ce.u2.abs_diff(other.u2) <= bp_tol
-                    || ce.u1.abs_diff(other.u2) <= bp_tol
-                    || ce.u2.abs_diff(other.u1) <= bp_tol
+                count_inter_breakpoint_informative(hc_row, dc_row, ce.u1, other.u1, l) < inf_tol
+                    || count_inter_breakpoint_informative(hc_row, dc_row, ce.u2, other.u2, l) < inf_tol
+                    || count_inter_breakpoint_informative(hc_row, dc_row, ce.u1, other.u2, l) < inf_tol
+                    || count_inter_breakpoint_informative(hc_row, dc_row, ce.u2, other.u1, l) < inf_tol
             });
             if !shares_bp {
                 continue;
@@ -955,15 +983,19 @@ fn reorient_cohort_complementary_mosaics(
             }
         }
 
-        if inv_cands.len() < 2 || inv_cands.len() <= same_cands.len() {
+        if inv_cands.len() <= same_cands.len() || inv_cands.len() < 2 {
             continue;
         }
 
         // Build complementary intervals of `c_evs` on `[1, l]`
         let mut blocked: Vec<(usize, usize)> = Vec::new();
         for ce in &c_evs {
-            let s = if ce.u1 <= bp_tol { 1 } else { ce.u1 };
-            let e = if l.saturating_sub(ce.u2) <= bp_tol {
+            let s = if count_inter_breakpoint_informative(hc_row, dc_row, 1, ce.u1, l) < inf_tol {
+                1
+            } else {
+                ce.u1
+            };
+            let e = if count_inter_breakpoint_informative(hc_row, dc_row, ce.u2, l + 1, l) < inf_tol {
                 l
             } else {
                 ce.u2
@@ -981,15 +1013,11 @@ fn reorient_cohort_complementary_mosaics(
         let mut cursor = 1usize;
         for (bs, be) in &blocked {
             if *bs > cursor {
-                let cs = cursor;
-                let ce = bs - 1;
-                if ce >= cs + 150 {
-                    comp_intervals.push((cs, ce));
-                }
+                comp_intervals.push((cursor, bs - 1));
             }
             cursor = be + 1;
         }
-        if cursor <= l && l >= cursor + 150 {
+        if cursor <= l {
             comp_intervals.push((cursor, l));
         }
 
@@ -1009,7 +1037,9 @@ fn reorient_cohort_complementary_mosaics(
                 let ov_e = cu2.min(ie.u2);
                 if ov_e >= ov_s {
                     let shares_edge =
-                        cu1.abs_diff(ie.u1) <= bp_tol || cu2.abs_diff(ie.u2) <= bp_tol;
+                        count_inter_breakpoint_informative(hc_row, dc_row, cu1, ie.u1, l) < inf_tol
+                            || count_inter_breakpoint_informative(hc_row, dc_row, cu2, ie.u2, l)
+                                < inf_tol;
                     if shares_edge {
                         if let Some(id_idx) = ie.donor_idx {
                             best_donor_idx = id_idx;
@@ -1782,7 +1812,7 @@ fn group_ancestral_events(
                         true
                     };
 
-                    let matches_mosaic = dist_fl_h < dist_fl_d
+                    let mut matches_mosaic = dist_fl_h < dist_fl_d
                         && dist_loc_fl_h < dist_loc_fl_d
                         && both_arms_ok
                         && dist_tr_d < dist_tr_h
@@ -1792,6 +1822,77 @@ fn group_ancestral_events(
                         && dist_tr_h > dist_loc_fl_h
                         && dist_fl_h < 0.5 * dist_fl_hd
                         && dist_tr_d < 0.5 * dist_tr_hd;
+
+                    // Parameter-free internal homogeneity check: verify that `t_row` does not
+                    // have a statistically significant 5' prefix or 3' suffix inside `[s_idx, e_idx)`
+                    // where `t_row` has reverted to `Home` (`fisher_exact_2x2_static < 0.05 / L`).
+                    if matches_mosaic && e_idx > s_idx {
+                        let alpha_split = 0.05 / (aln.length.max(1) as f64);
+                        let span = e_idx - s_idx;
+                        let mut cum_d = Vec::with_capacity(span);
+                        let mut cum_h = Vec::with_capacity(span);
+                        let mut d_acc = 0usize;
+                        let mut h_acc = 0usize;
+                        let mut max_diff = i64::MIN;
+                        let mut idx_max = span - 1;
+                        let mut min_diff = 0i64;
+                        let mut idx_min = None;
+                        for (idx, u) in (s_idx..e_idx).enumerate() {
+                            let rt = t_row[u];
+                            let rh = home_row[u];
+                            let rd = donor_row[u];
+                            if rt > 0 && rh > 0 && rd > 0 && rh != rd {
+                                if rt == rd {
+                                    d_acc += 1;
+                                } else if rt == rh {
+                                    h_acc += 1;
+                                }
+                            }
+                            cum_d.push(d_acc);
+                            cum_h.push(h_acc);
+                            let diff = (d_acc as i64) - (h_acc as i64);
+                            if diff >= max_diff {
+                                max_diff = diff;
+                                idx_max = idx;
+                            }
+                            if diff < min_diff {
+                                min_diff = diff;
+                                idx_min = Some(idx);
+                            }
+                        }
+                        if idx_max + 1 < span {
+                            let d_core = cum_d[idx_max];
+                            let h_core = cum_h[idx_max];
+                            let d_tail = d_acc - d_core;
+                            let h_tail = h_acc - h_core;
+                            if d_core > h_core
+                                && h_tail > d_tail
+                                && crate::due_diligence::SequenceDueDiligence::fisher_exact_2x2_static(
+                                    d_core, h_core, d_tail, h_tail,
+                                ) < alpha_split
+                            {
+                                matches_mosaic = false;
+                            }
+                        }
+                        if matches_mosaic {
+                            if let Some(m_idx) = idx_min {
+                                if m_idx + 1 < span {
+                                    let d_pref = cum_d[m_idx];
+                                    let h_pref = cum_h[m_idx];
+                                    let d_core = d_acc - d_pref;
+                                    let h_core = h_acc - h_pref;
+                                    if h_pref > d_pref
+                                        && d_core > h_core
+                                        && crate::due_diligence::SequenceDueDiligence::fisher_exact_2x2_static(
+                                            d_core, h_core, d_pref, h_pref,
+                                        ) < alpha_split
+                                    {
+                                        matches_mosaic = false;
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     if matches_mosaic {
                         g.isolates.push(t_name.clone());
