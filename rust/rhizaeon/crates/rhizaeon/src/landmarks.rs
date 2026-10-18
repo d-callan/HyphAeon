@@ -3,6 +3,9 @@ use crate::types::{Alignment, LandmarkSet};
 
 /// Computes normalized Hamming distance between two sequence rows, excluding non-informative / gap sites
 pub fn compute_pairwise_distance(aln: &Alignment, i: usize, j: usize) -> f64 {
+    if i == j {
+        return 0.0;
+    }
     let row_i = aln.row(i);
     let row_j = aln.row(j);
     let mut valid_count = 0usize;
@@ -20,7 +23,7 @@ pub fn compute_pairwise_distance(aln: &Alignment, i: usize, j: usize) -> f64 {
     }
 
     if valid_count == 0 {
-        0.0
+        1.0
     } else {
         (diff_count as f64) / (valid_count as f64)
     }
@@ -70,12 +73,17 @@ pub fn compute_scale_invariant_distance_thresholds(aln: &Alignment) -> (f64, f64
 
     dists.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
+    let idx_75 = (0.75 * (dists.len() as f64)).floor() as usize;
+    let d_p75 = dists[idx_75.min(dists.len() - 1)];
+    let eff_sister_floor = (3.0 / l_f64).max(sister_floor.min(0.45 * d_p75));
+    let eff_clade_floor = (5.0 / l_f64).max(clade_floor.min(0.75 * d_p75));
+
     let idx_01 = (0.01 * (dists.len() as f64)).floor() as usize;
-    let d_sister = dists[idx_01.min(dists.len() - 1)].max(sister_floor);
+    let d_sister = dists[idx_01.min(dists.len() - 1)].max(eff_sister_floor);
 
     let idx_10 = (0.10 * (dists.len() as f64)).floor() as usize;
     let d_p10 = dists[idx_10.min(dists.len() - 1)]
-        .max(clade_floor)
+        .max(eff_clade_floor)
         .max(1.5 * d_sister);
 
     // Search for a multimodal inter-lineage spectral gap in [p05, p50]

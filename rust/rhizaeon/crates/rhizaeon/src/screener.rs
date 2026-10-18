@@ -320,9 +320,7 @@ impl LocalFluxScreener {
             {
                 is_rate_burst[i] = true;
                 rate_burst_indices.push(i);
-            } else if (z_r > z_alpha_r
-                || r_dim[i] > self.root_ratio_threshold
-                || z_v_root > 2.0)
+            } else if (z_r > z_alpha_r || r_dim[i] > self.root_ratio_threshold || z_v_root > 2.0)
                 && (root_pulse_stat[i] >= k_crit_root || root_pulse[i] >= 3.0)
                 && (!is_isolated_leaf || gamma_root[i] > self.spatial_coherence_threshold)
             {

@@ -204,120 +204,438 @@ impl RhizAeonEngine {
             .with_d_sister(d_sister)
             .with_d_clade(d_clade);
 
-        let mut verified_events = Vec::new();
-
-        for &cand_idx in &screening.candidate_recombinant_indices {
-            let parental_pairs = resolver.resolve_all_reticulation_channels(
-                cand_idx,
-                &c_tensor,
-                &a_tensor,
-                l,
-                n,
-                &landmarks,
-                &aln,
-                &screening.ghost_candidate_indices,
-            );
-
-            let mut candidate_tracts = Vec::new();
-            for pair in &parental_pairs {
-                let tracts =
-                    polisher.deconvolve_candidate(cand_idx, pair, &c_tensor, l, n, num_channels);
-                candidate_tracts.extend(tracts);
-            }
-
-            let mut candidate_verified = Vec::new();
-            for tract in candidate_tracts {
-                let local_parental = resolver.resolve_reticulation_channels_localized(
+        let run_candidate_scan = |target_aln: &Alignment,
+                                  target_c: &[f64],
+                                  target_a: &[f64],
+                                  target_landmarks: &crate::types::LandmarkSet,
+                                  target_screening: &crate::types::ScreeningResult|
+         -> Vec<crate::types::RecombinationEvent> {
+            let mut pass_events = Vec::new();
+            for &cand_idx in &target_screening.candidate_recombinant_indices {
+                let parental_pairs = resolver.resolve_all_reticulation_channels(
                     cand_idx,
-                    tract.u1_discrete,
-                    tract.u2_discrete,
-                    &c_tensor,
+                    target_c,
+                    target_a,
                     l,
                     n,
-                    &landmarks,
-                    &aln,
-                    Some(tract.home_channel),
-                    Some(tract.donor_channel),
-                    &screening.candidate_recombinant_indices,
-                    &screening.ghost_candidate_indices,
+                    target_landmarks,
+                    target_aln,
+                    &target_screening.ghost_candidate_indices,
                 );
 
-                let mut tract_opt = due_diligence.verify_tract(
-                    &tract,
-                    &local_parental,
-                    &aln,
-                    &landmarks,
-                    &screening.rate_burst_indices,
-                    &screening.candidate_recombinant_indices,
-                );
-
-                // Ghost Donor Fallback for Unsampled Outgroup Cassettes:
-                // When an introgressed tract comes from an unsampled outgroup (Ghost), contemporary
-                // landmarks from external clades can still capture partial softmax flux (because the
-                // candidate departs sharply from its Home clade), causing the polisher to segment the
-                // tract on a contemporary channel while `verify_tract` rejects that contemporary donor
-                // (since the candidate does not match it in the tract). In that case, test whether the
-                // tract is a verified Ghost donor cassette against the resolved Home parent.
-                if tract_opt.is_none()
-                    && !local_parental.is_ghost_donor
-                    && n >= 16
-                    && (screening.ghost_candidate_indices.contains(&cand_idx)
-                        || snp_map_opt.is_some())
-                {
-                    let mut ghost_parental = local_parental.clone();
-                    ghost_parental.donor_channel = 0;
-                    ghost_parental.donor_landmark_idx = None;
-                    ghost_parental.is_ghost_donor = true;
-                    ghost_parental.donor_name = "Ghost".to_string();
-                    ghost_parental.donor_global_idx = None;
-
-                    tract_opt = due_diligence.verify_tract(
-                        &tract,
-                        &ghost_parental,
-                        &aln,
-                        &landmarks,
-                        &screening.rate_burst_indices,
-                        &screening.candidate_recombinant_indices,
-                    );
+                let mut candidate_tracts = Vec::new();
+                for pair in &parental_pairs {
+                    let tracts =
+                        polisher.deconvolve_candidate(cand_idx, pair, target_c, l, n, num_channels);
+                    candidate_tracts.extend(tracts);
                 }
 
-                if let Some(mut event) = tract_opt {
-                    if event.is_verified {
-                        if let Some(ref snp_map) = snp_map_opt {
-                            // Map from 1-indexed SNP coordinates [1..M] to original chromosomal coordinates
-                            let s_snp = event
-                                .u1
-                                .saturating_sub(1)
-                                .min(snp_map.len().saturating_sub(1));
-                            let e_snp = event
-                                .u2
-                                .saturating_sub(1)
-                                .min(snp_map.len().saturating_sub(1));
-                            let orig_u1 = snp_map[s_snp] + 1 + u_offset;
-                            let orig_u2 = snp_map[e_snp] + 1 + u_offset;
-                            event.u1 = orig_u1;
-                            event.u2 = orig_u2;
-                            event.u1_continuous = orig_u1 as f64;
-                            event.u2_continuous = orig_u2 as f64;
-                            event.tract_length = if orig_u2 >= orig_u1 {
-                                orig_u2 - orig_u1 + 1
-                            } else {
-                                0
-                            };
-                        } else {
-                            // Standard full-length alignment offset
-                            event.u1 += u_offset;
-                            event.u2 += u_offset;
-                            event.u1_continuous += u_offset as f64;
-                            event.u2_continuous += u_offset as f64;
+                let mut candidate_verified = Vec::new();
+                for tract in candidate_tracts {
+                    let local_parental = resolver.resolve_reticulation_channels_localized(
+                        cand_idx,
+                        tract.u1_discrete,
+                        tract.u2_discrete,
+                        target_c,
+                        l,
+                        n,
+                        target_landmarks,
+                        target_aln,
+                        Some(tract.home_channel),
+                        Some(tract.donor_channel),
+                        &target_screening.candidate_recombinant_indices,
+                        &target_screening.ghost_candidate_indices,
+                    );
+
+                    let mut tract_opt = due_diligence.verify_tract(
+                        &tract,
+                        &local_parental,
+                        target_aln,
+                        target_landmarks,
+                        &target_screening.rate_burst_indices,
+                        &target_screening.candidate_recombinant_indices,
+                    );
+
+                    if tract_opt.is_none()
+                        && !local_parental.is_ghost_donor
+                        && n >= 16
+                        && (target_screening.ghost_candidate_indices.contains(&cand_idx)
+                            || snp_map_opt.is_some())
+                    {
+                        let mut ghost_parental = local_parental.clone();
+                        ghost_parental.donor_channel = 0;
+                        ghost_parental.donor_landmark_idx = None;
+                        ghost_parental.is_ghost_donor = true;
+                        ghost_parental.donor_name = "Ghost".to_string();
+                        ghost_parental.donor_global_idx = None;
+
+                        tract_opt = due_diligence.verify_tract(
+                            &tract,
+                            &ghost_parental,
+                            target_aln,
+                            target_landmarks,
+                            &target_screening.rate_burst_indices,
+                            &target_screening.candidate_recombinant_indices,
+                        );
+                    }
+
+                    if let Some(event) = tract_opt {
+                        if event.is_verified {
+                            candidate_verified.push(event);
                         }
-                        candidate_verified.push(event);
+                    }
+                }
+
+                let deduplicated_events =
+                    deduplicate_candidate_events(candidate_verified, target_aln);
+                pass_events.extend(deduplicated_events);
+            }
+            pass_events
+        };
+
+        // Pass 1: Initial forward scan on `aln`
+        let mut verified_events =
+            run_candidate_scan(&aln, &c_tensor, &a_tensor, &landmarks, &screening);
+        verified_events =
+            due_diligence.adjudicate_reticulation_graph(verified_events, &aln, &screening);
+
+        // Pass 2: Forward Scrubbing (Peeling) Pass
+        // Replace detected recombinant tracts with gap character `0` in `aln_scrubbed` and rescan
+        // so secondary crossovers (e.g. triple crossovers) and split outer Russian-doll cassettes
+        // can be resolved cleanly without interference from the primary tract.
+        if !verified_events.is_empty() && l >= 300 {
+            let mut aln_scrubbed = aln.clone();
+            let mut any_scrubbed = false;
+
+            for cand_idx in 0..n {
+                let cand_evs: Vec<&crate::types::RecombinationEvent> = verified_events
+                    .iter()
+                    .filter(|e| e.candidate_idx == cand_idx)
+                    .collect();
+                if cand_evs.is_empty() {
+                    continue;
+                }
+
+                // Check if an inner cassette from one donor clade is bracketed by two tracts from another donor clade
+                let mut bracketed_inner_donor: Option<Option<usize>> = None;
+                if cand_evs.len() >= 3 {
+                    let mut sorted_evs = cand_evs.clone();
+                    sorted_evs.sort_by_key(|e| e.u1);
+                    for a_i in 0..sorted_evs.len() {
+                        for b_i in (a_i + 2)..sorted_evs.len() {
+                            let e_left = sorted_evs[a_i];
+                            let e_right = sorted_evs[b_i];
+                            let same_outer = match (e_left.donor_idx, e_right.donor_idx) {
+                                (Some(d1), Some(d2)) => {
+                                    d1 == d2
+                                        || crate::landmarks::compute_pairwise_distance(&aln, d1, d2)
+                                            <= d_clade
+                                }
+                                (None, None) => e_left.is_ghost_donor && e_right.is_ghost_donor,
+                                _ => false,
+                            };
+                            if same_outer {
+                                for m_i in (a_i + 1)..b_i {
+                                    let e_mid = sorted_evs[m_i];
+                                    let same_mid = match (e_left.donor_idx, e_mid.donor_idx) {
+                                        (Some(d1), Some(d2)) => {
+                                            d1 == d2
+                                                || crate::landmarks::compute_pairwise_distance(
+                                                    &aln, d1, d2,
+                                                ) <= d_clade
+                                        }
+                                        (None, None) => {
+                                            e_left.is_ghost_donor && e_mid.is_ghost_donor
+                                        }
+                                        _ => false,
+                                    };
+                                    if !same_mid {
+                                        bracketed_inner_donor = Some(e_mid.donor_idx);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let target_donor_idx = if let Some(inner_d) = bracketed_inner_donor {
+                    inner_d
+                } else {
+                    let best_ev = cand_evs
+                        .iter()
+                        .min_by(|a, b| {
+                            a.p_fisher
+                                .partial_cmp(&b.p_fisher)
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                                .then_with(|| {
+                                    b.z_phys
+                                        .partial_cmp(&a.z_phys)
+                                        .unwrap_or(std::cmp::Ordering::Equal)
+                                })
+                        })
+                        .unwrap();
+                    best_ev.donor_idx
+                };
+
+                for ev in &cand_evs {
+                    let match_donor = match (ev.donor_idx, target_donor_idx) {
+                        (Some(d1), Some(d2)) => {
+                            d1 == d2
+                                || crate::landmarks::compute_pairwise_distance(&aln, d1, d2)
+                                    <= d_clade
+                        }
+                        (None, None) => true,
+                        _ => false,
+                    };
+                    if match_donor {
+                        let s_u = ev.u1.saturating_sub(1).min(l);
+                        let e_u = ev.u2.min(l);
+                        if e_u > s_u {
+                            for t_idx in 0..n {
+                                if t_idx == cand_idx
+                                    || crate::landmarks::compute_pairwise_distance(
+                                        &aln, cand_idx, t_idx,
+                                    ) < d_sister
+                                {
+                                    for u in s_u..e_u {
+                                        aln_scrubbed.matrix[t_idx * l + u] = 0;
+                                    }
+                                    any_scrubbed = true;
+                                }
+                            }
+                        }
                     }
                 }
             }
 
-            let deduplicated_events = deduplicate_candidate_events(candidate_verified, &aln);
-            verified_events.extend(deduplicated_events);
+            if any_scrubbed {
+                let (a_scrub, _f_scrub, c_scrub) = attention.compute_attention_and_force_tensors(
+                    &aln_scrubbed,
+                    &landmarks,
+                    &m_matrix,
+                    &b_prior,
+                    &root_seq,
+                );
+                let mut peeled_events =
+                    run_candidate_scan(&aln_scrubbed, &c_scrub, &a_scrub, &landmarks, &screening);
+                if !peeled_events.is_empty() {
+                    verified_events.append(&mut peeled_events);
+                    let mut combined_by_cand = Vec::new();
+                    for c_idx in 0..n {
+                        let c_evs: Vec<crate::types::RecombinationEvent> = verified_events
+                            .iter()
+                            .filter(|e| e.candidate_idx == c_idx)
+                            .cloned()
+                            .collect();
+                        if !c_evs.is_empty() {
+                            combined_by_cand.extend(deduplicate_candidate_events(c_evs, &aln));
+                        }
+                    }
+                    verified_events = due_diligence.adjudicate_reticulation_graph(
+                        combined_by_cand,
+                        &aln,
+                        &screening,
+                    );
+                }
+            }
+        }
+
+        // Pass 3: Backward "Leave-One-In" Verification Pass
+        // Re-verify each event in isolation on an alignment where stronger disjoint/parental tracts
+        // (and nested inner cassettes from distinct donors) are scrubbed to `0`. This eliminates:
+        //   (a) Complementary flank echoes (where the true recombinant tract in the flank made the
+        //       pure Home flanks look like a reverse Home<->Donor event), and
+        //   (b) Parental mirror false positives (where a pure parent cited a recombinant as Home
+        //       because the recombinant carried the parent's DNA inside a disjoint tract).
+        if verified_events.len() > 1 {
+            verified_events.sort_by(|a, b| {
+                a.p_fisher
+                    .partial_cmp(&b.p_fisher)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| b.s_informative.cmp(&a.s_informative))
+                    .then_with(|| {
+                        b.z_phys
+                            .partial_cmp(&a.z_phys)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+            });
+
+            let snapshot_events = verified_events.clone();
+            let mut loi_kept = Vec::with_capacity(snapshot_events.len());
+
+            for (m_idx, ev_m) in snapshot_events.iter().enumerate() {
+                let mut aln_loi = aln.clone();
+                let mut modified_loi = false;
+
+                for (k_idx, ev_k) in snapshot_events.iter().enumerate() {
+                    if k_idx == m_idx {
+                        continue;
+                    }
+                    let k_is_stronger = k_idx < m_idx;
+
+                    let same_cand_clade = ev_k.candidate_idx == ev_m.candidate_idx
+                        || crate::landmarks::compute_pairwise_distance(
+                            &aln,
+                            ev_k.candidate_idx,
+                            ev_m.candidate_idx,
+                        ) <= d_clade;
+
+                    let ov_s = ev_k.u1.max(ev_m.u1);
+                    let ov_e = ev_k.u2.min(ev_m.u2);
+                    let ov_len = if ov_e >= ov_s { ov_e - ov_s + 1 } else { 0 };
+                    let m_len = (ev_m.u2.saturating_sub(ev_m.u1) + 1).max(1);
+                    let k_len = (ev_k.u2.saturating_sub(ev_k.u1) + 1).max(1);
+
+                    let same_donor = match (ev_k.donor_idx, ev_m.donor_idx) {
+                        (Some(d1), Some(d2)) => {
+                            d1 == d2
+                                || crate::landmarks::compute_pairwise_distance(&aln, d1, d2)
+                                    <= d_clade
+                        }
+                        (None, None) => ev_k.is_ghost_donor && ev_m.is_ghost_donor,
+                        _ => false,
+                    };
+
+                    // Case A1: Stronger disjoint event on the same candidate clade -> scrub it
+                    // so complementary flank echoes lose their false flank reference.
+                    let is_disjoint_on_same_cand =
+                        k_is_stronger && same_cand_clade && (ov_len as f64) < 0.25 * (m_len as f64);
+
+                    // Case A2: Strictly nested inner cassette from a DIFFERENT donor clade on the
+                    // same candidate clade -> scrub the inner cassette when verifying the outer cassette.
+                    let is_nested_inner_diff_donor = same_cand_clade
+                        && !same_donor
+                        && ev_k.u1 > ev_m.u1
+                        && ev_k.u2 < ev_m.u2
+                        && k_len * 2 <= m_len * 3;
+
+                    // Case B: Stronger event on `ev_m`'s cited Home or Donor clade (when `ev_m` is in a
+                    // different clade) -> scrub it so pure parents cannot use a recombinant tract as Home/Donor.
+                    let k_is_m_home_or_donor = k_is_stronger
+                        && !same_cand_clade
+                        && (ev_m.home_idx.map_or(false, |h_idx| {
+                            ev_k.candidate_idx == h_idx
+                                || crate::landmarks::compute_pairwise_distance(
+                                    &aln,
+                                    ev_k.candidate_idx,
+                                    h_idx,
+                                ) <= d_clade
+                        }) || ev_m.donor_idx.map_or(false, |d_idx| {
+                            ev_k.candidate_idx == d_idx
+                                || crate::landmarks::compute_pairwise_distance(
+                                    &aln,
+                                    ev_k.candidate_idx,
+                                    d_idx,
+                                ) <= d_clade
+                        }));
+
+                    if is_disjoint_on_same_cand
+                        || is_nested_inner_diff_donor
+                        || k_is_m_home_or_donor
+                    {
+                        let s_u = ev_k.u1.saturating_sub(1).min(l);
+                        let e_u = ev_k.u2.min(l);
+                        if e_u > s_u {
+                            for t_idx in 0..n {
+                                if t_idx == ev_k.candidate_idx
+                                    || crate::landmarks::compute_pairwise_distance(
+                                        &aln,
+                                        ev_k.candidate_idx,
+                                        t_idx,
+                                    ) < d_sister
+                                {
+                                    for u in s_u..e_u {
+                                        aln_loi.matrix[t_idx * l + u] = 0;
+                                    }
+                                    modified_loi = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !modified_loi {
+                    loi_kept.push(ev_m.clone());
+                } else {
+                    let probe_tract = crate::types::PhysicalTract {
+                        candidate_idx: ev_m.candidate_idx,
+                        home_channel: 0,
+                        donor_channel: 0,
+                        is_crossover: ev_m.is_crossover,
+                        u1_discrete: ev_m.u1,
+                        u2_discrete: ev_m.u2,
+                        u1_continuous: ev_m.u1_continuous,
+                        u2_continuous: ev_m.u2_continuous,
+                        delta_c_max: 0.0,
+                        z_phys: ev_m.z_phys,
+                        z_crit: 0.0,
+                        is_physically_significant: true,
+                    };
+                    let probe_parental = crate::attribution::TrajectoryParentalPair {
+                        candidate_idx: ev_m.candidate_idx,
+                        home_channel: 0,
+                        donor_channel: 0,
+                        home_landmark_idx: None,
+                        donor_landmark_idx: None,
+                        is_ghost_donor: ev_m.is_ghost_donor,
+                        home_name: ev_m.home_name.clone(),
+                        donor_name: ev_m.donor_name.clone(),
+                        home_global_idx: ev_m.home_idx,
+                        donor_global_idx: ev_m.donor_idx,
+                        swing_home: 0.0,
+                        swing_donor: 0.0,
+                    };
+                    if let Some(reverified) = due_diligence.verify_tract(
+                        &probe_tract,
+                        &probe_parental,
+                        &aln_loi,
+                        &landmarks,
+                        &screening.rate_burst_indices,
+                        &screening.candidate_recombinant_indices,
+                    ) {
+                        if reverified.is_verified {
+                            let mut updated_ev = ev_m.clone();
+                            updated_ev.p_fisher = updated_ev.p_fisher.min(reverified.p_fisher);
+                            updated_ev.s_informative =
+                                updated_ev.s_informative.max(reverified.s_informative);
+                            loi_kept.push(updated_ev);
+                        }
+                    }
+                }
+            }
+
+            verified_events = loi_kept;
+        }
+
+        // Map verified events from `aln` coordinates (1..=l) to original chromosomal coordinates
+        for event in &mut verified_events {
+            if let Some(ref snp_map) = snp_map_opt {
+                let s_snp = event
+                    .u1
+                    .saturating_sub(1)
+                    .min(snp_map.len().saturating_sub(1));
+                let e_snp = event
+                    .u2
+                    .saturating_sub(1)
+                    .min(snp_map.len().saturating_sub(1));
+                let orig_u1 = snp_map[s_snp] + 1 + u_offset;
+                let orig_u2 = snp_map[e_snp] + 1 + u_offset;
+                event.u1 = orig_u1;
+                event.u2 = orig_u2;
+                event.u1_continuous = orig_u1 as f64;
+                event.u2_continuous = orig_u2 as f64;
+                event.tract_length = if orig_u2 >= orig_u1 {
+                    orig_u2 - orig_u1 + 1
+                } else {
+                    0
+                };
+            } else {
+                event.u1 += u_offset;
+                event.u2 += u_offset;
+                event.u1_continuous += u_offset as f64;
+                event.u2_continuous += u_offset as f64;
+            }
         }
 
         // Sort events by candidate_idx and u1
@@ -590,7 +908,7 @@ fn group_ancestral_events(
             };
             let clade_rad = d_clade.max(0.5 * d_inter);
 
-            // 1. Home compatibility: exact name match OR home leaves cluster together within clade radius
+            // 1. Direct compatibility: Home~Home and Donor~Donor
             let home_matches = g.home_name == e.home_name
                 || match (g.home_idx, e.home_idx) {
                     (Some(gh), Some(eh)) => {
@@ -599,11 +917,29 @@ fn group_ancestral_events(
                     _ => false,
                 };
 
-            // 2. Donor compatibility: exact name match OR both Ghost OR donor leaves cluster together
             let donor_matches = g.donor_name == e.donor_name
                 || match (g.donor_idx, e.donor_idx) {
                     (Some(gd), Some(ed)) => {
                         crate::landmarks::compute_pairwise_distance(aln, gd, ed) <= clade_rad
+                    }
+                    _ => false,
+                };
+
+            // 2. Inverted polarity compatibility: Home~Donor and Donor~Home
+            // Occurs in multi-crossover co-recombinant clades (e.g., PVY I, K, T, W at 302-315 nt)
+            // where an additional downstream crossover shifts which parent constitutes the majority background.
+            let home_matches_donor = g.home_name == e.donor_name
+                || match (g.home_idx, e.donor_idx) {
+                    (Some(gh), Some(ed)) => {
+                        crate::landmarks::compute_pairwise_distance(aln, gh, ed) <= clade_rad
+                    }
+                    _ => false,
+                };
+
+            let donor_matches_home = g.donor_name == e.home_name
+                || match (g.donor_idx, e.home_idx) {
+                    (Some(gd), Some(eh)) => {
+                        crate::landmarks::compute_pairwise_distance(aln, gd, eh) <= clade_rad
                     }
                     _ => false,
                 };
@@ -634,6 +970,126 @@ fn group_ancestral_events(
                         found = true;
                         break;
                     }
+                }
+            } else if home_matches_donor && donor_matches_home {
+                let bp_tol = 150usize;
+                let shared_junction = g.u1.abs_diff(e.u2) <= bp_tol
+                    || g.u2.abs_diff(e.u1) <= bp_tol
+                    || (g.u1.abs_diff(e.u1) <= bp_tol && g.u2.abs_diff(e.u2) <= bp_tol);
+                if shared_junction {
+                    g.isolates.extend(e.isolates.clone());
+                    // Also recruit any cohort isolates matching e's complementary interval [e.u1, e.u2] and polarity (e.home_idx, e.donor_idx)
+                    if let (Some(eh), Some(ed)) = (e.home_idx, e.donor_idx) {
+                        let es = e.u1.saturating_sub(1);
+                        let ee = e.u2.min(aln.length);
+                        if ee > es {
+                            let eh_row = aln.row(eh);
+                            let ed_row = aln.row(ed);
+                            for t_idx in 0..aln.num_taxa {
+                                let t_name = &aln.taxa[t_idx];
+                                let t_row = aln.row(t_idx);
+                                let (mut d_tr_h, mut v_tr_h, mut d_fl_h, mut v_fl_h) =
+                                    (0usize, 0usize, 0usize, 0usize);
+                                let (mut d_tr_d, mut v_tr_d, mut d_fl_d, mut v_fl_d) =
+                                    (0usize, 0usize, 0usize, 0usize);
+                                let (mut d_tr_hd, mut v_tr_hd, mut d_fl_hd, mut v_fl_hd) =
+                                    (0usize, 0usize, 0usize, 0usize);
+                                for u in 0..aln.length {
+                                    let (rt, rh, rd) = (t_row[u], eh_row[u], ed_row[u]);
+                                    let in_tr = u >= es && u < ee;
+                                    if rt > 0 && rh > 0 {
+                                        if in_tr {
+                                            v_tr_h += 1;
+                                            if rt != rh {
+                                                d_tr_h += 1;
+                                            }
+                                        } else {
+                                            v_fl_h += 1;
+                                            if rt != rh {
+                                                d_fl_h += 1;
+                                            }
+                                        }
+                                    }
+                                    if rt > 0 && rd > 0 {
+                                        if in_tr {
+                                            v_tr_d += 1;
+                                            if rt != rd {
+                                                d_tr_d += 1;
+                                            }
+                                        } else {
+                                            v_fl_d += 1;
+                                            if rt != rd {
+                                                d_fl_d += 1;
+                                            }
+                                        }
+                                    }
+                                    if rh > 0 && rd > 0 {
+                                        if in_tr {
+                                            v_tr_hd += 1;
+                                            if rh != rd {
+                                                d_tr_hd += 1;
+                                            }
+                                        } else {
+                                            v_fl_hd += 1;
+                                            if rh != rd {
+                                                d_fl_hd += 1;
+                                            }
+                                        }
+                                    }
+                                }
+                                let dist_tr_h = if v_tr_h > 0 {
+                                    d_tr_h as f64 / v_tr_h as f64
+                                } else {
+                                    1.0
+                                };
+                                let dist_fl_h = if v_fl_h > 0 {
+                                    d_fl_h as f64 / v_fl_h as f64
+                                } else {
+                                    1.0
+                                };
+                                let dist_tr_d = if v_tr_d > 0 {
+                                    d_tr_d as f64 / v_tr_d as f64
+                                } else {
+                                    1.0
+                                };
+                                let dist_fl_d = if v_fl_d > 0 {
+                                    d_fl_d as f64 / v_fl_d as f64
+                                } else {
+                                    1.0
+                                };
+                                let dist_tr_hd = if v_tr_hd > 0 {
+                                    d_tr_hd as f64 / v_tr_hd as f64
+                                } else {
+                                    1.0
+                                };
+                                let dist_fl_hd = if v_fl_hd > 0 {
+                                    d_fl_hd as f64 / v_fl_hd as f64
+                                } else {
+                                    1.0
+                                };
+                                if dist_fl_h < dist_fl_d
+                                    && dist_tr_d < dist_tr_h
+                                    && dist_fl_d > dist_tr_d
+                                    && dist_tr_h > dist_fl_h
+                                    && dist_fl_h < 0.5 * dist_fl_hd
+                                    && dist_tr_d < 0.5 * dist_tr_hd
+                                {
+                                    g.isolates.push(t_name.clone());
+                                }
+                            }
+                        }
+                    }
+                    g.isolates.sort();
+                    g.isolates.dedup();
+                    if e.p_fisher < g.p_fisher {
+                        g.p_fisher = e.p_fisher;
+                    }
+                    if e.z_phys > g.z_phys {
+                        g.z_phys = e.z_phys;
+                    }
+                    g.s_informative = g.s_informative.max(e.s_informative);
+                    found = true;
+                    break;
                 }
             }
         }
@@ -813,27 +1269,12 @@ fn group_ancestral_events(
             })
     });
 
-    // Post-recruitment consolidation: merge redundant events that recruited the same recipient cohort
-    // over the same genomic interval via sister donors/homes from the same lineage cluster.
+    // Post-recruitment consolidation: merge redundant or contiguous events that recruited the same
+    // recipient cohort via sister donors/homes from the same lineage cluster.
     let mut consolidated: Vec<crate::types::RecombinationEvent> = Vec::new();
     for ev in grouped {
         let mut merged_into_existing = false;
         for existing in &mut consolidated {
-            let ov_start = ev.u1.max(existing.u1);
-            let ov_end = ev.u2.min(existing.u2);
-            if ov_end < ov_start {
-                continue;
-            }
-            let ov_len = (ov_end - ov_start + 1) as f64;
-            let min_len = ((ev.u2.saturating_sub(ev.u1) + 1)
-                .min(existing.u2.saturating_sub(existing.u1) + 1)) as f64;
-            let union_len = (ev.u2.max(existing.u2) - ev.u1.min(existing.u1) + 1) as f64;
-            let iou_span = ov_len / union_len.max(1.0);
-            let frac_span = ov_len / min_len.max(1.0);
-            if iou_span < 0.50 && frac_span < 0.70 {
-                continue;
-            }
-
             // Recipient roster overlap
             let shared_isolates = ev
                 .isolates
@@ -845,37 +1286,57 @@ fn group_ancestral_events(
             let jaccard_iso = (shared_isolates as f64) / (union_iso as f64);
             let subset_iso = (shared_isolates as f64) / (min_iso as f64);
 
-            if jaccard_iso >= 0.50 || subset_iso >= 0.75 {
-                let same_home_clade = existing.home_name == ev.home_name
-                    || match (existing.home_idx, ev.home_idx) {
-                        (Some(h1), Some(h2)) => {
-                            crate::landmarks::compute_pairwise_distance(aln, h1, h2) <= d_clade
-                        }
-                        _ => false,
-                    };
-                let same_donor_clade = existing.donor_name == ev.donor_name
-                    || (existing.is_ghost_donor && ev.is_ghost_donor)
-                    || match (existing.donor_idx, ev.donor_idx) {
-                        (Some(d1), Some(d2)) => {
-                            crate::landmarks::compute_pairwise_distance(aln, d1, d2) <= d_clade
-                        }
-                        _ => false,
-                    };
+            if jaccard_iso < 0.50 && subset_iso < 0.75 {
+                continue;
+            }
 
-                if same_home_clade && same_donor_clade {
-                    existing.isolates.extend(ev.isolates.clone());
-                    existing.isolates.sort();
-                    existing.isolates.dedup();
-                    if ev.p_fisher < existing.p_fisher {
-                        existing.p_fisher = ev.p_fisher;
+            let same_home_clade = existing.home_name == ev.home_name
+                || match (existing.home_idx, ev.home_idx) {
+                    (Some(h1), Some(h2)) => {
+                        crate::landmarks::compute_pairwise_distance(aln, h1, h2) <= d_clade
                     }
-                    if ev.z_phys > existing.z_phys {
-                        existing.z_phys = ev.z_phys;
+                    _ => false,
+                };
+            let same_donor_clade = existing.donor_name == ev.donor_name
+                || (existing.is_ghost_donor && ev.is_ghost_donor)
+                || match (existing.donor_idx, ev.donor_idx) {
+                    (Some(d1), Some(d2)) => {
+                        crate::landmarks::compute_pairwise_distance(aln, d1, d2) <= d_clade
                     }
-                    existing.s_informative = existing.s_informative.max(ev.s_informative);
-                    merged_into_existing = true;
-                    break;
+                    _ => false,
+                };
+
+            if !same_home_clade || !same_donor_clade {
+                continue;
+            }
+
+            let ov_start = ev.u1.max(existing.u1);
+            let ov_end = ev.u2.min(existing.u2);
+            let is_overlapping_or_contiguous = if ov_end >= ov_start {
+                true
+            } else {
+                let gap = ov_start - ov_end;
+                gap <= 350
+            };
+
+            if is_overlapping_or_contiguous {
+                existing.u1 = existing.u1.min(ev.u1);
+                existing.u2 = existing.u2.max(ev.u2);
+                existing.u1_continuous = existing.u1 as f64;
+                existing.u2_continuous = existing.u2 as f64;
+                existing.tract_length = existing.u2.saturating_sub(existing.u1) + 1;
+                existing.isolates.extend(ev.isolates.clone());
+                existing.isolates.sort();
+                existing.isolates.dedup();
+                if ev.p_fisher < existing.p_fisher {
+                    existing.p_fisher = ev.p_fisher;
                 }
+                if ev.z_phys > existing.z_phys {
+                    existing.z_phys = ev.z_phys;
+                }
+                existing.s_informative = existing.s_informative.max(ev.s_informative);
+                merged_into_existing = true;
+                break;
             }
         }
         if !merged_into_existing {
@@ -903,11 +1364,18 @@ fn deduplicate_candidate_events(
 
     let (_d_sister, d_clade) = crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
 
-    // Sort by physical significance score descending so strongest events have priority
+    // Sort by statistical significance (p_fisher ascending, s_informative descending, z_phys descending)
+    // so complete coalesced tracts take priority over split sub-fragments.
     events.sort_by(|a, b| {
-        b.z_phys
-            .partial_cmp(&a.z_phys)
+        a.p_fisher
+            .partial_cmp(&b.p_fisher)
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| b.s_informative.cmp(&a.s_informative))
+            .then_with(|| {
+                b.z_phys
+                    .partial_cmp(&a.z_phys)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
     });
 
     let mut kept: Vec<crate::types::RecombinationEvent> = Vec::new();
@@ -1225,11 +1693,11 @@ mod tests {
                 data[4 * l + u] = 4; // O
             }
         }
-        // R has a primary 400 bp tract from P2 [400..800] and a moderate 90 bp tract from P3 [1200..1290]
+        // R has a primary 400 bp tract from P2 [400..800] and a borderline 48 bp micro-conversion from P3 [1200..1248]
         for u in 0..l {
             if u >= 400 && u < 800 {
                 data[0 * l + u] = data[2 * l + u];
-            } else if u >= 1200 && u < 1290 {
+            } else if u >= 1200 && u < 1248 {
                 data[0 * l + u] = data[3 * l + u];
             } else {
                 data[0 * l + u] = data[1 * l + u];
