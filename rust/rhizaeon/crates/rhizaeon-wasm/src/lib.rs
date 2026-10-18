@@ -7,6 +7,12 @@ pub fn init_panic_hook() {
     console_error_panic_hook::set_once();
 }
 
+/// Returns the exact compiled RhizAeon WASM engine version string (e.g., "0.1.0-beta.5")
+#[wasm_bindgen]
+pub fn engine_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 /// Scans a FASTA string for recombination events and returns a JS Object payload
 #[wasm_bindgen]
 pub fn scan_fasta(

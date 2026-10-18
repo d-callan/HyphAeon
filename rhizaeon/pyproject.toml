@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "rhizaeon"
-version = "0.1.0-beta.4"
+version = "0.1.0-beta.5"
 authors = [
   { name="Sergei L. Kosakovsky Pond", email="spond@temple.edu" },
 ]

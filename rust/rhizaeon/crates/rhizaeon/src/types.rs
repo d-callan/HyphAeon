@@ -124,6 +124,7 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisualizationMetadata {
     pub title: String,
+    pub engine_version: String,
     pub alignment_length: usize,
     pub taxa_count: usize,
     pub query_id: String,
