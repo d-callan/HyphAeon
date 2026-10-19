@@ -12,6 +12,7 @@ name = "trace50_native"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+aeon-cli-utils = { workspace = true }
 trace50 = { workspace = true }
 clap = { workspace = true }
 serde_json = { workspace = true }

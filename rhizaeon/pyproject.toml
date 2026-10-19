@@ -4,7 +4,8 @@ build-backend = "maturin"
 
 [project]
 name = "rhizaeon"
-version = "0.1.0-beta.5"
+# Canonical version lives in native/Cargo.toml; maturin resolves it into the wheel metadata.
+dynamic = ["version"]
 authors = [
   { name="Sergei L. Kosakovsky Pond", email="spond@temple.edu" },
 ]

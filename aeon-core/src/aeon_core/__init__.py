@@ -2,6 +2,8 @@
 Aeon-Core: Shared model and bioinformatics infrastructure for Aeon-family packages.
 """
 
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
 from .model import PhyloAxialTransformer, BustedMultiTaskHead, decode_soft_ordinal_lrt
 from .weights import (
     resolve_weights_path, load_arch_config, load_weights, load_checkpoint, save_safetensors,
@@ -49,4 +51,7 @@ from .stats import (
     cauchy_combination_p,
 )
 
-__version__ = "0.2.0"
+try:
+    __version__ = _pkg_version("hyphaeon-core")
+except PackageNotFoundError:  # running from a source tree without installation
+    __version__ = "0.0.0+local"

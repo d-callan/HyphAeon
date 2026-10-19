@@ -44,6 +44,7 @@ from aeon_core.dataset import (
     compute_tn93_cross_distance_matrix,
     parse_alignment_sequences,
 )
+from aeon_core.io import vprint, write_json, write_csv
 from .dating import (
     run_mrca_dating,
     parse_sample_dates,
@@ -557,8 +558,7 @@ class AutoClockDeconvolution:
         self.D_MM: Optional[np.ndarray] = None
 
     def _log(self, msg: str):
-        if not self.quiet:
-            print(msg)
+        vprint(msg, self.quiet)
 
     def load_and_validate(self) -> None:
         """Load sequences and temporal metadata, resolving dates and frame alignment."""
@@ -979,7 +979,7 @@ class AutoClockDeconvolution:
         ms_df["delta_BIC"] = ms_df["BIC"] - min_bic
 
         self.model_selection_df = ms_df
-        ms_df.to_csv(self.output_dir / "autoclock_model_selection.csv", index=False)
+        write_csv(self.output_dir / "autoclock_model_selection.csv", ms_df, "Model selection table", quiet=self.quiet)
 
         # Decision rule for optimal K*:
         # Calculate eigengap drop ratios: rho_k = Delta lambda_k / max(Delta lambda_{k+1}, 1e-4)
@@ -1059,7 +1059,7 @@ class AutoClockDeconvolution:
 
         # Save classified metadata
         self.meta_df["inferred_clock_community"] = labels
-        self.meta_df.to_csv(self.output_dir / "autoclock_classified_metadata.csv", index=False)
+        write_csv(self.output_dir / "autoclock_classified_metadata.csv", self.meta_df, "Classified metadata", quiet=self.quiet)
 
         # Calibrate each community
         comm_dir = self.output_dir / "clock_communities"
@@ -1074,7 +1074,7 @@ class AutoClockDeconvolution:
                     f.write(f">{t}\n{c_seqs[t]}\n")
 
             c_dates_csv = comm_dir / f"chronaeon_community_{c_id}_dates.csv"
-            pd.DataFrame({"id": c_taxa, "date": [self.dates_map[t] for t in c_taxa]}).to_csv(c_dates_csv, index=False)
+            write_csv(c_dates_csv, pd.DataFrame({"id": c_taxa, "date": [self.dates_map[t] for t in c_taxa]}), f"Community {c_id} dates", quiet=self.quiet)
 
             c_indices = [i for i in range(n) if labels[i] == c_id]
             if self.D_matrix is not None and len(c_indices) > 1:
@@ -1193,7 +1193,7 @@ class AutoClockDeconvolution:
                 })
 
         self.triage_df = pd.DataFrame(all_triage_rows)
-        self.triage_df.to_csv(self.output_dir / "autoclock_sequence_triage.csv", index=False)
+        write_csv(self.output_dir / "autoclock_sequence_triage.csv", self.triage_df, "Sequence triage table", quiet=self.quiet)
         sus_count = int(self.triage_df["is_sus"].sum()) if not self.triage_df.empty else 0
         self._log(f"\n[✓] Sequence Triage Complete: Screened {len(self.taxa)} sequences, flagged {sus_count} anomalous (SUS) records (|z| > 3.0).")
 
@@ -1209,9 +1209,7 @@ class AutoClockDeconvolution:
             "sus_count": int(self.triage_df["is_sus"].sum()) if self.triage_df is not None and not self.triage_df.empty else 0,
         }
         out_json = self.output_dir / "autoclock_summary.json"
-        with open(out_json, "w") as f:
-            json.dump(summary, f, indent=2, default=str)
-        self._log(f"[✓] Complete AutoClock summary written to: {out_json}")
+        write_json(out_json, summary, "Complete AutoClock summary", quiet=self.quiet, default=str)
 
     def plot_diagnostics(self, output_path: Optional[Union[str, Path]] = None) -> Path:
         """Generate publication-grade diagnostic figure."""
@@ -1453,7 +1451,7 @@ class AutoClockDeconvolution:
                 max_dense_n=self.max_dense_n,
             )
             dyads_csv = self.output_dir / "contemporaneous_dyads.csv"
-            self.dyads_df.to_csv(dyads_csv, index=False)
+            write_csv(dyads_csv, self.dyads_df, "Contemporaneous dyads", quiet=self.quiet)
             self._log(f"[✓] Identified {len(self.dyads_df)} contemporaneous transmission clusters ({len(self.taxa_dyad_map)} taxa) sampled <= {self.dyad_max_days:.0f} days apart.")
 
             meta_csv = self.output_dir / "autoclock_classified_metadata.csv"
@@ -1463,7 +1461,7 @@ class AutoClockDeconvolution:
                 m_df["contemporaneous_dyad_id"] = m_df["id"].map(lambda t: self.taxa_dyad_map.get(t, {}).get("dyad_id", None))
                 m_df["dyad_timespan_days"] = m_df["id"].map(lambda t: self.taxa_dyad_map.get(t, {}).get("timespan_days", None))
                 m_df["dyad_distance"] = m_df["id"].map(lambda t: self.taxa_dyad_map.get(t, {}).get("mean_distance", None))
-                m_df.to_csv(meta_csv, index=False)
+                write_csv(meta_csv, m_df, "Classified metadata", quiet=self.quiet)
 
         self.save_summary()
         if plot or plot_path:
@@ -1723,8 +1721,7 @@ class HierarchicalAutoClock:
         self.classified_df: Optional[pd.DataFrame] = None
 
     def _log(self, msg: str):
-        if not self.quiet:
-            print(msg, flush=True)
+        vprint(msg, self.quiet)
 
     def classify_leaf(self, leaf: Dict[str, Any]) -> str:
         if not self.contemporaneous_dyads:
@@ -2103,9 +2100,8 @@ class HierarchicalAutoClock:
                 max_dense_n=self.max_dense_n,
             )
             dyads_csv = self.output_dir / "contemporaneous_dyads.csv"
-            self.dyads_df.to_csv(dyads_csv, index=False)
+            write_csv(dyads_csv, self.dyads_df, "Contemporaneous dyads", quiet=self.quiet)
             self._log(f"[✓] Identified {len(self.dyads_df)} contemporaneous transmission clusters ({len(self.taxa_dyad_map)} taxa) sampled <= {self.dyad_max_days:.0f} days apart (TN93 <= {self.dyad_max_dist:.3f}).")
-            self._log(f"[✓] Saved contemporaneous dyads table to: {dyads_csv}")
 
         self.tree = self.deconvolve_node("root", self.taxa, depth=0, path="root")
         self._collect_leaves_and_outliers(self.tree)
@@ -2220,8 +2216,7 @@ class HierarchicalAutoClock:
 
         self.classified_df = pd.DataFrame(rows)
         meta_csv = self.output_dir / "hierarchical_classified_metadata.csv"
-        self.classified_df.to_csv(meta_csv, index=False)
-        self._log(f"[✓] Saved classified metadata to: {meta_csv}")
+        write_csv(meta_csv, self.classified_df, "Classified metadata", quiet=self.quiet)
 
         # Save Tree JSON (omitting taxa list from nodes for clean readability)
         tree_json = self.output_dir / "hierarchical_tree.json"
@@ -2232,9 +2227,7 @@ class HierarchicalAutoClock:
             c["children"] = [_clean_node(ch) for ch in c.get("children", [])]
             return c
 
-        with open(tree_json, "w") as f:
-            json.dump(_clean_node(self.tree), f, indent=2)
-        self._log(f"[✓] Saved hierarchical tree to: {tree_json}")
+        write_json(tree_json, _clean_node(self.tree), "Hierarchical tree", quiet=self.quiet)
 
         # Save Summary JSON
         summary = {
@@ -2308,9 +2301,7 @@ class HierarchicalAutoClock:
             summary["contemporaneous_dyads_path"] = str(self.output_dir / "contemporaneous_dyads.csv")
 
         sum_json = self.output_dir / "hierarchical_summary.json"
-        with open(sum_json, "w") as f:
-            json.dump(summary, f, indent=2)
-        self._log(f"[✓] Saved summary to: {sum_json}")
+        write_json(sum_json, summary, "Hierarchical summary", quiet=self.quiet)
 
         if plot or plot_path:
             self.plot_diagnostics(plot_path)

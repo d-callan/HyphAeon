@@ -513,8 +513,9 @@ impl RhizAeonEngine {
 
                     // Case B: Stronger overlapping event on a DIFFERENT clade -> scrub it
                     // so pure parents cannot use a recombinant's tract as a false Home reference.
-                    let is_overlapping_on_other_cand =
-                        k_is_stronger && !same_cand_clade && (ov_len as f64) >= 0.25 * (m_len as f64);
+                    let is_overlapping_on_other_cand = k_is_stronger
+                        && !same_cand_clade
+                        && (ov_len as f64) >= 0.25 * (m_len as f64);
 
                     if is_disjoint_on_same_cand
                         || is_nested_inner_diff_donor
@@ -523,13 +524,16 @@ impl RhizAeonEngine {
                         let s_u = ev_k.u1.saturating_sub(1).min(l);
                         let e_u = ev_k.u2.min(l);
                         if e_u > s_u {
-                            let cited_home_carries_k = if is_overlapping_on_other_cand && ov_len < m_len {
+                            let cited_home_carries_k = if is_overlapping_on_other_cand
+                                && ov_len < m_len
+                            {
                                 ev_m.home_idx.filter(|&h_idx| {
-                                    let in_k_cand_clade = crate::landmarks::compute_pairwise_distance(
-                                        &aln,
-                                        ev_k.candidate_idx,
-                                        h_idx,
-                                    ) <= d_clade;
+                                    let in_k_cand_clade =
+                                        crate::landmarks::compute_pairwise_distance(
+                                            &aln,
+                                            ev_k.candidate_idx,
+                                            h_idx,
+                                        ) <= d_clade;
                                     let not_in_k_donor_clade = ev_k.donor_idx.map_or(true, |kd| {
                                         crate::landmarks::compute_pairwise_distance(&aln, h_idx, kd)
                                             > d_clade
@@ -767,7 +771,8 @@ fn prune_inverted_backbone_events(
             }
             // Check if events[j] is strictly stronger than events[i]
             let j_is_stronger = events[j].p_fisher < events[i].p_fisher
-                || (events[j].p_fisher == events[i].p_fisher && events[j].z_phys > events[i].z_phys);
+                || (events[j].p_fisher == events[i].p_fisher
+                    && events[j].z_phys > events[i].z_phys);
             if !j_is_stronger {
                 continue;
             }
@@ -1033,24 +1038,29 @@ fn reorient_cohort_complementary_mosaics(
             };
             let shares_bp = c_evs.iter().any(|ce| {
                 count_inter_breakpoint_informative(hc_row, dc_row, ce.u1, other.u1, l) < inf_tol
-                    || count_inter_breakpoint_informative(hc_row, dc_row, ce.u2, other.u2, l) < inf_tol
-                    || count_inter_breakpoint_informative(hc_row, dc_row, ce.u1, other.u2, l) < inf_tol
-                    || count_inter_breakpoint_informative(hc_row, dc_row, ce.u2, other.u1, l) < inf_tol
+                    || count_inter_breakpoint_informative(hc_row, dc_row, ce.u2, other.u2, l)
+                        < inf_tol
+                    || count_inter_breakpoint_informative(hc_row, dc_row, ce.u1, other.u2, l)
+                        < inf_tol
+                    || count_inter_breakpoint_informative(hc_row, dc_row, ce.u2, other.u1, l)
+                        < inf_tol
             });
             if !shares_bp {
                 continue;
             }
 
-            let is_same_pol = regional_or_global_same_clade(aln, hc, ho, other.u1, other.u2, d_clade)
-                && regional_or_global_same_clade(aln, dc, do_idx, other.u1, other.u2, d_clade);
+            let is_same_pol =
+                regional_or_global_same_clade(aln, hc, ho, other.u1, other.u2, d_clade)
+                    && regional_or_global_same_clade(aln, dc, do_idx, other.u1, other.u2, d_clade);
             if is_same_pol {
                 if !same_cands.contains(&other.candidate_idx) {
                     same_cands.push(other.candidate_idx);
                 }
             }
 
-            let is_inv_pol = regional_or_global_same_clade(aln, dc, ho, other.u1, other.u2, d_clade)
-                && regional_or_global_same_clade(aln, hc, do_idx, other.u1, other.u2, d_clade);
+            let is_inv_pol =
+                regional_or_global_same_clade(aln, dc, ho, other.u1, other.u2, d_clade)
+                    && regional_or_global_same_clade(aln, hc, do_idx, other.u1, other.u2, d_clade);
             if is_inv_pol {
                 if !inv_cands.contains(&other.candidate_idx) {
                     inv_cands.push(other.candidate_idx);
@@ -1071,7 +1081,8 @@ fn reorient_cohort_complementary_mosaics(
             } else {
                 ce.u1
             };
-            let e = if count_inter_breakpoint_informative(hc_row, dc_row, ce.u2, l + 1, l) < inf_tol {
+            let e = if count_inter_breakpoint_informative(hc_row, dc_row, ce.u2, l + 1, l) < inf_tol
+            {
                 l
             } else {
                 ce.u2
@@ -1614,7 +1625,13 @@ fn verify_carpet_polarity_for_pair(
         return None;
     }
 
-    Some((s_donor, d_tract_home, d_flank_home, d_tract_donor, d_flank_donor))
+    Some((
+        s_donor,
+        d_tract_home,
+        d_flank_home,
+        d_tract_donor,
+        d_flank_donor,
+    ))
 }
 
 /// Snaps `(home_idx, donor_idx)` of each verified event to the closest pure non-recombinant
@@ -2121,7 +2138,8 @@ fn group_ancestral_events(
                         None => false,
                     };
                     if (iou >= 0.50
-                        || (overlap_len as f64 >= 0.70 * min_len as f64 && min_len * 2 >= union_len))
+                        || (overlap_len as f64 >= 0.70 * min_len as f64
+                            && min_len * 2 >= union_len))
                         && fit_compatible
                         && !has_divergent_overhang(
                             aln,
@@ -2226,52 +2244,53 @@ fn group_ancestral_events(
                 // event with inverted Home<->Donor clade polarity, or an overlapping same-clade
                 // event with a distinct divergent overhang
                 if let Some(dg) = g.donor_idx {
-                    let has_conflicting_event = active_isolate_events.iter().any(
-                        |(oh_opt, od_opt, ou1, ou2, isos)| {
-                            if !isos.contains(t_name) {
-                                return false;
-                            }
-                            match (oh_opt, od_opt) {
-                                (Some(oh), Some(od)) => {
-                                    let is_inv = regional_or_global_same_clade(
-                                        aln, *oh, dg, g.u1, g.u2, d_clade,
-                                    ) && regional_or_global_same_clade(
-                                        aln, *od, hg, *ou1, *ou2, d_clade,
-                                    );
-                                    if is_inv {
-                                        return true;
-                                    }
-                                    let ov_s = g.u1.max(*ou1);
-                                    let ov_e = g.u2.min(*ou2);
-                                    if ov_e >= ov_s {
-                                        let is_same = regional_or_global_same_clade(
-                                            aln, *oh, hg, g.u1, g.u2, d_clade,
+                    let has_conflicting_event =
+                        active_isolate_events
+                            .iter()
+                            .any(|(oh_opt, od_opt, ou1, ou2, isos)| {
+                                if !isos.contains(t_name) {
+                                    return false;
+                                }
+                                match (oh_opt, od_opt) {
+                                    (Some(oh), Some(od)) => {
+                                        let is_inv = regional_or_global_same_clade(
+                                            aln, *oh, dg, g.u1, g.u2, d_clade,
                                         ) && regional_or_global_same_clade(
-                                            aln, *od, dg, g.u1, g.u2, d_clade,
+                                            aln, *od, hg, *ou1, *ou2, d_clade,
                                         );
-                                        if is_same
-                                            && has_divergent_overhang(
-                                                aln,
-                                                g.candidate_idx,
-                                                g.u1,
-                                                g.u2,
-                                                t_idx,
-                                                *ou1,
-                                                *ou2,
-                                                g.home_idx,
-                                                g.donor_idx,
-                                                d_clade,
-                                            )
-                                        {
+                                        if is_inv {
                                             return true;
                                         }
+                                        let ov_s = g.u1.max(*ou1);
+                                        let ov_e = g.u2.min(*ou2);
+                                        if ov_e >= ov_s {
+                                            let is_same = regional_or_global_same_clade(
+                                                aln, *oh, hg, g.u1, g.u2, d_clade,
+                                            ) && regional_or_global_same_clade(
+                                                aln, *od, dg, g.u1, g.u2, d_clade,
+                                            );
+                                            if is_same
+                                                && has_divergent_overhang(
+                                                    aln,
+                                                    g.candidate_idx,
+                                                    g.u1,
+                                                    g.u2,
+                                                    t_idx,
+                                                    *ou1,
+                                                    *ou2,
+                                                    g.home_idx,
+                                                    g.donor_idx,
+                                                    d_clade,
+                                                )
+                                            {
+                                                return true;
+                                            }
+                                        }
+                                        false
                                     }
-                                    false
+                                    _ => false,
                                 }
-                                _ => false,
-                            }
-                        },
-                    );
+                            });
                     if has_conflicting_event {
                         continue;
                     }
@@ -2309,9 +2328,8 @@ fn group_ancestral_events(
                                 d_tr_h += 1;
                             }
                         } else {
-                            let in_other_tract = disjoint_tracts
-                                .iter()
-                                .any(|&(os, oe)| u >= os && u < oe);
+                            let in_other_tract =
+                                disjoint_tracts.iter().any(|&(os, oe)| u >= os && u < oe);
                             if !in_other_tract {
                                 v_fl_h += 1;
                                 if rt != rh {
@@ -2435,19 +2453,17 @@ fn group_ancestral_events(
                         1.0
                     };
 
-                    let both_arms_ok = if v_loc_l_h >= 50
-                        && v_loc_l_d >= 50
-                        && v_loc_r_h >= 50
-                        && v_loc_r_d >= 50
-                    {
-                        let l_h = (d_loc_l_h as f64) / (v_loc_l_h as f64);
-                        let l_d = (d_loc_l_d as f64) / (v_loc_l_d as f64);
-                        let r_h = (d_loc_r_h as f64) / (v_loc_r_h as f64);
-                        let r_d = (d_loc_r_d as f64) / (v_loc_r_d as f64);
-                        l_h < l_d || r_h < r_d
-                    } else {
-                        true
-                    };
+                    let both_arms_ok =
+                        if v_loc_l_h >= 50 && v_loc_l_d >= 50 && v_loc_r_h >= 50 && v_loc_r_d >= 50
+                        {
+                            let l_h = (d_loc_l_h as f64) / (v_loc_l_h as f64);
+                            let l_d = (d_loc_l_d as f64) / (v_loc_l_d as f64);
+                            let r_h = (d_loc_r_h as f64) / (v_loc_r_h as f64);
+                            let r_d = (d_loc_r_d as f64) / (v_loc_r_d as f64);
+                            l_h < l_d || r_h < r_d
+                        } else {
+                            true
+                        };
 
                     let matches_mosaic = dist_fl_h < dist_fl_d
                         && dist_loc_fl_h < dist_loc_fl_d

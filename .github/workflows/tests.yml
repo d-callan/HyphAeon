@@ -78,3 +78,23 @@ jobs:
 
       - name: Run chronaeon tests
         run: python -m pytest chronaeon/tests/ -v
+
+  # The rhizaeon/trace50 Python packages are thin shims over compiled
+  # Rust extensions, so their tests need a Rust toolchain to build the
+  # wheel via maturin. One Python version is enough — this job guards
+  # the CLI contract (flags, exit codes, version string), not Python
+  # API surface.
+  test-native-clis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install rhizaeon and trace50 (maturin builds the extensions)
+        run: pip install rhizaeon/ trace50/ pytest
+      - name: Run native CLI contract tests
+        run: python -m pytest rhizaeon/tests/ trace50/tests/ -v

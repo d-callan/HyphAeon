@@ -6,4 +6,9 @@ parser inside the extension — the CLI surface and output are identical to
 the former standalone Rust binary.
 """
 
-__version__ = "5.0.0b1"
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+try:
+    __version__ = _pkg_version("trace50")
+except PackageNotFoundError:  # running from a source tree without installation
+    __version__ = "0.0.0+local"

@@ -89,6 +89,10 @@ pub fn compute_fieller_mrca(
 
     let denom = 1.0 - g;
     let center = d0 / mu;
+    // discriminant = (d0^2 * g + denom * (t_crit * se_d0)^2) / mu^2, which is
+    // non-negative whenever g < 1 and inputs are finite. COMPLEX_ROOTS is
+    // therefore a defensive guard for non-finite inputs, not a reachable
+    // geometry of the estimator.
     let discriminant = center * center - denom * ((d0 * d0 - (t_crit * se_d0).powi(2)) / (mu * mu));
 
     if discriminant < 0.0 {
@@ -726,5 +730,234 @@ mod tests {
         // rss == tot_var: with no temporal signal nothing is explained.
         assert!(c.tot_var > 0.0);
         assert!((c.rss - c.tot_var).abs() < 1e-12);
+    }
+
+    #[test]
+    fn clock_fit_recovers_known_tmrca() {
+        // Perfectly additive clock: pairwise distance = mu * |t_i - t_j|,
+        // so the root-to-tip row is exactly mu * (t_i - t0) and OLS must
+        // recover slope = mu, t_mrca = t0, r^2 = 1.
+        let n = 10;
+        let mu = 0.004;
+        let t0 = 2020.0;
+        let dates: Vec<f64> = (0..n)
+            .map(|i| t0 + 4.0 * (i as f64) / (n - 1) as f64)
+            .collect();
+        let mut d = vec![0.0; n * n];
+        for i in 0..n {
+            for j in 0..n {
+                d[i * n + j] = mu * (dates[i] - dates[j]).abs();
+            }
+        }
+        let idx: Vec<usize> = (0..n).collect();
+        let c = fit_clock_community(&idx, &dates, &d, n, 0.05);
+        assert_eq!(c.fieller_status, "OK");
+        assert!((c.mu - mu).abs() < 1e-9);
+        assert!((c.r_squared - 1.0).abs() < 1e-9);
+        assert!((c.tmrca - t0).abs() < 1e-9);
+        // The MRCA must predate the earliest sample, and the CI upper
+        // bound is clamped to it.
+        assert!(c.tmrca <= 2020.0);
+        assert!(c.ci_mrca[1] <= 2020.0 + 1e-9);
+        // A strong recent clock should tier as an active outbreak.
+        assert_eq!(c.operational_tier, "Active Outbreak Chain");
+        assert!(c.is_active_outbreak);
+    }
+
+    // ---- Fieller confidence set ---------------------------------------
+
+    #[test]
+    fn fieller_rejects_unidentifiable_rate() {
+        let (ci, status) = compute_fieller_mrca(0.0, 0.03, 0.001, 0.001, 2021.5, 10.0, 0.05);
+        assert_eq!(status, "UNIDENTIFIABLE_RATE");
+        assert!(ci.iter().all(|b| b.is_nan()));
+
+        let (_, status) = compute_fieller_mrca(0.01, 0.03, 0.001, 0.001, 2021.5, 0.5, 0.05);
+        assert_eq!(status, "UNIDENTIFIABLE_RATE");
+    }
+
+    #[test]
+    fn fieller_unbounded_when_rate_swamped_by_noise() {
+        // g = (t_crit * se_mu / mu)^2 >= 1 means the rate is
+        // statistically indistinguishable from zero; the Fieller set is
+        // the whole real line.
+        let (ci, status) = compute_fieller_mrca(0.001, 0.03, 0.01, 0.001, 2021.5, 10.0, 0.05);
+        assert_eq!(status, "RATE_UNIDENTIFIABLE_G_GE_1");
+        assert_eq!(ci[0], f64::NEG_INFINITY);
+        assert_eq!(ci[1], f64::INFINITY);
+    }
+
+    #[test]
+    fn fieller_tight_interval_brackets_ratio_estimate() {
+        // mu = 0.01/yr, d0 = 0.03 at t_ref = 2021.5 -> t_mrca = 2018.5.
+        // Tiny standard errors collapse the Fieller set onto the
+        // ratio-of-means estimate.
+        let (ci, status) = compute_fieller_mrca(0.01, 0.03, 1e-4, 1e-4, 2021.5, 10.0, 0.05);
+        assert_eq!(status, "OK");
+        assert!(ci[0] <= 2018.5 && 2018.5 <= ci[1]);
+        assert!(ci[1] - ci[0] < 0.5, "CI width {} too wide", ci[1] - ci[0]);
+    }
+
+    // ---- Bartlett effective sample size --------------------------------
+
+    #[test]
+    fn bartlett_neff_boundary_cases() {
+        // n <= 2 returns n unconditionally.
+        assert_eq!(compute_bartlett_neff(&[0.0; 4], 2, 1.0), 2.0);
+
+        // A fully covarying clique (all distances 0, including the
+        // diagonal) gives sum_c = n^2, so n_eff collapses to 1.
+        assert_eq!(compute_bartlett_neff(&[0.0; 9], 3, 1.0), 1.0);
+
+        // Distant pairs contribute ~zero covariance; n_eff saturates at n.
+        // off-diag 1.0, decay 100 -> off-diag covariance e^-100 ~ 0,
+        // sum_c ~ n (diagonal only) -> n_eff = n.
+        let far = vec![0.0, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 0.0];
+        assert!((compute_bartlett_neff(&far, 3, 100.0) - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn bartlett_neff_known_value_and_nan_exclusion() {
+        // n = 3, off-diagonal distances 0.5, decay 1:
+        // sum_c = 3 * e^0 + 6 * e^-0.5 -> n_eff = 9 / (3 + 6e^-0.5).
+        let mut d = vec![0.5; 9];
+        d[0] = 0.0;
+        d[4] = 0.0;
+        d[8] = 0.0;
+        let expected = 9.0 / (3.0 + 6.0 * (-0.5f64).exp());
+        assert!((compute_bartlett_neff(&d, 3, 1.0) - expected).abs() < 1e-12);
+
+        // A NaN pair (insufficient overlap) contributes nothing: dropping
+        // the (0,1) pair removes two terms from sum_c and raises n_eff.
+        d[1] = f64::NAN;
+        d[3] = f64::NAN;
+        let expected_nan = 9.0 / (3.0 + 4.0 * (-0.5f64).exp());
+        assert!((compute_bartlett_neff(&d, 3, 1.0) - expected_nan).abs() < 1e-12);
+    }
+
+    // ---- Fiedler modularity --------------------------------------------
+
+    /// Two equally sized cliques (strong within weights, weak between)
+    /// plus a step Fiedler vector separating them.
+    fn two_block_graph(n_half: usize, w_in: f64, w_out: f64) -> (Vec<f64>, Vec<f64>, usize) {
+        let n = 2 * n_half;
+        let mut w = vec![0.0; n * n];
+        for i in 0..n {
+            for j in 0..n {
+                if i != j {
+                    w[i * n + j] = if (i < n_half) == (j < n_half) {
+                        w_in
+                    } else {
+                        w_out
+                    };
+                }
+            }
+        }
+        let fiedler: Vec<f64> = (0..n)
+            .map(|i| if i < n_half { -0.5 } else { 0.5 })
+            .collect();
+        (w, fiedler, n)
+    }
+
+    #[test]
+    fn fiedler_cut_recovers_two_blocks() {
+        let (w, fiedler, n) = two_block_graph(4, 1.0, 0.01);
+        let (mut c0, mut c1, q, delta_q) = optimize_fiedler_modularity(&w, &fiedler, n, 2);
+        c0.sort_unstable();
+        c1.sort_unstable();
+        assert_eq!(c0, vec![0, 1, 2, 3]);
+        assert_eq!(c1, vec![4, 5, 6, 7]);
+        assert!(q > 0.0 && delta_q > 0.0);
+    }
+
+    #[test]
+    fn fiedler_cut_respects_min_size_floor() {
+        // n = 4 < 2 * min_size = 6: no legal bisection, so the community
+        // is returned whole with Q = 0.
+        let (w, fiedler, n) = two_block_graph(2, 1.0, 0.01);
+        let (c0, c1, q, delta_q) = optimize_fiedler_modularity(&w, &fiedler, n, 3);
+        assert_eq!(c0.len(), n);
+        assert!(c1.is_empty());
+        assert_eq!(q, 0.0);
+        assert_eq!(delta_q, 0.0);
+    }
+
+    // ---- Recursive deconvolution ---------------------------------------
+
+    /// Two cliques of `n_half` members each: intra-cluster pairwise
+    /// distance `d_in`, cross-cluster `d_out`, spread-out dates.
+    fn two_cluster_fixture(n_half: usize, d_in: f64, d_out: f64) -> (Vec<f64>, Vec<f64>) {
+        let n = 2 * n_half;
+        let dates: Vec<f64> = (0..n).map(|i| 2020.0 + 0.1 * (i % n_half) as f64).collect();
+        let mut d = vec![0.0; n * n];
+        for i in 0..n {
+            for j in 0..n {
+                if i != j {
+                    d[i * n + j] = if (i < n_half) == (j < n_half) {
+                        d_in
+                    } else {
+                        d_out
+                    };
+                }
+            }
+        }
+        (dates, d)
+    }
+
+    #[test]
+    fn deconvolution_splits_two_separated_clusters() {
+        let nh = 8;
+        let n = 2 * nh;
+        let (dates, d) = two_cluster_fixture(nh, 0.002, 0.4);
+        let idx: Vec<usize> = (0..n).collect();
+        // trace50 pipeline call signature: min_size 3, depth 5, cut 0.65.
+        let leaves = recursive_autoclock_deconvolution(&idx, &dates, &d, n, 3, 5, 0, "root", 0.65);
+        // Each child is internally uniform -> both stop at the
+        // homogeneity gate, so exactly two leaves.
+        assert_eq!(leaves.len(), 2);
+        assert_eq!(leaves[0].path, "root.0");
+        assert_eq!(leaves[1].path, "root.1");
+        let mut left = leaves[0].members.clone();
+        let mut right = leaves[1].members.clone();
+        left.sort_unstable();
+        right.sort_unstable();
+        let mut merged: Vec<usize> = left.iter().chain(right.iter()).copied().collect();
+        merged.sort_unstable();
+        assert_eq!(merged, (0..n).collect::<Vec<_>>());
+        let first: Vec<usize> = (0..nh).collect();
+        assert!(
+            left == first || right == first,
+            "partition did not recover the planted clusters"
+        );
+    }
+
+    #[test]
+    fn deconvolution_homogeneous_blob_stops() {
+        // Uniform pairwise distances -> uniform affinities -> lambda_2 =
+        // n/(n-1) > 0.999 -> the homogeneity gate fires before any cut.
+        let (dates, d) = two_cluster_fixture(4, 0.005, 0.005);
+        let idx: Vec<usize> = (0..8).collect();
+        let leaves = recursive_autoclock_deconvolution(&idx, &dates, &d, 8, 3, 5, 0, "root", 0.65);
+        assert_eq!(leaves.len(), 1);
+        assert_eq!(leaves[0].stop_reason, "homogeneous_spectral_manifold");
+    }
+
+    #[test]
+    fn deconvolution_stop_reasons() {
+        // All-zero distances: no nonzero entries -> identical_submanifold.
+        let (dates, d_zero) = two_cluster_fixture(4, 0.0, 0.0);
+        let idx: Vec<usize> = (0..8).collect();
+        let leaves =
+            recursive_autoclock_deconvolution(&idx, &dates, &d_zero, 8, 3, 5, 0, "root", 0.65);
+        assert_eq!(leaves.len(), 1);
+        assert_eq!(leaves[0].stop_reason, "identical_submanifold");
+
+        // max_depth 0 returns immediately, before any spectral work.
+        let (dates2, d) = two_cluster_fixture(8, 0.002, 0.4);
+        let idx2: Vec<usize> = (0..16).collect();
+        let leaves2 =
+            recursive_autoclock_deconvolution(&idx2, &dates2, &d, 16, 3, 0, 0, "root", 0.65);
+        assert_eq!(leaves2.len(), 1);
+        assert_eq!(leaves2[0].stop_reason, "max_depth");
     }
 }

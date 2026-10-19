@@ -18,18 +18,29 @@ def ensure_parent_directory(path):
         os.makedirs(parent, exist_ok=True)
 
 
-def write_json(path, data, label="JSON results"):
+def vprint(msg, quiet=False):
+    """Print `msg` unless `quiet` is set.
+
+    Shared verbose-print: class ``_log`` shims delegate here so the
+    quiet gating + flush behavior stays identical across tools.
+    """
+    if not quiet:
+        print(msg, flush=True)
+
+
+def write_json(path, data, label="JSON results", quiet=False, **dump_kw):
     """Write `data` as JSON to `path` and print a confirmation message.
 
     `label` is used in the confirmation print (e.g. "JSON results", "CSV summary").
+    Extra keyword args are passed to `json.dump` (e.g. ``default=str``).
     """
     ensure_parent_directory(path)
     with open(path, 'w') as f:
-        json.dump(data, f, indent=2)
-    print(f"\n[✓] {label} written to: {path}")
+        json.dump(data, f, indent=2, **dump_kw)
+    vprint(f"\n[✓] {label} written to: {path}", quiet)
 
 
-def write_csv(path, df_or_records, label="CSV results"):
+def write_csv(path, df_or_records, label="CSV results", quiet=False):
     """Write a DataFrame (or list of dicts) to CSV and print confirmation.
 
     If `df_or_records` is a list of dicts, it's converted to a DataFrame first.
@@ -38,7 +49,7 @@ def write_csv(path, df_or_records, label="CSV results"):
     if isinstance(df_or_records, list):
         df_or_records = pd.DataFrame(df_or_records)
     df_or_records.to_csv(path, index=False)
-    print(f"[✓] {label} written to: {path}")
+    vprint(f"[✓] {label} written to: {path}", quiet)
 
 
 def format_pq(value):

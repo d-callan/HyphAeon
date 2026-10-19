@@ -2,6 +2,8 @@
 ChronAeon: Ultra-Fast Molecular Clock Dating, Phylodynamics, and Genomic Surveillance.
 """
 
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
 from .dating import (
     run_mrca_dating,
     run_ols_dating,
@@ -45,7 +47,10 @@ from .alignment import (
     ReferenceGuidedCodonThreader,
 )
 
-__version__ = "0.2.0"
+try:
+    __version__ = _pkg_version("chronaeon")
+except PackageNotFoundError:  # running from a source tree without installation
+    __version__ = "0.0.0+local"
 __all__ = [
     "run_mrca_dating", "run_ols_dating", "run_pgls_dating",
     "run_restricted_spline_clock_dating", "run_powerlaw_clock_dating",

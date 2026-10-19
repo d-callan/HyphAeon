@@ -19,6 +19,7 @@ import pandas as pd
 from Bio import Phylo, SeqIO
 
 from aeon_core.dataset import compute_tn93_distance_matrix, parse_alignment_sequences
+from aeon_core.io import write_json
 
 
 # =========================================================================
@@ -900,19 +901,13 @@ def run_phylogeography_analysis(
         out_json = Path(output_prefix)
         if out_json.suffix.lower() != ".json":
             out_json = out_json.with_suffix(".json")
-        out_json.parent.mkdir(parents=True, exist_ok=True)
-        with open(out_json, "w") as f:
-            json.dump(results, f, indent=2)
-        print(f"[✓] Results written to: {out_json}")
+        write_json(out_json, results, "Phylogeography results")
 
     # Export GeoJSON
     if geojson_path:
         geo_json_p = Path(geojson_path)
         geo_dict = generate_geojson(unique_locs, centroids, root_probs, counts, sig_routes)
-        geo_json_p.parent.mkdir(parents=True, exist_ok=True)
-        with open(geo_json_p, "w") as f:
-            json.dump(geo_dict, f, indent=2)
-        print(f"[✓] GeoJSON exported to: {geo_json_p}")
+        write_json(geo_json_p, geo_dict, "GeoJSON")
 
     # Generate Diagnostic Plot
     if plot or plot_path:

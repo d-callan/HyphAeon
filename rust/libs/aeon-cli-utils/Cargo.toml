@@ -1,0 +1,12 @@
+[package]
+name = "aeon-cli-utils"
+version = "0.1.0"
+edition = "2021"
+description = "Shared console-script boilerplate for the Aeon native crates (clap entry, PEP 440 version printing)"
+license = "MIT"
+repository = "https://github.com/veg/HyphAeon"
+homepage = "https://github.com/veg/HyphAeon"
+publish = false
+
+[dependencies]
+clap = { workspace = true }

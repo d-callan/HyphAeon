@@ -50,11 +50,22 @@ jobs:
           echo "dir=$DIR" >> $GITHUB_OUTPUT
           echo "tag_version=${TAG##*-v}" >> $GITHUB_OUTPUT
           echo "native=$NATIVE" >> $GITHUB_OUTPUT
-      - name: Verify tag matches pyproject version
+      - name: Verify tag matches package version
         run: |
-          PKG_VERSION=$(python -c "import tomllib; print(tomllib.load(open('${{ steps.pkg.outputs.dir }}/pyproject.toml','rb'))['project']['version'])")
+          # Static pyproject projects carry [project].version; maturin
+          # packages (rhizaeon, trace50) declare dynamic version and the
+          # canonical string lives in native/Cargo.toml.
+          PKG_VERSION=$(python - "${{ steps.pkg.outputs.dir }}" <<'PY'
+          import sys, tomllib
+          d = sys.argv[1]
+          v = tomllib.load(open(f"{d}/pyproject.toml", "rb"))["project"].get("version")
+          if v is None:
+              v = tomllib.load(open(f"{d}/native/Cargo.toml", "rb"))["package"]["version"]
+          print(v)
+          PY
+          )
           if [ "$PKG_VERSION" != "${{ steps.pkg.outputs.tag_version }}" ]; then
-            echo "::error::Tag version '${{ steps.pkg.outputs.tag_version }}' does not match pyproject.toml version '$PKG_VERSION'"
+            echo "::error::Tag version '${{ steps.pkg.outputs.tag_version }}' does not match package version '$PKG_VERSION'"
             exit 1
           fi
 
@@ -73,10 +84,27 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
       - uses: PyO3/maturin-action@v1
         with:
           working-directory: ${{ needs.verify.outputs.dir }}
           args: --release --out dist
+      - name: Smoke-test the built wheel
+        shell: bash
+        run: |
+          python -m pip install "${{ needs.verify.outputs.dir }}"/dist/*.whl
+          cd "$RUNNER_TEMP"  # exercise the installed wheel, not the source tree
+          if [ "${{ needs.verify.outputs.dir }}" = "aeon-core" ]; then
+            # aeon-core ships no console script; importing the extension
+            # is the smoke check.
+            python -c "import aeon_core._native"
+          else
+            # Console-script name matches the package dir for rhizaeon
+            # and trace50; --version exits 0 without touching data files.
+            ${{ needs.verify.outputs.dir }} --version
+          fi
       - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
@@ -133,6 +161,15 @@ jobs:
           cd ${{ needs.verify.outputs.dir }}
           python -m build
           twine check dist/*
+      - name: Smoke-test the built wheel
+        run: |
+          # CPU torch keeps dep resolution small; the wheel's declared
+          # floors (incl. hyphaeon-core) are still resolved from PyPI, so
+          # this also catches a bad dependency pin before upload.
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install "${{ needs.verify.outputs.dir }}"/dist/*.whl
+          cd "$(mktemp -d)"  # exercise the installed wheel, not the source tree
+          ${{ needs.verify.outputs.dir }} --version
       - name: Upload to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:

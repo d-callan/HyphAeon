@@ -1,6 +1,6 @@
 [package]
 name = "rhizaeon-native"
-version = "0.1.0-beta.5"
+version = "0.1.0-beta.9"
 edition = "2021"
 publish = false
 workspace = "../../rust"
@@ -10,6 +10,7 @@ name = "rhizaeon_native"
 crate-type = ["cdylib"]
 
 [dependencies]
+aeon-cli-utils = { workspace = true }
 rhizaeon = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }

@@ -15,64 +15,13 @@
 //! `y + (doy - 0.5) / days_in_year`, a month is its middle, and a bare year is
 //! `y + 0.5`. A sequence whose date cannot be parsed is undated (`NaN`); it
 //! is never assigned a date it does not carry.
+//!
+//! The calendar math (`ymd_to_decimal`, `ym_to_decimal`, leap-year and
+//! month-length helpers) lives in `aeon_manifold::temporal` — this module
+//! keeps only the DANNO-specific parsing rules built on it.
 
-const MONTH_DAYS: [u32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-const MONTH_ABBR: [&str; 12] = [
-    "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
-];
-
-#[inline]
-fn is_leap(y: i64) -> bool {
-    y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
-}
-
-fn days_in_month(y: i64, m: u32) -> u32 {
-    if m == 2 && is_leap(y) {
-        29
-    } else {
-        MONTH_DAYS[(m - 1) as usize]
-    }
-}
-
-/// Days in the months before `m` (1-based) of year `y`.
-fn days_before_month(y: i64, m: u32) -> u32 {
-    let mut cum: u32 = MONTH_DAYS[..(m - 1) as usize].iter().sum();
-    if m > 2 && is_leap(y) {
-        cum += 1;
-    }
-    cum
-}
-
-fn year_len(y: i64) -> f64 {
-    if is_leap(y) {
-        366.0
-    } else {
-        365.0
-    }
-}
-
-/// Decimal year of the middle of calendar day `y-m-d`, or `None` if the date
-/// does not exist (`run_danno.ymd_to_decimal`).
-pub fn ymd_to_decimal(y: i64, m: u32, d: u32) -> Option<f64> {
-    if !(1..=12).contains(&m) {
-        return None;
-    }
-    if !(1..=days_in_month(y, m)).contains(&d) {
-        return None;
-    }
-    let doy = days_before_month(y, m) + d;
-    Some(y as f64 + (doy as f64 - 0.5) / year_len(y))
-}
-
-/// Decimal year of the middle of month `m` of year `y`
-/// (`fetch_dates.decimal_year(y, m)`), or `None` for an invalid month.
-pub fn ym_to_decimal(y: i64, m: u32) -> Option<f64> {
-    if !(1..=12).contains(&m) {
-        return None;
-    }
-    let mid = days_before_month(y, m) as f64 + days_in_month(y, m) as f64 / 2.0;
-    Some(y as f64 + mid / year_len(y))
-}
+use aeon_manifold::temporal::month_from_abbr;
+pub use aeon_manifold::temporal::{ym_to_decimal, ymd_to_decimal};
 
 fn all_digits(s: &str) -> bool {
     !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
@@ -85,17 +34,6 @@ fn is_19_20_year(s: &str) -> bool {
 
 fn is_19_20_year_bytes(b: &[u8]) -> bool {
     b.len() == 4 && b.iter().all(|c| c.is_ascii_digit()) && (b[..2] == *b"19" || b[..2] == *b"20")
-}
-
-fn month_from_abbr(s: &str) -> Option<u32> {
-    if s.len() != 3 || !s.bytes().all(|b| b.is_ascii_alphabetic()) {
-        return None;
-    }
-    let up = s.to_ascii_uppercase();
-    MONTH_ABBR
-        .iter()
-        .position(|&a| a == up)
-        .map(|i| i as u32 + 1)
 }
 
 /// Perez-Losada / DC header: `B.US.2013.DC1000_0131022_PR_RT.MF455515`.
