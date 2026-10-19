@@ -159,7 +159,10 @@ fn test_pvy_example1_empirical() {
         .iter()
         .find(|e| e.isolates == vec!["H"])
         .expect("Expected independent cassette event for H");
-    assert!(!ev_h.is_crossover, "H must be a cassette, not a single crossover");
+    assert!(
+        !ev_h.is_crossover,
+        "H must be a cassette, not a single crossover"
+    );
     assert!((7750..=7800).contains(&ev_h.u1) && (8190..=8240).contains(&ev_h.u2));
 
     // K cassette (~7849-8228, H=T, D=L, isolates=["K"] only)
@@ -173,4 +176,3 @@ fn test_pvy_example1_empirical() {
     assert_eq!(ev_k.donor_name, "L");
     assert!((7830..=7870).contains(&ev_k.u1) && (8210..=8250).contains(&ev_k.u2));
 }
-
