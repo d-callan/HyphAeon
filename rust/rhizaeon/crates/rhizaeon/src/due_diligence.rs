@@ -238,10 +238,6 @@ impl SequenceDueDiligence {
         let (donor_row_opt, donor_name) = if parental.is_ghost_donor {
             (None, "Ghost".to_string())
         } else if let Some(dg) = parental.donor_global_idx {
-            // Autapomorphic rate burst lineages cannot serve as Donor parental reference
-            if rate_burst_indices.contains(&dg) {
-                return None;
-            }
             // Co-recombinant sister taxa or candidate's own sister cannot serve as donor
             let d_cd = crate::landmarks::compute_pairwise_distance(aln, cand_idx, dg);
             let d_hd = crate::landmarks::compute_pairwise_distance(aln, home_global, dg);
@@ -255,18 +251,73 @@ impl SequenceDueDiligence {
 
         let mut u1 = u1;
         let mut u2 = u2;
-        let mut is_crossover = tract.is_crossover;
 
-        // Prefix/Suffix Home-Reversion Trimming (Parameter-Free 2x2 Fisher Split Test):
-        // When a coarse landmark tract `[u1, u2]` over-extends across a breakpoint into a flanking
-        // region where the candidate has already reverted to `Home` (`rc == rh != rd`), test whether
-        // splitting the interval at the global extremum of the cumulative informative score walk
-        // `S(u) = sum [I(R_u = D_u != H_u) - I(R_u = H_u != D_u)]` separates a Donor-dominant core
-        // from a Home-dominant prefix/suffix at the alignment's Bonferroni threshold `alpha = 0.05 / L`.
+        // Boundary Refinement via Exact 2x2 Fisher Contingency Splits:
+        // 1. Outward Donor-Carpet Extension: When a coarse landmark tract `[s0, e0)` stops inside
+        //    a contiguous Donor-dominant run (`rc == rd != rh`), extend `s0` leftward and/or `e0`
+        //    rightward to the peak of cumulative Donor excess `S(u) = sum [I(R_u = D_u != H_u) - I(R_u = H_u != D_u)]`
+        //    provided the walk never dips into a Home gap (`diff >= -2`) and the extension segment
+        //    forms a statistically significant 2x2 Fisher split against the remaining outer flank.
+        // 2. Inward Prefix/Suffix Home-Reversion Trimming: When `[s0, e0)` over-extends into a
+        //    flanking Home-dominant prefix or suffix (`rc == rh != rd`), trim at the global extremum
+        //    of `S(u)` when significant at the Bonferroni threshold `alpha_split = 0.05 / L`.
         let alpha_split = 0.05 / (l.max(1) as f64);
         if let Some(donor_row) = donor_row_opt {
             let s0 = u1 - 1;
-            let e0 = u2.min(l);
+            let mut e0 = u2.min(l);
+
+            // Step A1: Rightward contiguous Donor-carpet extension `[e0, u_ext_r]`
+            if e0 < l {
+                let mut r_d = 0usize;
+                let mut r_h = 0usize;
+                let mut max_r_diff = 0i64;
+                let mut best_r = None;
+                for u in e0..l {
+                    let rc = cand_row[u];
+                    let rh = home_row[u];
+                    let rd = donor_row[u];
+                    if rc > 0 && rh > 0 && rd > 0 && rh != rd {
+                        if rc == rd {
+                            r_d += 1;
+                        } else if rc == rh {
+                            r_h += 1;
+                        }
+                        let diff = (r_d as i64) - (r_h as i64);
+                        if diff < -2 {
+                            break;
+                        }
+                        if diff > 0 && diff >= max_r_diff {
+                            max_r_diff = diff;
+                            best_r = Some((u + 1, r_d, r_h));
+                        }
+                    }
+                }
+                if let Some((cand_e, d_ext, h_ext)) = best_r {
+                    if d_ext >= 6 && d_ext >= h_ext * 3 {
+                        let mut d_rem = 0usize;
+                        let mut h_rem = 0usize;
+                        for u in (0..s0).chain(cand_e..l) {
+                            let rc = cand_row[u];
+                            let rh = home_row[u];
+                            let rd = donor_row[u];
+                            if rc > 0 && rh > 0 && rd > 0 && rh != rd {
+                                if rc == rd {
+                                    d_rem += 1;
+                                } else if rc == rh {
+                                    h_rem += 1;
+                                }
+                            }
+                        }
+                        if h_rem > d_rem
+                            && self.fisher_exact_2x2(d_ext, h_ext, d_rem, h_rem) < self.alpha
+                        {
+                            e0 = cand_e;
+                        }
+                    }
+                }
+            }
+
+            // Step B: Inward Prefix/Suffix Home-Reversion Trimming
             if e0 > s0 + min_len {
                 let span_len = e0 - s0;
                 let mut cum_d = Vec::with_capacity(span_len);
@@ -296,16 +347,21 @@ impl SequenceDueDiligence {
                     }
                 }
 
-                // 1. Trailing 3' Home-reversion suffix `(u_max, e0)` when tract reaches 3' boundary or `h_acc >= d_acc`
+                // 1. Trailing 3' Home-reversion suffix `(u_max, e0)`
                 let mut e_trimmed = e0;
-                if (e0 == l || h_acc >= d_acc) && u_max + 1 < e0 && (u_max + 1 - s0) >= min_len {
+                if u_max + 1 < e0 && (u_max + 1 - s0) >= min_len {
                     let idx_max = u_max - s0;
                     let d_core = cum_d[idx_max];
                     let h_core = cum_h[idx_max];
                     let d_tail = d_acc - d_core;
                     let h_tail = h_acc - h_core;
+                    let allow_tail_trim = if e0 == l || h_acc >= d_acc {
+                        h_tail > d_tail
+                    } else {
+                        h_tail >= 8 && h_tail >= d_tail * 4
+                    };
                     if d_core > h_core
-                        && h_tail > d_tail
+                        && allow_tail_trim
                         && self.fisher_exact_2x2(d_core, h_core, d_tail, h_tail) < alpha_split
                     {
                         e_trimmed = u_max + 1;
@@ -343,11 +399,8 @@ impl SequenceDueDiligence {
                     }
                 }
 
-                if s_trimmed != s0 || e_trimmed != e0 {
-                    u1 = s_trimmed + 1;
-                    u2 = e_trimmed;
-                    is_crossover = (u1 == 1) || (u2 == l);
-                }
+                u1 = s_trimmed + 1;
+                u2 = e_trimmed;
             }
         }
 
@@ -369,6 +422,12 @@ impl SequenceDueDiligence {
         let mut mismatch_flank_hd = 0usize;
         let mut valid_flank = 0usize;
 
+        let mut valid_left_flank = 0usize;
+        let mut valid_right_flank = 0usize;
+        let mut info_left_flank = 0usize;
+        let mut info_right_flank = 0usize;
+        let mut s_triplet_priv = 0usize;
+
         let s_idx = u1 - 1;
         let e_idx = u2;
 
@@ -388,6 +447,9 @@ impl SequenceDueDiligence {
                         if rc != rh {
                             mismatch_tract_home += 1;
                         }
+                        if rc != rd && rc != rh {
+                            s_triplet_priv += 1;
+                        }
                         // Informative site where Home and Donor differ
                         if rh != rd {
                             mismatch_tract_hd += 1;
@@ -400,6 +462,11 @@ impl SequenceDueDiligence {
                         }
                     } else {
                         valid_flank += 1;
+                        if u < s_idx {
+                            valid_left_flank += 1;
+                        } else {
+                            valid_right_flank += 1;
+                        }
                         if rc != rd {
                             mismatch_flank_donor += 1;
                         }
@@ -408,6 +475,11 @@ impl SequenceDueDiligence {
                         }
                         if rh != rd {
                             mismatch_flank_hd += 1;
+                            if u < s_idx {
+                                info_left_flank += 1;
+                            } else {
+                                info_right_flank += 1;
+                            }
                             if rc == rd {
                                 s_donor_flank += 1;
                             }
@@ -428,6 +500,13 @@ impl SequenceDueDiligence {
                         }
                     } else {
                         valid_flank += 1;
+                        if u < s_idx {
+                            valid_left_flank += 1;
+                            info_left_flank += 1;
+                        } else {
+                            valid_right_flank += 1;
+                            info_right_flank += 1;
+                        }
                         if rc != rh {
                             mismatch_flank_home += 1;
                         } else {
@@ -437,6 +516,19 @@ impl SequenceDueDiligence {
                 }
             }
         }
+
+        // Effective Coverage Terminus Classification (Single Crossover vs. Cassette):
+        // If either the 5' flank (`0..s_idx`) or 3' flank (`e_idx..l`) reaches the alignment
+        // boundary or has zero informative sites (e.g. 5'- or 3'-truncated sequences), only one
+        // physical breakpoint is observable, so the tract is a Single Crossover (`is_crossover = true`).
+        // Conversely, if both flanks contain informative sites, both breakpoints are bounded inside
+        // the alignment (`is_crossover = false`).
+        let is_crossover = u1 == 1
+            || u2 == l
+            || valid_left_flank == 0
+            || valid_right_flank == 0
+            || info_left_flank == 0
+            || info_right_flank == 0;
 
         // Parental Collapse & Partition Polarity Invariant:
         // In a genuine recombination event, Home and Donor are distinct parental lineages inside the
@@ -472,6 +564,9 @@ impl SequenceDueDiligence {
                     || s_donor * 2 <= mismatch_tract_hd
                     || s_donor <= s_home_tract
                     || d_tract_cd >= d_tract_ch
+                    || (d_tract_cd > d_clade
+                        && mismatch_tract_donor > s_donor
+                        && s_triplet_priv * 2 >= s_donor)
                 {
                     return None;
                 }
@@ -483,6 +578,9 @@ impl SequenceDueDiligence {
                 // that at least one contiguous flanking segment adjacent to the tract prefers `Home`
                 // and forms a statistically significant 2x2 Fisher split (`p < alpha_split`) against the tract.
                 if valid_flank > 0 && (d_flank_cd <= d_flank_ch || s_donor_flank >= s_home_flank) {
+                    if s_home_flank < self.poisson_floor || s_home_flank * 2 <= s_donor_flank {
+                        return None;
+                    }
                     let mut l_h_acc = 0usize;
                     let mut l_d_acc = 0usize;
                     let mut best_l_diff = 0i64;
@@ -527,10 +625,12 @@ impl SequenceDueDiligence {
                         }
                     }
 
-                    let left_valid = best_l.0 > best_l.1
+                    let left_valid = best_l.0 >= self.poisson_floor
+                        && best_l.0 > best_l.1
                         && self.fisher_exact_2x2(s_donor, s_home_tract, best_l.1, best_l.0)
                             < alpha_split;
-                    let right_valid = best_r.0 > best_r.1
+                    let right_valid = best_r.0 >= self.poisson_floor
+                        && best_r.0 > best_r.1
                         && self.fisher_exact_2x2(s_donor, s_home_tract, best_r.1, best_r.0)
                             < alpha_split;
                     if !left_valid && !right_valid {
@@ -935,6 +1035,21 @@ impl SequenceDueDiligence {
         // lineage whose terminal mutations create a phantom mirror effect on innocent taxa.
         // This check requires N >= 4.
         if aln.num_taxa >= 4 {
+            let mut cand_sisters = vec![false; aln.num_taxa];
+            cand_sisters[cand_idx] = true;
+            for &p_idx in &lineage_peers {
+                if p_idx < aln.num_taxa {
+                    cand_sisters[p_idx] = true;
+                }
+            }
+            for t_idx in 0..aln.num_taxa {
+                if t_idx != cand_idx
+                    && crate::landmarks::compute_pairwise_distance(aln, cand_idx, t_idx) < d_sister
+                {
+                    cand_sisters[t_idx] = true;
+                }
+            }
+
             let mut n_priv_home_tract = 0usize;
             let mut valid_home_tract = 0usize;
             for u in s_idx..e_idx {
@@ -943,7 +1058,7 @@ impl SequenceDueDiligence {
                     valid_home_tract += 1;
                     let mut is_priv = true;
                     for t_idx in 0..aln.num_taxa {
-                        if t_idx != home_global && t_idx != cand_idx && aln.row(t_idx)[u] == rh {
+                        if t_idx != home_global && !cand_sisters[t_idx] && aln.row(t_idx)[u] == rh {
                             is_priv = false;
                             break;
                         }
@@ -963,7 +1078,9 @@ impl SequenceDueDiligence {
                         valid_home_flank += 1;
                         let mut is_priv = true;
                         for t_idx in 0..aln.num_taxa {
-                            if t_idx != home_global && t_idx != cand_idx && aln.row(t_idx)[u] == rh
+                            if t_idx != home_global
+                                && !cand_sisters[t_idx]
+                                && aln.row(t_idx)[u] == rh
                             {
                                 is_priv = false;
                                 break;
@@ -1009,7 +1126,7 @@ impl SequenceDueDiligence {
                             valid_donor_tract += 1;
                             let mut is_priv = true;
                             for t_idx in 0..aln.num_taxa {
-                                if t_idx != dg && t_idx != cand_idx && aln.row(t_idx)[u] == rd {
+                                if t_idx != dg && !cand_sisters[t_idx] && aln.row(t_idx)[u] == rd {
                                     is_priv = false;
                                     break;
                                 }
@@ -1029,7 +1146,10 @@ impl SequenceDueDiligence {
                                 valid_donor_flank += 1;
                                 let mut is_priv = true;
                                 for t_idx in 0..aln.num_taxa {
-                                    if t_idx != dg && t_idx != cand_idx && aln.row(t_idx)[u] == rd {
+                                    if t_idx != dg
+                                        && !cand_sisters[t_idx]
+                                        && aln.row(t_idx)[u] == rd
+                                    {
                                         is_priv = false;
                                         break;
                                     }

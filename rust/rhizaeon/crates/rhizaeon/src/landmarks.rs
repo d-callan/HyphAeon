@@ -36,6 +36,35 @@ pub fn jukes_cantor_distance(p: f64) -> f64 {
     -0.75 * (1.0 - (4.0 / 3.0) * clamped_p).ln()
 }
 
+/// Tests whether two sequences (i, j) are true phylogenetic sisters / co-recombinant twins
+/// rather than a (Recombinant, Pure Home) pair separated by a localized donor cassette.
+/// True sisters share the same mosaic history and only differ by independent terminal mutations,
+/// so their distances to any external taxon k != i, j satisfy |d(i, k) - d(j, k)| <= 0.45 * d(i, j).
+pub fn is_true_sister_pair(aln: &Alignment, i: usize, j: usize, d_sister: f64) -> bool {
+    if i == j {
+        return true;
+    }
+    let dij = compute_pairwise_distance(aln, i, j);
+    if dij >= d_sister {
+        return false;
+    }
+    if dij <= 1e-9 || aln.num_taxa <= 2 {
+        return true;
+    }
+    let mut max_asym = 0.0f64;
+    for k in 0..aln.num_taxa {
+        if k != i && k != j {
+            let dik = compute_pairwise_distance(aln, i, k);
+            let djk = compute_pairwise_distance(aln, j, k);
+            let asym = (dik - djk).abs();
+            if asym > max_asym {
+                max_asym = asym;
+            }
+        }
+    }
+    max_asym <= 0.45 * dij + 1e-6
+}
+
 /// Computes empirical scale-invariant sister and clade distance thresholds from the alignment.
 /// - d_sister: Poisson transmission drift floor, bounded below by 3 / L
 /// - d_clade: Spectral gap separating intra-lineage from inter-lineage distances (or 10th percentile fallback), bounded below by 5 / L
@@ -55,6 +84,7 @@ pub fn compute_scale_invariant_distance_thresholds(aln: &Alignment) -> (f64, f64
 
     let mut dists = Vec::with_capacity(total_pairs.min(max_samples) + 16);
     let mut count = 0usize;
+    let mut min_pair = (0usize, 0usize, f64::INFINITY);
     for i in 0..n {
         for j in (i + 1)..n {
             count += 1;
@@ -62,6 +92,9 @@ pub fn compute_scale_invariant_distance_thresholds(aln: &Alignment) -> (f64, f64
                 let d = compute_pairwise_distance(aln, i, j);
                 if d > 0.0 {
                     dists.push(d);
+                    if d < min_pair.2 {
+                        min_pair = (i, j, d);
+                    }
                 }
             }
         }
@@ -79,7 +112,33 @@ pub fn compute_scale_invariant_distance_thresholds(aln: &Alignment) -> (f64, f64
     let eff_clade_floor = (5.0 / l_f64).max(clade_floor.min(0.75 * d_p75));
 
     let idx_01 = (0.01 * (dists.len() as f64)).floor() as usize;
-    let d_sister = dists[idx_01.min(dists.len() - 1)].max(eff_sister_floor);
+    let d_p01 = dists[idx_01.min(dists.len() - 1)];
+    // On small cohorts (`idx_01 == 0`), `dists[0]` is the single closest pair `(min_i, min_j)`.
+    // Only include `dists[0]` inside the strict `< d_sister` threshold if `(min_i, min_j)` are
+    // true phylogenetic sisters sharing the same distance profile to all other taxa
+    // (`max_{k != i,j} |d(i,k) - d(j,k)| <= 0.35 * d(i,j)`), rather than `(Recombinant, Home)`.
+    let is_true_sister_min_pair = if idx_01 == 0 && d_p01 <= 0.45 * d_p75 && n >= 4 {
+        let (mi, mj, md) = min_pair;
+        let mut max_prof_diff = 0.0f64;
+        for k in 0..n {
+            if k != mi && k != mj {
+                let dik = compute_pairwise_distance(aln, mi, k);
+                let djk = compute_pairwise_distance(aln, mj, k);
+                let diff = (dik - djk).abs();
+                if diff > max_prof_diff {
+                    max_prof_diff = diff;
+                }
+            }
+        }
+        max_prof_diff <= 0.35 * md
+    } else {
+        false
+    };
+    let d_sister = if is_true_sister_min_pair {
+        (d_p01 + 1e-9).max(eff_sister_floor)
+    } else {
+        d_p01.max(eff_sister_floor)
+    };
 
     let idx_10 = (0.10 * (dists.len() as f64)).floor() as usize;
     let d_p10 = dists[idx_10.min(dists.len() - 1)]

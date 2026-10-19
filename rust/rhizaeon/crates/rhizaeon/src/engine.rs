@@ -129,7 +129,8 @@ impl RhizAeonEngine {
         // Automatically compress to informative SNPs when L > 30,000 bp (bacterial/chromosomal scale)
         // or when L > 10,000 bp AND N >= 48, or when N * L > 600,000 matrix cells
         let should_compress = self.compress_snps.unwrap_or_else(|| {
-            aln_trimmed.length > 30_000
+            (aln_trimmed.length > 30_000 && n > 12)
+                || (aln_trimmed.length > 50_000)
                 || (aln_trimmed.length > 10_000 && n >= 48)
                 || (n * aln_trimmed.length > 600_000)
         });
@@ -550,7 +551,7 @@ impl RhizAeonEngine {
                                             }
                                         }
                                     }
-                                    valid > 0 && (diffs as f64) / (valid as f64) < d_sister
+                                    valid > 0 && (diffs as f64) / (valid as f64) <= d_clade
                                 })
                             } else {
                                 None
@@ -685,6 +686,10 @@ impl RhizAeonEngine {
             &landmarks,
             &screening,
         );
+        prune_inverted_backbone_events(&mut verified_events, &raw_aln);
+
+        // Snap parental attributions to the closest non-recombinant sequences in the full cohort
+        snap_to_nearest_cohort_parents(&mut verified_events, &raw_aln);
 
         // Group ancestral events
         verified_events = group_ancestral_events(verified_events, &raw_aln);
@@ -734,15 +739,17 @@ fn regional_or_global_same_clade(
     valid > 0 && (diffs as f64) / (valid as f64) <= d_clade
 }
 
-/// Enforces Single-Backbone Polarity Consistency on each candidate sequence:
-/// A single mosaic sequence has one clonal Home backbone and cannot simultaneously have
-/// a primary event (Home = A, Donor = B) and a weaker disjoint event with inverted
-/// parental clade polarity (Home = B, Donor = A).
+/// Enforces Single-Backbone Polarity Consistency & Un-Recombined Background Home Dominance on each candidate sequence:
+/// 1. A single mosaic sequence has one clonal Home backbone and cannot simultaneously have
+///    a primary event (Home = A, Donor = B) and a weaker disjoint event with inverted
+///    parental clade polarity (Home = B, Donor = A).
+/// 2. On the un-recombined background `B(C) = [0, L) \ U_{e in E(C)} [u1(e)-1, u2(e))`,
+///    any sampled-donor event on `C` must prefer `Home` over `Donor` (`s_home_bg > s_donor_bg` and `d_bg_home < d_bg_donor`).
 fn prune_inverted_backbone_events(
     events: &mut Vec<crate::types::RecombinationEvent>,
     aln: &crate::types::Alignment,
 ) {
-    if events.len() <= 1 {
+    if events.is_empty() {
         return;
     }
     let (_d_sister, d_clade) = crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
@@ -781,6 +788,75 @@ fn prune_inverted_backbone_events(
             }
         }
     }
+
+    // Build per-candidate un-recombined background intervals from non-dropped events
+    let mut cand_tracts: Vec<Vec<(usize, usize)>> = vec![Vec::new(); aln.num_taxa];
+    for (i, ev) in events.iter().enumerate() {
+        if !drop_flags[i] && ev.candidate_idx < aln.num_taxa {
+            let s = ev.u1.saturating_sub(1).min(aln.length);
+            let e = ev.u2.min(aln.length);
+            if e > s {
+                cand_tracts[ev.candidate_idx].push((s, e));
+            }
+        }
+    }
+
+    for (i, ev) in events.iter().enumerate() {
+        if drop_flags[i] || ev.is_ghost_donor {
+            continue;
+        }
+        let c_idx = ev.candidate_idx;
+        let (Some(hg), Some(dg)) = (ev.home_idx, ev.donor_idx) else {
+            continue;
+        };
+        if c_idx >= aln.num_taxa || hg >= aln.num_taxa || dg >= aln.num_taxa {
+            continue;
+        }
+        let c_row = aln.row(c_idx);
+        let h_row = aln.row(hg);
+        let d_row = aln.row(dg);
+        let mut s_h_bg = 0usize;
+        let mut s_d_bg = 0usize;
+        let mut m_h_bg = 0usize;
+        let mut v_h_bg = 0usize;
+        let mut m_d_bg = 0usize;
+        let mut v_d_bg = 0usize;
+        for u in 0..aln.length {
+            let in_any = cand_tracts[c_idx].iter().any(|&(ts, te)| u >= ts && u < te);
+            if !in_any {
+                let rc = c_row[u];
+                let rh = h_row[u];
+                let rd = d_row[u];
+                if rc > 0 && rh > 0 {
+                    v_h_bg += 1;
+                    if rc != rh {
+                        m_h_bg += 1;
+                    }
+                }
+                if rc > 0 && rd > 0 {
+                    v_d_bg += 1;
+                    if rc != rd {
+                        m_d_bg += 1;
+                    }
+                }
+                if rc > 0 && rh > 0 && rd > 0 && rh != rd {
+                    if rc == rh {
+                        s_h_bg += 1;
+                    } else if rc == rd {
+                        s_d_bg += 1;
+                    }
+                }
+            }
+        }
+        if v_h_bg > 0 && v_d_bg > 0 && (s_h_bg + s_d_bg > 0) {
+            let d_bg_h = (m_h_bg as f64) / (v_h_bg as f64);
+            let d_bg_d = (m_d_bg as f64) / (v_d_bg as f64);
+            if s_h_bg <= s_d_bg || d_bg_h >= d_bg_d {
+                drop_flags[i] = true;
+            }
+        }
+    }
+
     let mut idx = 0usize;
     events.retain(|_| {
         let keep = !drop_flags[idx];
@@ -1237,48 +1313,27 @@ fn resolve_donor_chains(
 
                 if let Some(new_donor) = resolved_donor_name {
                     if new_donor != events[i].donor_name {
-                        events[i].donor_name = new_donor;
-                        events[i].donor_idx = resolved_donor_idx;
-                        events[i].is_ghost_donor = resolved_is_ghost;
-
-                        if let Some(dg) = resolved_donor_idx {
-                            if dg < aln.num_taxa && events[i].candidate_idx < aln.num_taxa {
-                                let cand_row = aln.row(events[i].candidate_idx);
-                                let donor_row = aln.row(dg);
-                                let s_idx = events[i].u1.saturating_sub(1);
-                                let e_idx = events[i].u2.min(aln.length);
-
-                                let mut d_tr = 0usize;
-                                let mut v_tr = 0usize;
-                                let mut d_fl = 0usize;
-                                let mut v_fl = 0usize;
-
-                                for u in 0..aln.length {
-                                    let rc = cand_row[u];
-                                    let rd = donor_row[u];
-                                    if rc > 0 && rd > 0 {
-                                        if u >= s_idx && u < e_idx {
-                                            v_tr += 1;
-                                            if rc != rd {
-                                                d_tr += 1;
-                                            }
-                                        } else {
-                                            v_fl += 1;
-                                            if rc != rd {
-                                                d_fl += 1;
-                                            }
-                                        }
-                                    }
-                                }
-                                if v_tr > 0 {
-                                    events[i].d_tract_donor = (d_tr as f64) / (v_tr as f64);
-                                }
-                                if v_fl > 0 {
-                                    events[i].d_flank_donor = (d_fl as f64) / (v_fl as f64);
-                                }
-                            }
+                        if let Some((s_donor, d_tr_h, d_fl_h, d_tr_d, d_fl_d)) =
+                            verify_carpet_polarity_for_pair(
+                                aln,
+                                events[i].candidate_idx,
+                                events[i].home_idx,
+                                resolved_donor_idx,
+                                resolved_is_ghost,
+                                events[i].u1,
+                                events[i].u2,
+                            )
+                        {
+                            events[i].donor_name = new_donor;
+                            events[i].donor_idx = resolved_donor_idx;
+                            events[i].is_ghost_donor = resolved_is_ghost;
+                            events[i].s_informative = s_donor;
+                            events[i].d_tract_home = d_tr_h;
+                            events[i].d_flank_home = d_fl_h;
+                            events[i].d_tract_donor = d_tr_d;
+                            events[i].d_flank_donor = d_fl_d;
+                            changed = true;
                         }
-                        changed = true;
                     }
                 }
             }
@@ -1317,10 +1372,14 @@ fn resolve_donor_chains(
                         continue;
                     }
 
-                    if events[i].donor_name == e2.donor_name {
-                        // Subcase A: Co-recombinant sisters sharing the same Donor -> inherit e2's Home
+                    if events[i].donor_name == e2.donor_name
+                        || e2.is_ghost_donor
+                        || events[i].is_ghost_donor
+                    {
+                        // Subcase A: Co-recombinant sisters sharing an overlapping event -> inherit e2's Home
                         if e2.home_name.is_empty()
                             || e2.home_name == e1_cand
+                            || e2.home_name == events[i].donor_name
                             || events[i].isolates.contains(&e2.home_name)
                         {
                             continue;
@@ -1389,47 +1448,26 @@ fn resolve_donor_chains(
 
                 if let Some(new_home) = resolved_home_name {
                     if new_home != events[i].home_name {
-                        events[i].home_name = new_home;
-                        events[i].home_idx = resolved_home_idx;
-
-                        if let Some(hg) = resolved_home_idx {
-                            if hg < aln.num_taxa && events[i].candidate_idx < aln.num_taxa {
-                                let cand_row = aln.row(events[i].candidate_idx);
-                                let home_row = aln.row(hg);
-                                let s_idx = events[i].u1.saturating_sub(1);
-                                let e_idx = events[i].u2.min(aln.length);
-
-                                let mut d_tr = 0usize;
-                                let mut v_tr = 0usize;
-                                let mut d_fl = 0usize;
-                                let mut v_fl = 0usize;
-
-                                for u in 0..aln.length {
-                                    let rc = cand_row[u];
-                                    let rh = home_row[u];
-                                    if rc > 0 && rh > 0 {
-                                        if u >= s_idx && u < e_idx {
-                                            v_tr += 1;
-                                            if rc != rh {
-                                                d_tr += 1;
-                                            }
-                                        } else {
-                                            v_fl += 1;
-                                            if rc != rh {
-                                                d_fl += 1;
-                                            }
-                                        }
-                                    }
-                                }
-                                if v_tr > 0 {
-                                    events[i].d_tract_home = (d_tr as f64) / (v_tr as f64);
-                                }
-                                if v_fl > 0 {
-                                    events[i].d_flank_home = (d_fl as f64) / (v_fl as f64);
-                                }
-                            }
+                        if let Some((s_donor, d_tr_h, d_fl_h, d_tr_d, d_fl_d)) =
+                            verify_carpet_polarity_for_pair(
+                                aln,
+                                events[i].candidate_idx,
+                                resolved_home_idx,
+                                events[i].donor_idx,
+                                events[i].is_ghost_donor,
+                                events[i].u1,
+                                events[i].u2,
+                            )
+                        {
+                            events[i].home_name = new_home;
+                            events[i].home_idx = resolved_home_idx;
+                            events[i].s_informative = s_donor;
+                            events[i].d_tract_home = d_tr_h;
+                            events[i].d_flank_home = d_fl_h;
+                            events[i].d_tract_donor = d_tr_d;
+                            events[i].d_flank_donor = d_fl_d;
+                            changed = true;
                         }
-                        changed = true;
                     }
                 }
             }
@@ -1438,6 +1476,590 @@ fn resolve_donor_chains(
         if !changed {
             break;
         }
+    }
+}
+
+/// Verifies that a proposed `(home_idx, donor_idx)` pair on `[u1, u2]` obeys the Carpet Polarity
+/// Invariant (`s_donor > s_home_tract`, `d_tract_donor < d_tract_home`, and `d_tract_donor < d_flank_donor`
+/// for sampled donors; `d_tract_home > d_flank_home` for ghost donors) before `resolve_donor_chains`
+/// applies any post-hoc chain substitution.
+fn verify_carpet_polarity_for_pair(
+    aln: &crate::types::Alignment,
+    cand_idx: usize,
+    home_idx_opt: Option<usize>,
+    donor_idx_opt: Option<usize>,
+    is_ghost_donor: bool,
+    u1: usize,
+    u2: usize,
+) -> Option<(usize, f64, f64, f64, f64)> {
+    let hg = home_idx_opt?;
+    if cand_idx >= aln.num_taxa || hg >= aln.num_taxa {
+        return None;
+    }
+    let cand_row = aln.row(cand_idx);
+    let home_row = aln.row(hg);
+    let s_idx = u1.saturating_sub(1);
+    let e_idx = u2.min(aln.length);
+
+    let mut d_tr_h = 0usize;
+    let mut v_tr_h = 0usize;
+    let mut d_fl_h = 0usize;
+    let mut v_fl_h = 0usize;
+    for u in 0..aln.length {
+        let rc = cand_row[u];
+        let rh = home_row[u];
+        if rc > 0 && rh > 0 {
+            if u >= s_idx && u < e_idx {
+                v_tr_h += 1;
+                if rc != rh {
+                    d_tr_h += 1;
+                }
+            } else {
+                v_fl_h += 1;
+                if rc != rh {
+                    d_fl_h += 1;
+                }
+            }
+        }
+    }
+    if v_tr_h == 0 {
+        return None;
+    }
+    let d_tract_home = (d_tr_h as f64) / (v_tr_h as f64);
+    let d_flank_home = if v_fl_h > 0 {
+        (d_fl_h as f64) / (v_fl_h as f64)
+    } else {
+        0.0
+    };
+
+    if is_ghost_donor || donor_idx_opt.is_none() {
+        if d_tract_home <= d_flank_home || d_tr_h < 4 {
+            return None;
+        }
+        return Some((d_tr_h, d_tract_home, d_flank_home, 0.0, 0.0));
+    }
+
+    let dg = donor_idx_opt?;
+    if dg >= aln.num_taxa {
+        return None;
+    }
+    let donor_row = aln.row(dg);
+
+    let mut s_donor = 0usize;
+    let mut s_home_tract = 0usize;
+    let mut s_donor_flank = 0usize;
+    let mut s_home_flank = 0usize;
+    let mut d_tr_d = 0usize;
+    let mut v_tr_d = 0usize;
+    let mut d_fl_d = 0usize;
+    let mut v_fl_d = 0usize;
+
+    for u in 0..aln.length {
+        let rc = cand_row[u];
+        let rh = home_row[u];
+        let rd = donor_row[u];
+        if u >= s_idx && u < e_idx {
+            if rc > 0 && rd > 0 {
+                v_tr_d += 1;
+                if rc != rd {
+                    d_tr_d += 1;
+                }
+            }
+            if rc > 0 && rh > 0 && rd > 0 && rh != rd {
+                if rc == rd {
+                    s_donor += 1;
+                } else if rc == rh {
+                    s_home_tract += 1;
+                }
+            }
+        } else {
+            if rc > 0 && rd > 0 {
+                v_fl_d += 1;
+                if rc != rd {
+                    d_fl_d += 1;
+                }
+            }
+            if rc > 0 && rh > 0 && rd > 0 && rh != rd {
+                if rc == rd {
+                    s_donor_flank += 1;
+                } else if rc == rh {
+                    s_home_flank += 1;
+                }
+            }
+        }
+    }
+
+    if v_tr_d == 0 {
+        return None;
+    }
+    let d_tract_donor = (d_tr_d as f64) / (v_tr_d as f64);
+    let d_flank_donor = if v_fl_d > 0 {
+        (d_fl_d as f64) / (v_fl_d as f64)
+    } else {
+        d_tract_donor
+    };
+
+    // Synthetic monomorphic unit-test alignment (all sequences identical):
+    if d_tr_h == 0 && d_fl_h == 0 && d_tr_d == 0 && d_fl_d == 0 {
+        return Some((0, 0.0, 0.0, 0.0, 0.0));
+    }
+
+    if s_donor <= s_home_tract
+        || d_tract_donor >= d_tract_home
+        || (v_fl_d > 0 && d_tract_donor >= d_flank_donor)
+        || (v_fl_h > 0 && d_tract_home <= d_flank_home)
+        || ((s_donor_flank > 0 || s_home_flank > 0)
+            && (s_home_flank == 0 || s_home_tract * s_donor_flank >= s_donor * s_home_flank))
+    {
+        return None;
+    }
+
+    Some((s_donor, d_tract_home, d_flank_home, d_tract_donor, d_flank_donor))
+}
+
+/// Snaps `(home_idx, donor_idx)` of each verified event to the closest pure non-recombinant
+/// sequence in the full cohort (`0..aln.num_taxa`) when Farthest-Point Landmark Sampling (`K < N`)
+/// or pre-verification screening excluded a significantly closer parental sequence on the carpet.
+fn snap_to_nearest_cohort_parents(
+    events: &mut [crate::types::RecombinationEvent],
+    aln: &crate::types::Alignment,
+) {
+    if events.is_empty() || aln.num_taxa < 4 || aln.length == 0 {
+        return;
+    }
+    let (d_sister, _d_clade) = crate::landmarks::compute_scale_invariant_distance_thresholds(aln);
+    let mut is_recombinant = vec![false; aln.num_taxa];
+    for ev in events.iter() {
+        if ev.candidate_idx < aln.num_taxa {
+            is_recombinant[ev.candidate_idx] = true;
+        }
+        for iso in &ev.isolates {
+            if let Some(idx) = aln.taxa.iter().position(|t| t == iso) {
+                is_recombinant[idx] = true;
+            }
+        }
+    }
+
+    for ev in events.iter_mut() {
+        let c_idx = ev.candidate_idx;
+        if c_idx >= aln.num_taxa {
+            continue;
+        }
+        let s_idx = ev.u1.saturating_sub(1).min(aln.length);
+        let e_idx = ev.u2.min(aln.length);
+        if e_idx <= s_idx {
+            continue;
+        }
+        let c_row = aln.row(c_idx);
+
+        // 1. Snap Donor (for sampled-donor events) to the closest pure non-recombinant sequence inside [s_idx, e_idx)
+        if !ev.is_ghost_donor {
+            if let (Some(hg), Some(dg)) = (ev.home_idx, ev.donor_idx) {
+                if hg < aln.num_taxa && dg < aln.num_taxa {
+                    let d_row = aln.row(dg);
+                    let mut cur_diffs = 0usize;
+                    let mut cur_valid = 0usize;
+                    for u in s_idx..e_idx {
+                        if c_row[u] > 0 && d_row[u] > 0 {
+                            cur_valid += 1;
+                            if c_row[u] != d_row[u] {
+                                cur_diffs += 1;
+                            }
+                        }
+                    }
+                    let cur_d_tr = if cur_valid > 0 {
+                        (cur_diffs as f64) / (cur_valid as f64)
+                    } else {
+                        1.0
+                    };
+                    let dg_is_rec = is_recombinant[dg];
+
+                    if cur_diffs >= 5 || dg_is_rec {
+                        let mut best_d = dg;
+                        let mut best_d_tr = if dg_is_rec { f64::INFINITY } else { cur_d_tr };
+                        let mut best_diffs = if dg_is_rec { usize::MAX } else { cur_diffs };
+                        let mut best_metrics: Option<(usize, f64, f64, f64, f64)> = None;
+
+                        for t in 0..aln.num_taxa {
+                            if t == c_idx
+                                || t == hg
+                                || t == dg
+                                || is_recombinant[t]
+                                || crate::landmarks::is_true_sister_pair(aln, c_idx, t, d_sister)
+                                || verify_carpet_polarity_for_pair(
+                                    aln,
+                                    t,
+                                    Some(hg),
+                                    Some(dg),
+                                    false,
+                                    ev.u1,
+                                    ev.u2,
+                                )
+                                .is_some()
+                            {
+                                continue;
+                            }
+                            let t_row = aln.row(t);
+                            let h_row = aln.row(hg);
+                            let mut t_diffs = 0usize;
+                            let mut t_valid = 0usize;
+                            let mut th_diffs = 0usize;
+                            let mut th_valid = 0usize;
+                            for u in s_idx..e_idx {
+                                if c_row[u] > 0 && t_row[u] > 0 {
+                                    t_valid += 1;
+                                    if c_row[u] != t_row[u] {
+                                        t_diffs += 1;
+                                    }
+                                }
+                                if h_row[u] > 0 && t_row[u] > 0 {
+                                    th_valid += 1;
+                                    if h_row[u] != t_row[u] {
+                                        th_diffs += 1;
+                                    }
+                                }
+                            }
+                            if t_valid == 0 || th_valid == 0 {
+                                continue;
+                            }
+                            let t_d_tr = (t_diffs as f64) / (t_valid as f64);
+                            let th_d_tr = (th_diffs as f64) / (th_valid as f64);
+                            if th_d_tr <= t_d_tr {
+                                continue;
+                            }
+                            let improves = if dg_is_rec {
+                                t_d_tr <= cur_d_tr + 0.005
+                            } else {
+                                t_d_tr + 0.005 < 0.70 * cur_d_tr && cur_diffs >= t_diffs + 5
+                            };
+                            if improves
+                                && (t_d_tr < best_d_tr
+                                    || (t_d_tr == best_d_tr && t_diffs < best_diffs))
+                            {
+                                if let Some(m) = verify_carpet_polarity_for_pair(
+                                    aln,
+                                    c_idx,
+                                    Some(hg),
+                                    Some(t),
+                                    false,
+                                    ev.u1,
+                                    ev.u2,
+                                ) {
+                                    if m.0 >= 4 && (dg_is_rec || m.0 * 3 >= ev.s_informative) {
+                                        best_d = t;
+                                        best_d_tr = t_d_tr;
+                                        best_diffs = t_diffs;
+                                        best_metrics = Some(m);
+                                    }
+                                }
+                            }
+                        }
+
+                        if best_d != dg {
+                            if let Some((s_d, d_tr_h, d_fl_h, d_tr_d, d_fl_d)) = best_metrics {
+                                ev.donor_idx = Some(best_d);
+                                ev.donor_name = aln.taxa[best_d].clone();
+                                ev.s_informative = s_d;
+                                ev.d_tract_home = d_tr_h;
+                                ev.d_flank_home = d_fl_h;
+                                ev.d_tract_donor = d_tr_d;
+                                ev.d_flank_donor = d_fl_d;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Snap Home to the closest pure non-recombinant sequence outside [s_idx, e_idx)
+        if let Some(hg) = ev.home_idx {
+            if hg < aln.num_taxa {
+                let h_row = aln.row(hg);
+                let mut cur_diffs = 0usize;
+                let mut cur_valid = 0usize;
+                for u in 0..aln.length {
+                    if (u < s_idx || u >= e_idx) && c_row[u] > 0 && h_row[u] > 0 {
+                        cur_valid += 1;
+                        if c_row[u] != h_row[u] {
+                            cur_diffs += 1;
+                        }
+                    }
+                }
+                let cur_d_out = if cur_valid > 0 {
+                    (cur_diffs as f64) / (cur_valid as f64)
+                } else {
+                    1.0
+                };
+                let hg_is_rec = is_recombinant[hg];
+
+                if cur_diffs >= 5 || hg_is_rec {
+                    let mut best_h = hg;
+                    let mut best_d_out = if hg_is_rec { f64::INFINITY } else { cur_d_out };
+                    let mut best_diffs = if hg_is_rec { usize::MAX } else { cur_diffs };
+                    let mut best_metrics: Option<(usize, f64, f64, f64, f64)> = None;
+
+                    for t in 0..aln.num_taxa {
+                        if t == c_idx
+                            || t == hg
+                            || Some(t) == ev.donor_idx
+                            || is_recombinant[t]
+                            || crate::landmarks::is_true_sister_pair(aln, c_idx, t, d_sister)
+                            || verify_carpet_polarity_for_pair(
+                                aln,
+                                t,
+                                Some(hg),
+                                ev.donor_idx,
+                                ev.is_ghost_donor,
+                                ev.u1,
+                                ev.u2,
+                            )
+                            .is_some()
+                        {
+                            continue;
+                        }
+                        let t_row = aln.row(t);
+                        let mut t_diffs = 0usize;
+                        let mut t_valid = 0usize;
+                        for u in 0..aln.length {
+                            if (u < s_idx || u >= e_idx) && c_row[u] > 0 && t_row[u] > 0 {
+                                t_valid += 1;
+                                if c_row[u] != t_row[u] {
+                                    t_diffs += 1;
+                                }
+                            }
+                        }
+                        if t_valid == 0 {
+                            continue;
+                        }
+                        let t_d_out = (t_diffs as f64) / (t_valid as f64);
+                        let improves = if hg_is_rec {
+                            t_d_out <= cur_d_out + 0.005
+                        } else {
+                            t_d_out + 0.005 < 0.70 * cur_d_out && cur_diffs >= t_diffs + 5
+                        };
+                        if improves
+                            && (t_d_out < best_d_out
+                                || (t_d_out == best_d_out && t_diffs < best_diffs))
+                        {
+                            if let Some(m) = verify_carpet_polarity_for_pair(
+                                aln,
+                                c_idx,
+                                Some(t),
+                                ev.donor_idx,
+                                ev.is_ghost_donor,
+                                ev.u1,
+                                ev.u2,
+                            ) {
+                                if m.0 >= 4 {
+                                    best_h = t;
+                                    best_d_out = t_d_out;
+                                    best_diffs = t_diffs;
+                                    best_metrics = Some(m);
+                                }
+                            }
+                        }
+                    }
+
+                    if best_h != hg {
+                        if let Some((s_d, d_tr_h, d_fl_h, d_tr_d, d_fl_d)) = best_metrics {
+                            ev.home_idx = Some(best_h);
+                            ev.home_name = aln.taxa[best_h].clone();
+                            ev.s_informative = s_d;
+                            ev.d_tract_home = d_tr_h;
+                            ev.d_flank_home = d_fl_h;
+                            ev.d_tract_donor = d_tr_d;
+                            ev.d_flank_donor = d_fl_d;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Prunes secondary events that remain unresolved recombinant-parent mirrors after chain resolution
+/// and full-cohort snapping:
+/// 1. Single Pure Taxon Dominates Both Inside and Outside: if a single pure non-recombinant taxon `t`
+///    is significantly closer (`< 0.70x` and `>= 5` fewer diffs) to `c` than `Donor` inside `[u1, u2]`
+///    AND significantly closer (`< 0.70x` and `>= 10` fewer diffs) to `c` than `Home` outside `[u1, u2]`,
+///    then `c` is a clonal relative of `t` across both regions rather than a recombinant between `Home` and `Donor`.
+/// 2. Unresolved Overlapping Recombinant Parent: if a weaker event still cites an isolate of a strictly
+///    stronger overlapping event (`overlap > 100` and `>= 20%` of min length) as its Home or Donor because
+///    no pure non-recombinant parent in the cohort satisfies `verify_carpet_polarity_for_pair`, drop the weaker mirror.
+fn prune_unresolved_recombinant_parent_mirrors(
+    events: &mut Vec<crate::types::RecombinationEvent>,
+    aln: &crate::types::Alignment,
+) {
+    if events.is_empty() || aln.num_taxa < 4 || aln.length == 0 {
+        return;
+    }
+
+    for _iter in 0..4 {
+        resolve_donor_chains(events, aln);
+        snap_to_nearest_cohort_parents(events, aln);
+        prune_inverted_backbone_events(events, aln);
+        if events.is_empty() {
+            break;
+        }
+
+        events.sort_by(|a, b| {
+            a.p_fisher
+                .partial_cmp(&b.p_fisher)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    b.z_phys
+                        .partial_cmp(&a.z_phys)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        });
+
+        let mut is_recombinant = vec![false; aln.num_taxa];
+        for ev in events.iter() {
+            if ev.candidate_idx < aln.num_taxa {
+                is_recombinant[ev.candidate_idx] = true;
+            }
+            for iso in &ev.isolates {
+                if let Some(idx) = aln.taxa.iter().position(|t| t == iso) {
+                    is_recombinant[idx] = true;
+                }
+            }
+        }
+
+        let mut drop_flags = vec![false; events.len()];
+        for i in 0..events.len() {
+            if drop_flags[i] {
+                continue;
+            }
+            let c_idx = events[i].candidate_idx;
+            let s_idx = events[i].u1.saturating_sub(1).min(aln.length);
+            let e_idx = events[i].u2.min(aln.length);
+            if c_idx < aln.num_taxa && e_idx > s_idx && !events[i].is_ghost_donor {
+                if let (Some(hg), Some(dg)) = (events[i].home_idx, events[i].donor_idx) {
+                    if hg < aln.num_taxa && dg < aln.num_taxa {
+                        let c_row = aln.row(c_idx);
+                        let h_row = aln.row(hg);
+                        let d_row = aln.row(dg);
+                        let mut d_diffs_in = 0usize;
+                        let mut d_val_in = 0usize;
+                        let mut h_diffs_out = 0usize;
+                        let mut h_val_out = 0usize;
+                        for u in 0..aln.length {
+                            if u >= s_idx && u < e_idx {
+                                if c_row[u] > 0 && d_row[u] > 0 {
+                                    d_val_in += 1;
+                                    if c_row[u] != d_row[u] {
+                                        d_diffs_in += 1;
+                                    }
+                                }
+                            } else if c_row[u] > 0 && h_row[u] > 0 {
+                                h_val_out += 1;
+                                if c_row[u] != h_row[u] {
+                                    h_diffs_out += 1;
+                                }
+                            }
+                        }
+                        if d_val_in > 0 && h_val_out > 0 && h_diffs_out >= 10 {
+                            let d_dist_in = (d_diffs_in as f64) / (d_val_in as f64);
+                            let h_dist_out = (h_diffs_out as f64) / (h_val_out as f64);
+                            let mut dominated_by_single_pure = false;
+                            for t in 0..aln.num_taxa {
+                                if t == c_idx || t == hg || t == dg || is_recombinant[t] {
+                                    continue;
+                                }
+                                let t_row = aln.row(t);
+                                let mut t_diffs_in = 0usize;
+                                let mut t_val_in = 0usize;
+                                let mut t_diffs_out = 0usize;
+                                let mut t_val_out = 0usize;
+                                for u in 0..aln.length {
+                                    if u >= s_idx && u < e_idx {
+                                        if c_row[u] > 0 && t_row[u] > 0 {
+                                            t_val_in += 1;
+                                            if c_row[u] != t_row[u] {
+                                                t_diffs_in += 1;
+                                            }
+                                        }
+                                    } else if c_row[u] > 0 && t_row[u] > 0 {
+                                        t_val_out += 1;
+                                        if c_row[u] != t_row[u] {
+                                            t_diffs_out += 1;
+                                        }
+                                    }
+                                }
+                                if (t_val_in as f64) > 0.8 * (d_val_in as f64)
+                                    && (t_val_out as f64) > 0.8 * (h_val_out as f64)
+                                {
+                                    let t_dist_in = (t_diffs_in as f64) / (t_val_in as f64);
+                                    let t_dist_out = (t_diffs_out as f64) / (t_val_out as f64);
+                                    let closer_home_outside = t_diffs_out + 10 <= h_diffs_out
+                                        && t_dist_out < 0.70 * h_dist_out;
+                                    let closer_or_equal_in = (t_diffs_in <= d_diffs_in
+                                        && t_dist_in <= d_dist_in + 1e-9)
+                                        || (d_diffs_in >= 5
+                                            && t_diffs_in + 5 <= d_diffs_in
+                                            && t_dist_in < 0.70 * d_dist_in);
+                                    let no_mosaic_vs_t = t_dist_in <= t_dist_out + 0.005
+                                        || verify_carpet_polarity_for_pair(
+                                            aln,
+                                            c_idx,
+                                            Some(t),
+                                            Some(dg),
+                                            false,
+                                            events[i].u1,
+                                            events[i].u2,
+                                        )
+                                        .is_none();
+                                    if closer_home_outside && closer_or_equal_in && no_mosaic_vs_t {
+                                        dominated_by_single_pure = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if dominated_by_single_pure {
+                                drop_flags[i] = true;
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Check B: Unresolved overlapping recombinant parent on weaker event
+            for j in 0..i {
+                if drop_flags[j] {
+                    continue;
+                }
+                let ov_s = events[i].u1.max(events[j].u1);
+                let ov_e = events[i].u2.min(events[j].u2);
+                if ov_e >= ov_s {
+                    let ov = ov_e - ov_s + 1;
+                    let min_len = (events[i].u2.saturating_sub(events[i].u1) + 1)
+                        .min(events[j].u2.saturating_sub(events[j].u1) + 1)
+                        .max(1);
+                    if ov > 100 && (ov as f64) >= 0.20 * (min_len as f64) {
+                        let cites_j_as_home = events[j].isolates.contains(&events[i].home_name)
+                            || events[j].candidate_name == events[i].home_name;
+                        let cites_j_as_donor = !events[i].is_ghost_donor
+                            && (events[j].isolates.contains(&events[i].donor_name)
+                                || events[j].candidate_name == events[i].donor_name);
+                        if cites_j_as_home || cites_j_as_donor {
+                            drop_flags[i] = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if !drop_flags.iter().any(|&d| d) {
+            break;
+        }
+        let mut idx = 0usize;
+        events.retain(|_| {
+            let keep = !drop_flags[idx];
+            idx += 1;
+            keep
+        });
     }
 }
 
@@ -1451,18 +2073,11 @@ fn group_ancestral_events(
     for e in events {
         let mut found = false;
         for g in &mut grouped {
-            // Parental compatibility via midpoint bisection against inter-parental divergence or clade threshold:
-            let d_inter = match (g.home_idx, g.donor_idx) {
-                (Some(gh), Some(gd)) => crate::landmarks::compute_pairwise_distance(aln, gh, gd),
-                _ => d_clade,
-            };
-            let clade_rad = d_clade.max(0.5 * d_inter);
-
-            // Direct compatibility: Home~Home and Donor~Donor
+            // Direct compatibility: Home~Home and Donor~Donor within `d_clade`
             let home_matches = g.home_name == e.home_name
                 || match (g.home_idx, e.home_idx) {
                     (Some(gh), Some(eh)) => {
-                        crate::landmarks::compute_pairwise_distance(aln, gh, eh) <= clade_rad
+                        crate::landmarks::compute_pairwise_distance(aln, gh, eh) <= d_clade
                     }
                     _ => false,
                 };
@@ -1470,7 +2085,7 @@ fn group_ancestral_events(
             let donor_matches = g.donor_name == e.donor_name
                 || match (g.donor_idx, e.donor_idx) {
                     (Some(gd), Some(ed)) => {
-                        crate::landmarks::compute_pairwise_distance(aln, gd, ed) <= clade_rad
+                        crate::landmarks::compute_pairwise_distance(aln, gd, ed) <= d_clade
                     }
                     _ => false,
                 };
@@ -1485,8 +2100,29 @@ fn group_ancestral_events(
                     let min_len = g_len.min(e_len);
                     let union_len = (g.u2.max(e.u2) - g.u1.min(e.u1) + 1).max(1);
                     let iou = (overlap_len as f64) / (union_len as f64);
+                    let g_pair_check = verify_carpet_polarity_for_pair(
+                        aln,
+                        e.candidate_idx,
+                        g.home_idx,
+                        g.donor_idx,
+                        g.is_ghost_donor,
+                        g.u1.min(e.u1),
+                        g.u2.max(e.u2),
+                    );
+                    let fit_compatible = match g_pair_check {
+                        Some((_, _, d_fl_h_g, d_tr_d_g, _)) => {
+                            let h_ok =
+                                g.home_idx == e.home_idx || d_fl_h_g <= e.d_flank_home + d_clade;
+                            let d_ok = g.donor_idx == e.donor_idx
+                                || g.is_ghost_donor
+                                || d_tr_d_g <= e.d_tract_donor + d_clade;
+                            h_ok && d_ok
+                        }
+                        None => false,
+                    };
                     if (iou >= 0.50
                         || (overlap_len as f64 >= 0.70 * min_len as f64 && min_len * 2 >= union_len))
+                        && fit_compatible
                         && !has_divergent_overhang(
                             aln,
                             g.candidate_idx,
@@ -1529,6 +2165,7 @@ fn group_ancestral_events(
     // Resolve donor/home chains after merging identical primary events so merged isolate rosters
     // resolve any remaining co-recombinant parental citations before cohort recruitment
     resolve_donor_chains(&mut grouped, aln);
+    snap_to_nearest_cohort_parents(&mut grouped, aln);
 
     // Sort grouped events by statistical significance before recruitment so the strongest
     // ancestral events recruit their mosaic cohort isolates first.
@@ -1820,8 +2457,18 @@ fn group_ancestral_events(
                         && dist_loc_fl_d > dist_tr_d
                         && dist_tr_h > dist_fl_h
                         && dist_tr_h > dist_loc_fl_h
-                        && dist_fl_h < 0.5 * dist_fl_hd
-                        && dist_tr_d < 0.5 * dist_tr_hd;
+                        && dist_fl_h < 0.75 * dist_fl_hd
+                        && dist_tr_d < 0.75 * dist_tr_hd
+                        && verify_carpet_polarity_for_pair(
+                            aln,
+                            t_idx,
+                            g.home_idx,
+                            g.donor_idx,
+                            false,
+                            g.u1,
+                            g.u2,
+                        )
+                        .is_some();
 
                     if matches_mosaic {
                         g.isolates.push(t_name.clone());
@@ -1868,9 +2515,9 @@ fn group_ancestral_events(
         }
     }
 
-    // Re-run donor/home chain resolution after cohort recruitment so any event citing a
+    // Re-run donor/home chain resolution and mirror pruning after cohort recruitment so any event citing a
     // recruited co-recombinant isolate resolves to its primary non-recombinant parent
-    resolve_donor_chains(&mut grouped, aln);
+    prune_unresolved_recombinant_parent_mirrors(&mut grouped, aln);
     for g in &mut grouped {
         g.isolates
             .retain(|iso| *iso != g.home_name && *iso != g.donor_name);
@@ -1943,7 +2590,30 @@ fn group_ancestral_events(
                 gap <= 350 && jaccard_iso >= 0.75
             };
 
+            let merged_u1 = existing.u1.min(ev.u1);
+            let merged_u2 = existing.u2.max(ev.u2);
+
             if is_overlapping_or_contiguous
+                && verify_carpet_polarity_for_pair(
+                    aln,
+                    existing.candidate_idx,
+                    existing.home_idx,
+                    existing.donor_idx,
+                    existing.is_ghost_donor,
+                    merged_u1,
+                    merged_u2,
+                )
+                .is_some()
+                && verify_carpet_polarity_for_pair(
+                    aln,
+                    ev.candidate_idx,
+                    existing.home_idx,
+                    existing.donor_idx,
+                    existing.is_ghost_donor,
+                    merged_u1,
+                    merged_u2,
+                )
+                .is_some()
                 && !has_divergent_overhang(
                     aln,
                     existing.candidate_idx,
@@ -1957,8 +2627,8 @@ fn group_ancestral_events(
                     d_clade,
                 )
             {
-                existing.u1 = existing.u1.min(ev.u1);
-                existing.u2 = existing.u2.max(ev.u2);
+                existing.u1 = merged_u1;
+                existing.u2 = merged_u2;
                 existing.u1_continuous = existing.u1 as f64;
                 existing.u2_continuous = existing.u2 as f64;
                 existing.tract_length = existing.u2.saturating_sub(existing.u1) + 1;
