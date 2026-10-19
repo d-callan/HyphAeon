@@ -396,7 +396,7 @@ dependencies = [
 
 [[package]]
 name = "rhizaeon"
-version = "0.1.0-beta.8"
+version = "0.1.0-beta.9"
 dependencies = [
  "aeon-manifold",
  "serde",
@@ -417,7 +417,7 @@ dependencies = [
 
 [[package]]
 name = "rhizaeon-tools"
-version = "0.1.0-beta.8"
+version = "0.1.0-beta.9"
 dependencies = [
  "clap",
  "rayon",
@@ -428,7 +428,7 @@ dependencies = [
 
 [[package]]
 name = "rhizaeon-wasm"
-version = "0.1.0-beta.8"
+version = "0.1.0-beta.9"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",

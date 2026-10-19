@@ -253,13 +253,13 @@ impl TrajectoryParentalResolver {
             .copied()
             .filter(|&ch| {
                 let l_idx = landmarks.indices[ch - 1];
-                crate::landmarks::compute_pairwise_distance(aln, candidate_idx, l_idx) >= d_sister
+                !crate::landmarks::is_true_sister_pair(aln, candidate_idx, l_idx, d_sister)
             })
             .collect();
 
         if !non_sister_channels.is_empty() {
             let h_idx = landmarks.indices[home_ch.saturating_sub(1)];
-            if crate::landmarks::compute_pairwise_distance(aln, candidate_idx, h_idx) < d_sister {
+            if crate::landmarks::is_true_sister_pair(aln, candidate_idx, h_idx, d_sister) {
                 let mut best_ns_home = non_sister_channels[0];
                 let mut best_ns_mean = -1.0f64;
                 for &ch in &non_sister_channels {
@@ -987,7 +987,8 @@ impl TrajectoryParentalResolver {
                     return false;
                 }
                 let l_idx = landmarks.indices[ch - 1];
-                crate::landmarks::compute_pairwise_distance(aln, candidate_idx, l_idx) >= d_sister
+                !candidate_indices.contains(&l_idx)
+                    || !crate::landmarks::is_true_sister_pair(aln, candidate_idx, l_idx, d_sister)
             })
             .collect();
         if home_candidates.is_empty() {

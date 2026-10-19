@@ -59,7 +59,7 @@ impl PhyloAttentionEngine {
                     mask_landmark[i * k + p] = true;
                 } else {
                     let d = crate::landmarks::compute_pairwise_distance(aln, i, l_global);
-                    if d < d_sister {
+                    if crate::landmarks::is_true_sister_pair(aln, i, l_global, d_sister) {
                         sister_landmarks.push(p);
                     } else {
                         ext_landmarks.push((p, l_global, d));
@@ -96,7 +96,9 @@ impl PhyloAttentionEngine {
                     for b_idx in (a_idx + 1)..ext_landmarks.len() {
                         let (_, l2, di2) = ext_landmarks[b_idx];
                         let d12 = crate::landmarks::compute_pairwise_distance(aln, l1, l2);
-                        if d12 > di1.max(di2) + 0.5 * d_sister && (di1 + di2) <= 1.15 * d12 {
+                        let is_geodesic_interior = (di1 + di2) <= 1.15 * d12
+                            || (di1.max(di2) <= 1.35 * di1.min(di2) && (di1 + di2) <= 1.65 * d12);
+                        if d12 > di1.max(di2) + 0.5 * d_sister && is_geodesic_interior {
                             let mut l2_size = 1usize;
                             for j in 0..n {
                                 if j != l2
