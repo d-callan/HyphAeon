@@ -1703,16 +1703,6 @@ fn snap_to_nearest_cohort_parents(
                                 || t == dg
                                 || is_recombinant[t]
                                 || crate::landmarks::is_true_sister_pair(aln, c_idx, t, d_sister)
-                                || verify_carpet_polarity_for_pair(
-                                    aln,
-                                    t,
-                                    Some(hg),
-                                    Some(dg),
-                                    false,
-                                    ev.u1,
-                                    ev.u2,
-                                )
-                                .is_some()
                             {
                                 continue;
                             }
@@ -1752,6 +1742,16 @@ fn snap_to_nearest_cohort_parents(
                             if improves
                                 && (t_d_tr < best_d_tr
                                     || (t_d_tr == best_d_tr && t_diffs < best_diffs))
+                                && verify_carpet_polarity_for_pair(
+                                    aln,
+                                    t,
+                                    Some(hg),
+                                    Some(dg),
+                                    false,
+                                    ev.u1,
+                                    ev.u2,
+                                )
+                                .is_none()
                             {
                                 if let Some(m) = verify_carpet_polarity_for_pair(
                                     aln,
@@ -1821,16 +1821,6 @@ fn snap_to_nearest_cohort_parents(
                             || Some(t) == ev.donor_idx
                             || is_recombinant[t]
                             || crate::landmarks::is_true_sister_pair(aln, c_idx, t, d_sister)
-                            || verify_carpet_polarity_for_pair(
-                                aln,
-                                t,
-                                Some(hg),
-                                ev.donor_idx,
-                                ev.is_ghost_donor,
-                                ev.u1,
-                                ev.u2,
-                            )
-                            .is_some()
                         {
                             continue;
                         }
@@ -1857,6 +1847,16 @@ fn snap_to_nearest_cohort_parents(
                         if improves
                             && (t_d_out < best_d_out
                                 || (t_d_out == best_d_out && t_diffs < best_diffs))
+                            && verify_carpet_polarity_for_pair(
+                                aln,
+                                t,
+                                Some(hg),
+                                ev.donor_idx,
+                                ev.is_ghost_donor,
+                                ev.u1,
+                                ev.u2,
+                            )
+                            .is_none()
                         {
                             if let Some(m) = verify_carpet_polarity_for_pair(
                                 aln,

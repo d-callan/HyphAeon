@@ -1674,20 +1674,31 @@ impl SequenceDueDiligence {
                                 < d_sister
                         });
 
+                    let e1_is_ghost_home_mirror = e2.is_ghost_donor
+                        && e1_cites_c2_as_home
+                        && !e1.is_ghost_donor
+                        && e1.d_tract_donor > d_clade
+                        && e1.d_tract_donor >= 0.75 * e1.d_flank_donor;
+                    let e2_is_ghost_home_mirror = e1.is_ghost_donor
+                        && e2_cites_c1_as_home
+                        && !e2.is_ghost_donor
+                        && e2.d_tract_donor > d_clade
+                        && e2.d_tract_donor >= 0.75 * e2.d_flank_donor;
+
                     let e1_has_ext_donor = e1.donor_idx.is_some()
                         && e1.donor_name != *c2_name
                         && !e1_donor_internal
-                        && !(e2.is_ghost_donor && e1_cites_c2_as_home);
+                        && !e1_is_ghost_home_mirror;
                     let e2_has_ext_donor = e2.donor_idx.is_some()
                         && e2.donor_name != *c1_name
                         && !e2_donor_internal
-                        && !(e1.is_ghost_donor && e2_cites_c1_as_home);
+                        && !e2_is_ghost_home_mirror;
 
-                    if e1_has_ext_donor && !e2_has_ext_donor {
-                        // e1 has authentic external donor, while e2's donor is its cyclic partner or internal leaf
+                    if e2_is_ghost_home_mirror || (e1_has_ext_donor && !e2_has_ext_donor) {
+                        // e1 has authentic external donor (or e2 is a stationary mirror of Ghost recombinant e1)
                         pruned[j] = true;
-                    } else if e2_has_ext_donor && !e1_has_ext_donor {
-                        // e2 has authentic external donor, while e1's donor is its cyclic partner or internal leaf
+                    } else if e1_is_ghost_home_mirror || (e2_has_ext_donor && !e1_has_ext_donor) {
+                        // e2 has authentic external donor (or e1 is a stationary mirror of Ghost recombinant e2)
                         pruned[i] = true;
                         break;
                     } else {
@@ -1839,10 +1850,18 @@ impl SequenceDueDiligence {
                             })
                     });
 
-                    let e1_has_ext_donor = e1.donor_idx.is_some() && !e1_donor_internal;
-                    let e2_has_ext_donor = e2.donor_idx.is_some() && !e2_donor_internal;
+                    let e2_is_ghost_home_mirror = e1.is_ghost_donor
+                        && e2_cites_e1_as_home
+                        && !e2.is_ghost_donor
+                        && e2.d_tract_donor > d_clade
+                        && e2.d_tract_donor >= 0.75 * e2.d_flank_donor;
 
-                    if e1_has_ext_donor && !e2_has_ext_donor {
+                    let e1_has_ext_donor = e1.donor_idx.is_some() && !e1_donor_internal;
+                    let e2_has_ext_donor = e2.donor_idx.is_some()
+                        && !e2_donor_internal
+                        && !e2_is_ghost_home_mirror;
+
+                    if e2_is_ghost_home_mirror || (e1_has_ext_donor && !e2_has_ext_donor) {
                         pruned[j] = true;
                     } else if e2_has_ext_donor && !e1_has_ext_donor {
                         pruned[i] = true;
