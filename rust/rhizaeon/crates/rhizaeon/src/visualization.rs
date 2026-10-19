@@ -960,6 +960,7 @@ pub fn generate_visualization_dossier(
 
     let metadata = VisualizationMetadata {
         title,
+        engine_version: env!("CARGO_PKG_VERSION").to_string(),
         alignment_length: l,
         taxa_count: n,
         query_id: focal_cand_name,
@@ -1326,6 +1327,7 @@ pub fn generate_standalone_html(dossier: &VisualizationDossier) -> Result<String
 
     let html = DASHBOARD_HTML_TEMPLATE
         .replace("__RHIZAEON_TITLE__", &dossier.metadata.title)
+        .replace("__RHIZAEON_VERSION__", &dossier.metadata.engine_version)
         .replace("__RHIZAEON_DATA_JSON__", &json_str);
 
     Ok(html)

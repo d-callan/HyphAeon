@@ -110,6 +110,42 @@ impl SequenceDueDiligence {
         p_sum.min(1.0).max(0.0)
     }
 
+    /// Static exact Fisher 2x2 one-sided test for external callers without a preallocated table
+    pub fn fisher_exact_2x2_static(a: usize, b: usize, c: usize, d: usize) -> f64 {
+        let n = a + b + c + d;
+        if n == 0 {
+            return 1.0;
+        }
+        fn lfact(k: usize) -> f64 {
+            if k <= 1 {
+                0.0
+            } else if k <= 32 {
+                (2..=k).map(|x| (x as f64).ln()).sum()
+            } else {
+                let kf = k as f64;
+                0.5 * (2.0 * std::f64::consts::PI * kf).ln()
+                    + kf * (kf / std::f64::consts::E).ln()
+                    + 1.0 / (12.0 * kf)
+            }
+        }
+        let r1 = a + b;
+        let r2 = c + d;
+        let c1 = a + c;
+        let c2 = b + d;
+        let log_denom = lfact(n);
+        let log_margins = lfact(r1) + lfact(r2) + lfact(c1) + lfact(c2);
+        let max_k = r1.min(c1);
+        let mut p_sum = 0.0;
+        for k in a..=max_k {
+            let cell_b = r1 - k;
+            let cell_c = c1 - k;
+            let cell_d = r2 - cell_c;
+            let log_cells = lfact(k) + lfact(cell_b) + lfact(cell_c) + lfact(cell_d);
+            p_sum += (log_margins - log_denom - log_cells).exp();
+        }
+        p_sum.min(1.0).max(0.0)
+    }
+
     /// Verifies physical tract via orthogonal sequence due diligence
     pub fn verify_tract(
         &self,
@@ -174,9 +210,8 @@ impl SequenceDueDiligence {
         }
 
         // Co-recombinant sisters (d < d_sister) cannot serve as Home parental reference for ghost donors.
-        // In addition, if `home_global` is in `candidate_indices`, it can only serve as Home reference
-        // when it is a clonal lineage peer (`d_ch <= d_clade`) from a multi-isolate cluster (`|L_C| >= 4`)
-        // that is NOT a co-recombinant sister (`d_ch >= d_sister`).
+        // In addition, if `home_global` is in `candidate_indices`, it must come from a multi-isolate
+        // cluster (`|L_C| >= 4`) and match the candidate on the un-recombined flank (`d_flank_home <= d_clade`).
         if parental.is_ghost_donor {
             let d_ch = crate::landmarks::compute_pairwise_distance(aln, cand_idx, home_global);
             if d_ch < d_sister {
@@ -218,6 +253,106 @@ impl SequenceDueDiligence {
             (None, "Ghost".to_string())
         };
 
+        let mut u1 = u1;
+        let mut u2 = u2;
+        let mut is_crossover = tract.is_crossover;
+
+        // Prefix/Suffix Home-Reversion Trimming (Parameter-Free 2x2 Fisher Split Test):
+        // When a coarse landmark tract `[u1, u2]` over-extends across a breakpoint into a flanking
+        // region where the candidate has already reverted to `Home` (`rc == rh != rd`), test whether
+        // splitting the interval at the global extremum of the cumulative informative score walk
+        // `S(u) = sum [I(R_u = D_u != H_u) - I(R_u = H_u != D_u)]` separates a Donor-dominant core
+        // from a Home-dominant prefix/suffix at the alignment's Bonferroni threshold `alpha = 0.05 / L`.
+        let alpha_split = 0.05 / (l.max(1) as f64);
+        if let Some(donor_row) = donor_row_opt {
+            let s0 = u1 - 1;
+            let e0 = u2.min(l);
+            if e0 > s0 + min_len {
+                let span_len = e0 - s0;
+                let mut cum_d = Vec::with_capacity(span_len);
+                let mut cum_h = Vec::with_capacity(span_len);
+                let mut d_acc = 0usize;
+                let mut h_acc = 0usize;
+                let mut max_diff = i64::MIN;
+                let mut u_max = e0 - 1;
+
+                for u in s0..e0 {
+                    let rc = cand_row[u];
+                    let rh = home_row[u];
+                    let rd = donor_row[u];
+                    if rc > 0 && rh > 0 && rd > 0 && rh != rd {
+                        if rc == rd {
+                            d_acc += 1;
+                        } else if rc == rh {
+                            h_acc += 1;
+                        }
+                    }
+                    cum_d.push(d_acc);
+                    cum_h.push(h_acc);
+                    let diff = (d_acc as i64) - (h_acc as i64);
+                    if diff >= max_diff {
+                        max_diff = diff;
+                        u_max = u;
+                    }
+                }
+
+                // 1. Trailing 3' Home-reversion suffix `(u_max, e0)` when tract reaches 3' boundary or `h_acc >= d_acc`
+                let mut e_trimmed = e0;
+                if (e0 == l || h_acc >= d_acc) && u_max + 1 < e0 && (u_max + 1 - s0) >= min_len {
+                    let idx_max = u_max - s0;
+                    let d_core = cum_d[idx_max];
+                    let h_core = cum_h[idx_max];
+                    let d_tail = d_acc - d_core;
+                    let h_tail = h_acc - h_core;
+                    if d_core > h_core
+                        && h_tail > d_tail
+                        && self.fisher_exact_2x2(d_core, h_core, d_tail, h_tail) < alpha_split
+                    {
+                        e_trimmed = u_max + 1;
+                    }
+                }
+
+                // 2. Leading 5' Home-reversion prefix `[s0, u_min]` when `h_acc >= d_acc` within `[s0, e_trimmed)`
+                let mut s_trimmed = s0;
+                let end_rel = e_trimmed - s0;
+                if end_rel > 0 && cum_h[end_rel - 1] >= cum_d[end_rel - 1] {
+                    let mut min_diff = 0i64;
+                    let mut u_min_rel = None;
+                    for idx in 0..end_rel {
+                        let diff = (cum_d[idx] as i64) - (cum_h[idx] as i64);
+                        if diff < min_diff {
+                            min_diff = diff;
+                            u_min_rel = Some(idx);
+                        }
+                    }
+                    if let Some(m_rel) = u_min_rel {
+                        let cand_s = s0 + m_rel + 1;
+                        if cand_s < e_trimmed && (e_trimmed - cand_s) >= min_len {
+                            let d_pref = cum_d[m_rel];
+                            let h_pref = cum_h[m_rel];
+                            let d_core = cum_d[end_rel - 1] - d_pref;
+                            let h_core = cum_h[end_rel - 1] - h_pref;
+                            if h_pref > d_pref
+                                && d_core > h_core
+                                && self.fisher_exact_2x2(d_core, h_core, d_pref, h_pref)
+                                    < alpha_split
+                            {
+                                s_trimmed = cand_s;
+                            }
+                        }
+                    }
+                }
+
+                if s_trimmed != s0 || e_trimmed != e0 {
+                    u1 = s_trimmed + 1;
+                    u2 = e_trimmed;
+                    is_crossover = (u1 == 1) || (u2 == l);
+                }
+            }
+        }
+
+        let tract_len = if u2 >= u1 { u2 - u1 + 1 } else { 0 };
+
         // Site counters
         let mut s_donor = 0usize;
         let mut s_home_tract = 0usize;
@@ -226,10 +361,12 @@ impl SequenceDueDiligence {
 
         let mut mismatch_tract_donor = 0usize;
         let mut mismatch_tract_home = 0usize;
+        let mut mismatch_tract_hd = 0usize;
         let mut valid_tract = 0usize;
 
         let mut mismatch_flank_donor = 0usize;
         let mut mismatch_flank_home = 0usize;
+        let mut mismatch_flank_hd = 0usize;
         let mut valid_flank = 0usize;
 
         let s_idx = u1 - 1;
@@ -253,6 +390,7 @@ impl SequenceDueDiligence {
                         }
                         // Informative site where Home and Donor differ
                         if rh != rd {
+                            mismatch_tract_hd += 1;
                             if rc == rd {
                                 s_donor += 1;
                             }
@@ -269,6 +407,7 @@ impl SequenceDueDiligence {
                             mismatch_flank_home += 1;
                         }
                         if rh != rd {
+                            mismatch_flank_hd += 1;
                             if rc == rd {
                                 s_donor_flank += 1;
                             }
@@ -299,6 +438,119 @@ impl SequenceDueDiligence {
             }
         }
 
+        // Parental Collapse & Partition Polarity Invariant:
+        // In a genuine recombination event, Home and Donor are distinct parental lineages inside the
+        // recombinant tract (`d_tract_hd > d_clade` and `d_tract_cd < d_tract_hd`), and Candidate must
+        // genuinely switch from Home on the adjacent flanks to Donor inside the tract (`s_donor > s_home_tract`,
+        // `s_donor * 2 > mismatch_tract_hd`, and `d_tract_cd < d_tract_ch`).
+        if let Some(donor_row) = donor_row_opt {
+            if valid_tract > 0 {
+                let d_tract_hd = (mismatch_tract_hd as f64) / (valid_tract as f64);
+                let d_tract_cd = (mismatch_tract_donor as f64) / (valid_tract as f64);
+                let d_tract_ch = (mismatch_tract_home as f64) / (valid_tract as f64);
+                let d_flank_hd = if valid_flank > 0 {
+                    (mismatch_flank_hd as f64) / (valid_flank as f64)
+                } else {
+                    d_tract_hd
+                };
+                let d_flank_ch = if valid_flank > 0 {
+                    (mismatch_flank_home as f64) / (valid_flank as f64)
+                } else {
+                    d_tract_ch
+                };
+                let d_flank_cd = if valid_flank > 0 {
+                    (mismatch_flank_donor as f64) / (valid_flank as f64)
+                } else {
+                    d_tract_cd
+                };
+                if (d_tract_hd <= d_clade
+                    && (d_tract_hd < 0.5 * d_flank_hd || d_tract_hd < 0.5 * d_tract_cd))
+                    || (d_tract_hd < 0.40 * d_flank_hd
+                        && d_tract_ch < 2.0 * d_flank_ch
+                        && (d_flank_hd - d_tract_hd > 2.0 * (d_tract_ch - d_flank_ch)))
+                    || d_tract_cd >= 0.90 * d_tract_hd
+                    || s_donor * 2 <= mismatch_tract_hd
+                    || s_donor <= s_home_tract
+                    || d_tract_cd >= d_tract_ch
+                {
+                    return None;
+                }
+
+                // If the pooled global flank prefers Donor over Home (`d_flank_cd <= d_flank_ch` or
+                // `s_donor_flank >= s_home_flank`, as can occur in a multi-event mosaic when another
+                // event occupies the opposite end of the genome), walk outward from `s_idx` (leftward)
+                // and `e_idx` (rightward) to the peak of cumulative Home excess `h - d` and require
+                // that at least one contiguous flanking segment adjacent to the tract prefers `Home`
+                // and forms a statistically significant 2x2 Fisher split (`p < alpha_split`) against the tract.
+                if valid_flank > 0 && (d_flank_cd <= d_flank_ch || s_donor_flank >= s_home_flank) {
+                    let mut l_h_acc = 0usize;
+                    let mut l_d_acc = 0usize;
+                    let mut best_l_diff = 0i64;
+                    let mut best_l = (0usize, 0usize);
+                    for u in (0..s_idx).rev() {
+                        let rc = cand_row[u];
+                        let rh = home_row[u];
+                        let rd = donor_row[u];
+                        if rc > 0 && rh > 0 && rd > 0 && rh != rd {
+                            if rc == rh {
+                                l_h_acc += 1;
+                            } else if rc == rd {
+                                l_d_acc += 1;
+                            }
+                            let diff = (l_h_acc as i64) - (l_d_acc as i64);
+                            if diff > best_l_diff {
+                                best_l_diff = diff;
+                                best_l = (l_h_acc, l_d_acc);
+                            }
+                        }
+                    }
+
+                    let mut r_h_acc = 0usize;
+                    let mut r_d_acc = 0usize;
+                    let mut best_r_diff = 0i64;
+                    let mut best_r = (0usize, 0usize);
+                    for u in e_idx..l {
+                        let rc = cand_row[u];
+                        let rh = home_row[u];
+                        let rd = donor_row[u];
+                        if rc > 0 && rh > 0 && rd > 0 && rh != rd {
+                            if rc == rh {
+                                r_h_acc += 1;
+                            } else if rc == rd {
+                                r_d_acc += 1;
+                            }
+                            let diff = (r_h_acc as i64) - (r_d_acc as i64);
+                            if diff > best_r_diff {
+                                best_r_diff = diff;
+                                best_r = (r_h_acc, r_d_acc);
+                            }
+                        }
+                    }
+
+                    let left_valid = best_l.0 > best_l.1
+                        && self.fisher_exact_2x2(s_donor, s_home_tract, best_l.1, best_l.0)
+                            < alpha_split;
+                    let right_valid = best_r.0 > best_r.1
+                        && self.fisher_exact_2x2(s_donor, s_home_tract, best_r.1, best_r.0)
+                            < alpha_split;
+                    if !left_valid && !right_valid {
+                        return None;
+                    }
+                }
+            }
+        }
+
+        if parental.is_ghost_donor && candidate_indices.contains(&home_global) {
+            let d_fl_h = if valid_flank > 0 {
+                (mismatch_flank_home as f64) / (valid_flank as f64)
+            } else {
+                1.0
+            };
+            if d_fl_h > d_clade {
+                return None;
+            }
+        }
+
         // Informative site floor check
         let eff_poisson_floor = if (s3 - 1.0).abs() < 1e-9 {
             self.poisson_floor
@@ -314,26 +566,16 @@ impl SequenceDueDiligence {
         // and its putative Home parent H (or Donor D) is a mosaic member of the same lineage cluster,
         // an inverted mirror artifact occurs if C actually carries the majority clonal consensus of L_C
         // inside [s_idx, e_idx] while H (or D) is the minority mosaic recombinant inside [s_idx, e_idx].
-        // A true recent recombinant departs from its lineage's majority inside the tract; a pure clonal
-        // strain remains close to its lineage's median/consensus inside the tract.
+        // A true recent recombinant departs from its flank-consistent lineage peers inside the tract; a
+        // pure clonal strain remains close to its flank-consistent lineage peers inside the tract.
         if aln.num_taxa >= 6 {
             if lineage_peers.len() >= 4 {
-                // Compute candidate's and Home's mean distance to lineage peers inside the tract
+                // Compute candidate's and Home's mean distance to all lineage peers inside the tract
                 let mut sum_tr_cand = 0.0f64;
                 let mut sum_tr_home = 0.0f64;
                 let mut peer_count = 0usize;
 
                 for &p_idx in &lineage_peers {
-                    // When non-candidate clonal peers exist in the cohort, evaluate the lineage consensus
-                    // over the clonal peers (or all peers if the entire lineage was screened as candidates),
-                    // preventing an expanded recombinant swarm from outvoting its true clonal Home parent.
-                    if candidate_indices.contains(&p_idx)
-                        && lineage_peers
-                            .iter()
-                            .any(|&q| !candidate_indices.contains(&q))
-                    {
-                        continue;
-                    }
                     let p_row = aln.row(p_idx);
                     let mut mc = 0usize;
                     let mut mh = 0usize;
@@ -364,25 +606,144 @@ impl SequenceDueDiligence {
                     let mean_tr_home = sum_tr_home / (peer_count as f64);
                     let d_ch =
                         crate::landmarks::compute_pairwise_distance(aln, cand_idx, home_global);
+                    let d_fl_h = if valid_flank > 0 {
+                        (mismatch_flank_home as f64) / (valid_flank as f64)
+                    } else {
+                        d_ch
+                    };
+
+                    // Compute left-flank and right-flank distance to Home for multi-way mosaics
+                    let min_arm_sites = 10usize.min(aln.length / 6).max(3);
+                    let mut m_left_h = 0usize;
+                    let mut v_left_h = 0usize;
+                    for u in 0..s_idx {
+                        let rc = cand_row[u];
+                        let rh = home_row[u];
+                        if rc > 0 && rh > 0 {
+                            v_left_h += 1;
+                            if rc != rh {
+                                m_left_h += 1;
+                            }
+                        }
+                    }
+                    let d_left_h = if v_left_h >= min_arm_sites {
+                        (m_left_h as f64) / (v_left_h as f64)
+                    } else {
+                        f64::INFINITY
+                    };
+
+                    let mut m_right_h = 0usize;
+                    let mut v_right_h = 0usize;
+                    for u in e_idx..aln.length {
+                        let rc = cand_row[u];
+                        let rh = home_row[u];
+                        if rc > 0 && rh > 0 {
+                            v_right_h += 1;
+                            if rc != rh {
+                                m_right_h += 1;
+                            }
+                        }
+                    }
+                    let d_right_h = if v_right_h >= min_arm_sites {
+                        (m_right_h as f64) / (v_right_h as f64)
+                    } else {
+                        f64::INFINITY
+                    };
 
                     // 1. Home Clade Membership Invariant:
                     // When a candidate belongs to a multi-isolate lineage cluster (|L_C| >= 4 at d <= d_clade)
-                    // in a pervasive-recombination cohort (where all taxa are candidates so every lineage
-                    // cluster has a medoid landmark in the pool), its authentic Home backbone parent must
-                    // belong to its own lineage cluster (d_ch <= d_clade), preventing foreign-clade Home
-                    // assignments (e.g. Home=pop2.4 for pop3.21) while allowing epidemic mosaic swarms
-                    // (whose cluster was excluded from the clonal backbone pool) to attach to their
-                    // ancestral Home clade.
+                    // in a pervasive-recombination cohort, its authentic Home backbone parent must match the
+                    // candidate (<= d_clade) either globally, across the un-scrubbed flank, or across at least
+                    // one flanking arm (left or right). This blocks pure parental clades (P1, P2, Surr) from
+                    // citing foreign clades as Home while preserving multi-way crossovers and nested cassettes.
                     let all_screened_as_candidates =
                         candidate_indices.len() + rate_burst_indices.len() >= aln.num_taxa;
-                    if all_screened_as_candidates && d_ch > d_clade {
+                    if all_screened_as_candidates
+                        && d_ch > d_clade
+                        && d_fl_h > d_clade
+                        && d_left_h > d_clade
+                        && d_right_h > d_clade
+                    {
                         return None;
                     }
 
                     // 2. Inverted Home Mirror: Home is in Candidate's lineage cluster, and inside the tract
-                    // Candidate is closer to the lineage cluster consensus than Home is (i.e. Home is the mosaic outlier!)
-                    if d_ch <= d_clade && mean_tr_cand + d_sister < mean_tr_home {
-                        return None;
+                    // Candidate is closer to the lineage cluster consensus than Home is (i.e. Home is the mosaic outlier!).
+                    // Note: When Candidate genuinely converges to a sampled external Donor (`d_fl_d > d_clade`,
+                    // `d_tr_hd > d_clade`, `d_tr_d < 0.25 * d_fl_d`) and `mean_tr_cand > d_sister`, `mean_tr_cand < mean_tr_home`
+                    // can occur simply because >= 50% of `lineage_peers` are co-recombinants sharing the ancestral event.
+                    // In that case, it is only an Inverted Home Mirror if `Home` itself jumped into an external clade
+                    // or lost all clade support in the tract.
+                    if d_ch <= d_clade
+                        && (mean_tr_cand + d_sister < mean_tr_home
+                            || (mean_tr_home >= 1.4 * mean_tr_cand && mean_tr_home > d_sister))
+                    {
+                        let d_tr_d = if valid_tract > 0 {
+                            (mismatch_tract_donor as f64) / (valid_tract as f64)
+                        } else {
+                            1.0
+                        };
+                        let d_fl_d = if valid_flank > 0 {
+                            (mismatch_flank_donor as f64) / (valid_flank as f64)
+                        } else {
+                            0.0
+                        };
+                        let d_tr_hd = if valid_tract > 0 {
+                            (mismatch_tract_hd as f64) / (valid_tract as f64)
+                        } else {
+                            0.0
+                        };
+                        let cand_has_ext_donor_jump = donor_row_opt.is_some()
+                            && d_fl_d > d_clade
+                            && d_tr_hd > d_clade
+                            && d_tr_d <= d_clade
+                            && d_tr_d < 0.25 * d_fl_d
+                            && mean_tr_cand > d_sister;
+
+                        let is_inverted_home_mirror = if cand_has_ext_donor_jump {
+                            let mut home_jumped_ext = false;
+                            let mut home_clade_support = 0usize;
+                            for x_idx in 0..aln.num_taxa {
+                                if x_idx != home_global && x_idx != cand_idx {
+                                    let d_glob_hx = crate::landmarks::compute_pairwise_distance(
+                                        aln,
+                                        home_global,
+                                        x_idx,
+                                    );
+                                    let x_row = aln.row(x_idx);
+                                    let mut m_hx = 0usize;
+                                    let mut v_hx = 0usize;
+                                    for u in s_idx..e_idx {
+                                        let rh = home_row[u];
+                                        let rx = x_row[u];
+                                        if rh > 0 && rx > 0 {
+                                            v_hx += 1;
+                                            if rh != rx {
+                                                m_hx += 1;
+                                            }
+                                        }
+                                    }
+                                    if v_hx > 0 {
+                                        let d_tr_hx = (m_hx as f64) / (v_hx as f64);
+                                        if d_glob_hx > d_clade {
+                                            if d_tr_hx <= d_clade && d_tr_hx < 0.5 * d_glob_hx {
+                                                home_jumped_ext = true;
+                                                break;
+                                            }
+                                        } else if d_tr_hx <= d_clade {
+                                            home_clade_support += 1;
+                                        }
+                                    }
+                                }
+                            }
+                            home_jumped_ext || home_clade_support == 0
+                        } else {
+                            true
+                        };
+
+                        if is_inverted_home_mirror {
+                            return None;
+                        }
                     }
 
                     // 3. Intra-lineage Donor Mirror: Donor is in Candidate's own lineage cluster (d_cd <= d_clade),
@@ -390,18 +751,20 @@ impl SequenceDueDiligence {
                     if let Some(dg) = parental.donor_global_idx {
                         let has_external_clade = lineage_peers.len() < aln.num_taxa;
                         let d_cd = crate::landmarks::compute_pairwise_distance(aln, cand_idx, dg);
-                        let d_hd =
-                            crate::landmarks::compute_pairwise_distance(aln, home_global, dg);
-                        if has_external_clade && d_cd <= d_clade && d_hd <= d_clade {
+                        if has_external_clade && d_cd <= d_clade {
                             return None;
                         }
                     } else if parental.is_ghost_donor {
-                        // 4. Ghost Donor Authenticity: An event is only an unsampled Ghost donor if NO external
-                        // contemporary landmark matches the candidate inside the tract significantly better than Home does,
-                        // or explains >= 50% of the substitutions separating the candidate from Home inside the tract
-                        // while also matching the candidate strictly better than Home does inside the tract.
+                        // 4. Ghost Donor Authenticity & Ghost-Mirror Polarity Test:
+                        // (a) An event is only an unsampled Ghost donor if NO external contemporary landmark
+                        //     matches the candidate inside the tract significantly better than Home does.
+                        // (b) Conversely, if Home (`home_row`) matches an external landmark `l_idx` inside the
+                        //     tract much closer than the candidate does (`d_tr_home_l <= d_clade` or
+                        //     `< 0.5 * d_tr`), then Home is the mosaic recombinant that jumped into `l_idx`
+                        //     and Candidate's Ghost call is an inverted parental mirror!
                         let mut best_ext_tr_d = f64::INFINITY;
                         let mut max_ext_match_frac = 0.0f64;
+                        let mut home_matches_external_in_tract = false;
                         for &l_idx in &_landmarks.indices {
                             if l_idx != cand_idx
                                 && crate::landmarks::compute_pairwise_distance(aln, cand_idx, l_idx)
@@ -410,6 +773,8 @@ impl SequenceDueDiligence {
                                 let l_row = aln.row(l_idx);
                                 let mut m = 0usize;
                                 let mut v = 0usize;
+                                let mut m_hl = 0usize;
+                                let mut v_hl = 0usize;
                                 let mut m_diff = 0usize;
                                 let mut v_diff = 0usize;
                                 for u in s_idx..e_idx {
@@ -428,12 +793,34 @@ impl SequenceDueDiligence {
                                             }
                                         }
                                     }
+                                    if rh > 0 && rl > 0 {
+                                        v_hl += 1;
+                                        if rh != rl {
+                                            m_hl += 1;
+                                        }
+                                    }
                                 }
                                 let d_tr = if v > 0 {
                                     (m as f64) / (v as f64)
                                 } else {
                                     f64::INFINITY
                                 };
+                                let d_tr_hl = if v_hl > 0 {
+                                    (m_hl as f64) / (v_hl as f64)
+                                } else {
+                                    f64::INFINITY
+                                };
+                                let d_global_hl = crate::landmarks::compute_pairwise_distance(
+                                    aln,
+                                    home_global,
+                                    l_idx,
+                                );
+                                if d_global_hl > d_clade
+                                    && (d_tr_hl <= d_clade
+                                        || (d_tr_hl < 0.5 * d_tr && d_tr_hl < 0.5 * d_global_hl))
+                                {
+                                    home_matches_external_in_tract = true;
+                                }
                                 if d_tr < best_ext_tr_d {
                                     best_ext_tr_d = d_tr;
                                 }
@@ -455,7 +842,10 @@ impl SequenceDueDiligence {
                         } else {
                             1.0
                         };
-                        if best_ext_tr_d < 0.5 * d_tr_h || max_ext_match_frac >= 0.50 {
+                        if home_matches_external_in_tract
+                            || best_ext_tr_d < 0.5 * d_tr_h
+                            || max_ext_match_frac >= 0.50
+                        {
                             return None;
                         }
                     }
@@ -967,11 +1357,11 @@ impl SequenceDueDiligence {
             donor_idx: parental.donor_global_idx,
             donor_name,
             is_ghost_donor: parental.is_ghost_donor,
-            is_crossover: tract.is_crossover,
+            is_crossover,
             u1,
             u2,
-            u1_continuous: tract.u1_continuous,
-            u2_continuous: tract.u2_continuous,
+            u1_continuous: u1 as f64,
+            u2_continuous: u2 as f64,
             tract_length: tract_len,
             s_informative: s_donor,
             p_fisher,

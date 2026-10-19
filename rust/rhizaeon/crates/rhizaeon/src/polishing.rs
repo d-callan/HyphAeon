@@ -198,9 +198,10 @@ impl CumulativeTrajectoryPolisher {
                     kept_at_scale.push((s_d, e_d, sc));
                 }
             }
-            // In long full-length viral genomes (l > 6000), take the single dominant window per scale;
-            // in standard or SNP-compressed alignments, allow multiple non-overlapping cassettes per scale.
-            let max_per_scale = if self.compression_ratio < 0.999 || l <= 6000 {
+            // In long alignments with >6,000 informative sites (e.g. full-length or high-density viral genomes),
+            // take the single dominant window per scale; in standard (l <= 6000) or chromosomal SNP-compressed
+            // alignments (compression_ratio < 0.05), allow multiple non-overlapping cassettes per scale.
+            let max_per_scale = if self.compression_ratio < 0.05 || l <= 6000 {
                 kept_at_scale.len()
             } else {
                 1
@@ -210,9 +211,9 @@ impl CumulativeTrajectoryPolisher {
             }
         }
 
-        // When scanning long full-length viral genomes (l > 6000) with many windows, apply cross-scale NMS
+        // When scanning long alignments (l > 6000) with high site density, apply cross-scale NMS
         // so concentric scales (30..800) over a single cassette do not fragment it.
-        if l > 6000 && self.compression_ratio >= 0.999 && candidates.len() > 4 {
+        if l > 6000 && self.compression_ratio >= 0.05 && candidates.len() > 4 {
             candidates.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
             let mut final_hits: Vec<(usize, usize)> = Vec::new();
             for (s_d, e_d, _) in candidates {
@@ -402,8 +403,13 @@ impl CumulativeTrajectoryPolisher {
         let mut donor_segments: Vec<(usize, usize)> = Vec::new();
         for (s, e) in raw_donor_segments {
             if let Some(last) = donor_segments.last_mut() {
-                let gap = s.saturating_sub(last.1 + 1);
-                if gap <= max_gap {
+                let gap_slice = if s > last.1 + 1 {
+                    &x[last.1..(s - 1)]
+                } else {
+                    &[]
+                };
+                let valid_gap = gap_slice.iter().filter(|&&v| v.abs() > 1e-12).count();
+                if valid_gap <= max_gap {
                     let combined_s = last.0;
                     let combined_e = e;
                     let comb_len = (combined_e - combined_s + 1) as f64;
