@@ -396,7 +396,7 @@ dependencies = [
 
 [[package]]
 name = "rhizaeon"
-version = "0.1.0-beta.9"
+version = "0.1.0"
 dependencies = [
  "aeon-manifold",
  "serde",
@@ -405,7 +405,7 @@ dependencies = [
 
 [[package]]
 name = "rhizaeon-native"
-version = "0.1.0-beta.9"
+version = "0.1.0"
 dependencies = [
  "aeon-cli-utils",
  "clap",
@@ -417,7 +417,7 @@ dependencies = [
 
 [[package]]
 name = "rhizaeon-tools"
-version = "0.1.0-beta.9"
+version = "0.1.0"
 dependencies = [
  "aeon-cli-utils",
  "clap",
@@ -429,7 +429,7 @@ dependencies = [
 
 [[package]]
 name = "rhizaeon-wasm"
-version = "0.1.0-beta.9"
+version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
@@ -542,7 +542,7 @@ checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 
 [[package]]
 name = "trace50"
-version = "5.0.0-beta.1"
+version = "5.0.0"
 dependencies = [
  "aeon-autoclock",
  "aeon-manifold",
@@ -552,7 +552,7 @@ dependencies = [
 
 [[package]]
 name = "trace50-native"
-version = "5.0.0-beta.1"
+version = "5.0.0"
 dependencies = [
  "aeon-cli-utils",
  "clap",
@@ -563,7 +563,7 @@ dependencies = [
 
 [[package]]
 name = "trace50-wasm"
-version = "5.0.0-beta.1"
+version = "5.0.0"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",

@@ -26,7 +26,7 @@ jobs:
         run: pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Install aeon-core and dev dependencies
-        run: pip install -e aeon-core/[dev,tn93]
+        run: pip install -e aeon-core/[dev]
 
       - name: Run aeon-core tests
         run: python -m pytest aeon-core/tests/ -v
@@ -50,7 +50,7 @@ jobs:
         run: pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Install aeon-core, hyphaeon and dev dependencies
-        run: pip install -e aeon-core/ -e hyphaeon/[dev,tn93]
+        run: pip install -e aeon-core/ -e hyphaeon/[dev]
 
       - name: Run hyphaeon tests
         run: python -m pytest hyphaeon/tests/ -v
@@ -74,7 +74,7 @@ jobs:
         run: pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Install aeon-core, chronaeon and dev dependencies
-        run: pip install -e aeon-core/ -e chronaeon/[dev,tn93]
+        run: pip install -e aeon-core/ -e chronaeon/[dev]
 
       - name: Run chronaeon tests
         run: python -m pytest chronaeon/tests/ -v
