@@ -1,4 +1,6 @@
 """Smoke test: verify all chronaeon submodules import cleanly."""
+import importlib.metadata
+
 import chronaeon
 from chronaeon.dating import run_mrca_dating, run_ols_dating
 from chronaeon.autoclock import AutoClockDeconvolution, run_hierarchical_autoclock
@@ -10,7 +12,7 @@ from chronaeon.alignment import ReferenceCodonAligner
 
 
 def test_version():
-    assert chronaeon.__version__ == "0.2.0"
+    assert chronaeon.__version__ == importlib.metadata.version("chronaeon")
 
 
 def test_all_imports():

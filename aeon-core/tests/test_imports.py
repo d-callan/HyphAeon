@@ -1,4 +1,6 @@
 """Smoke test: verify all aeon_core submodules import cleanly."""
+import importlib.metadata
+
 import aeon_core
 from aeon_core.model import PhyloAxialTransformer, BustedMultiTaskHead
 from aeon_core.weights import resolve_weights_path, load_model_config
@@ -12,7 +14,7 @@ from aeon_core._progress import ChunkProgress
 
 
 def test_version():
-    assert aeon_core.__version__ == "0.2.0"
+    assert aeon_core.__version__ == importlib.metadata.version("hyphaeon-core")
 
 
 def test_all_imports():

@@ -1,4 +1,6 @@
 """Smoke test: verify all hyphaeon submodules import cleanly."""
+import importlib.metadata
+
 import hyphaeon
 from hyphaeon.phenotype import run_phenotype_association
 from hyphaeon.epistasis import run_epistasis_analysis
@@ -13,7 +15,7 @@ from hyphaeon.temporal import parse_temporal_metadata, infer_root_sequence
 
 
 def test_version():
-    assert hyphaeon.__version__ == "0.3.0"
+    assert hyphaeon.__version__ == importlib.metadata.version("hyphaeon")
 
 
 def test_all_imports():
