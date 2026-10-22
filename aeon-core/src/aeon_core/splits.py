@@ -15,6 +15,7 @@ import torch
 
 
 from .inference import compute_live_adaptive_chunk_sizes
+from .model import DEFAULT_MAX_MEMORY_MB, _attn_row_chunk, tree_cache_layer_bias
 
 
 def extract_cross_taxa_attentions_and_embeddings(
@@ -51,7 +52,6 @@ def extract_cross_taxa_attentions_and_embeddings(
     num_nodes = num_species + 1
     num_layers = max(1, len(model.row_layers))
 
-    static_biases = tree_cache["static_phylo_biases"]
     static_coss = tree_cache["static_rope_coss"]
     static_sins = tree_cache["static_rope_sins"]
 
@@ -128,28 +128,42 @@ def extract_cross_taxa_attentions_and_embeddings(
                     q = torch.cat([q1 * cos - q2 * sin, q1 * sin + q2 * cos], dim=-1)
                     k = torch.cat([k1 * cos - k2 * sin, k1 * sin + k2 * cos], dim=-1)
 
-                    scores = torch.matmul(q, k.transpose(-2, -1)) / (layer.head_dim ** 0.5)
-                    del q, k
-                    scores.add_(static_biases[i])
+                    # Bound the O(n_c*H*(N+1)^2) scores/bias transient by the
+                    # same cache budget — row chunks keep it exact (softmax
+                    # is row-wise) and bounded at cohort scale (~307 GB/site
+                    # unchunked at N=80k).
+                    row_chunk = _attn_row_chunk(
+                        tree_cache.get("max_memory_mb", DEFAULT_MAX_MEMORY_MB) * 1e6,
+                        n_c, layer.num_heads, num_nodes, device=dev_obj) or num_nodes
+                    p_chunk = (padding_mask_dup[c_start:c_end].unsqueeze(1).unsqueeze(2)
+                               if padding_mask_dup is not None else None)
+                    out_heads = torch.empty(n_c, layer.num_heads, num_nodes, layer.head_dim,
+                                            device=r_chunk.device, dtype=v.dtype)
+                    for r0 in range(0, num_nodes, row_chunk):
+                        r1 = min(r0 + row_chunk, num_nodes)
+                        scores = torch.matmul(q[:, :, r0:r1], k.transpose(-2, -1)) / (layer.head_dim ** 0.5)
+                        scores.add_(tree_cache_layer_bias(tree_cache, layer, i, row_slice=slice(r0, r1)))
 
-                    if padding_mask_dup is not None:
-                        p_chunk = padding_mask_dup[c_start:c_end].unsqueeze(1).unsqueeze(2)
-                        scores.masked_fill_(p_chunk, -1e4)
-                        attn_weights = torch.softmax(scores, dim=-1)
-                        attn_weights = torch.where(p_chunk, torch.zeros_like(attn_weights), attn_weights)
-                        del p_chunk
-                    else:
-                        attn_weights = torch.softmax(scores, dim=-1)
-                    del scores
+                        if p_chunk is not None:
+                            scores.masked_fill_(p_chunk, -1e4)
+                            attn_weights = torch.softmax(scores, dim=-1)
+                            attn_weights = torch.where(p_chunk, torch.zeros_like(attn_weights), attn_weights)
+                        else:
+                            attn_weights = torch.softmax(scores, dim=-1)
+                        del scores
 
-                    # Extract cross-taxa attention weights (taxa 1:N to taxa 1:N, omitting root at index 0)
-                    cross_taxa = attn_weights[:, :, 1:, 1:]
-                    accum_attn.add_(cross_taxa.mean(dim=1).sum(dim=0))
-                    del cross_taxa
+                        # Cross-taxa weights for query rows 1:N+1 (root row 0
+                        # omitted) — accumulated per row-chunk, identical sum.
+                        lo = max(r0, 1)
+                        accum_attn[lo - 1:r1 - 1].add_(
+                            attn_weights[:, :, lo - r0:r1 - r0, 1:].mean(dim=1).sum(dim=0))
 
-                    out = torch.matmul(attn_weights, v)
-                    del attn_weights, v
-                    out = out.transpose(1, 2).contiguous().view(n_c, num_nodes, layer.embed_dim)
+                        out_heads[:, :, r0:r1] = torch.matmul(attn_weights, v)
+                        del attn_weights
+                    del q, k, v, p_chunk
+
+                    out = out_heads.transpose(1, 2).contiguous().view(n_c, num_nodes, layer.embed_dim)
+                    del out_heads
                     out = layer.out_proj(out) + layer.alpha_skip * x0_dup[c_start:c_end]
                     r_out = model.row_norms[i](r_chunk + out)
                     del out
@@ -187,28 +201,37 @@ def compute_fused_affinity_matrix(
 
     A_fused = S_attn ⊙ K_mds ⊙ K_emb
     """
-    # Symmetrize raw cross-taxa attention
-    S_attn = (cross_attn_mat + cross_attn_mat.T) / 2.0
-    np.fill_diagonal(S_attn, 0.0)
+    # fp32 with one live N^2 buffer at a time: inputs are fp32 attention
+    # and the fused matrix only feeds a spectral partition, so 1e-7 relative
+    # error is far below attention noise. This halves output residency and
+    # avoids holding ~5-6 fp64 N^2 intermediates at once (~300 GB at N=80k
+    # -> ~10 GB peak here).
+    A_fused = (cross_attn_mat + cross_attn_mat.T).astype(np.float32)
+    A_fused *= 0.5
+    np.fill_diagonal(A_fused, 0.0)
 
-    # MDS geometric Gaussian kernel
-    d_mds = squareform(pdist(mds_coords))
-    sigma_mds = np.median(d_mds[d_mds > 0]) if np.any(d_mds > 0) else 1.0
-    K_mds = np.exp(- (d_mds ** 2) / (2 * (sigma_mds ** 2)))
-    np.fill_diagonal(K_mds, 0.0)
+    # MDS geometric Gaussian kernel, evaluated in-place into one buffer
+    K = squareform(pdist(mds_coords)).astype(np.float32)
+    sigma_mds = np.median(K[K > 0]) if np.any(K > 0) else 1.0
+    K *= K
+    K *= -1.0 / (2.0 * (sigma_mds ** 2))
+    np.exp(K, out=K)
+    np.fill_diagonal(K, 0.0)
+    A_fused *= K
+    del K
 
-    # Embedding cosine similarity kernel with safe in-place normalization
+    # Embedding cosine similarity kernel, same single-buffer pattern
     if taxa_repr is not None:
-        norms = np.linalg.norm(taxa_repr, axis=1, keepdims=True)
-        repr_norm = taxa_repr / np.maximum(norms, 1e-12)
-        cos_sim = repr_norm @ repr_norm.T
-        K_emb = np.clip((cos_sim + 1.0) / 2.0, 0.0, 1.0)
-        np.fill_diagonal(K_emb, 0.0)
-    else:
-        K_emb = 1.0
+        repr_norm = taxa_repr.astype(np.float32, copy=False)
+        repr_norm = repr_norm / np.maximum(np.linalg.norm(repr_norm, axis=1, keepdims=True), 1e-12)
+        K = repr_norm @ repr_norm.T
+        np.add(K, 1.0, out=K)
+        K *= 0.5
+        np.clip(K, 0.0, 1.0, out=K)
+        np.fill_diagonal(K, 0.0)
+        A_fused *= K
+        del K
 
-    # Multiplicative tensor fusion
-    A_fused = S_attn * K_mds * K_emb
     np.fill_diagonal(A_fused, 0.0)
     return A_fused
 

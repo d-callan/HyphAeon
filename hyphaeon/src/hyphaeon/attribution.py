@@ -27,7 +27,8 @@ def attribute_selection(
     focal_sites=None,
     min_lrt: float = 3.84,
     base_lrts: np.ndarray = None,
-    cache=None
+    cache=None,
+    max_memory_mb=None
 ):
     """Computes mechanistic feature attribution across candidate positively selected sites.
     
@@ -50,7 +51,7 @@ def attribute_selection(
     device = next(model.parameters()).device
     
     if cache is None:
-        cache = model.precompute_tree_cache(d.to(device), z.to(device))
+        cache = model.precompute_tree_cache(d.to(device), z.to(device), max_memory_mb=max_memory_mb)
         
     if focal_sites is None:
         if base_lrts is not None:

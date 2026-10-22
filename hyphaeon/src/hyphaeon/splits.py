@@ -131,6 +131,7 @@ def run_spectral_splits(
     use_tn93: bool = False,
     weights: Optional[str] = None,
     variant: Optional[str] = None,
+    max_memory_mb: Optional[float] = None,
     min_clade_size: int = 2,
     max_depth: int = 10,
     device: Optional[Union[str, torch.device]] = None
@@ -165,7 +166,7 @@ def run_spectral_splits(
     dist_mat = d_tensor.squeeze(0).cpu().numpy()
     mds_coords = z_tensor.squeeze(0).cpu().numpy()
 
-    tree_cache = model.precompute_tree_cache(dist_mat, mds_coords)
+    tree_cache = model.precompute_tree_cache(dist_mat, mds_coords, max_memory_mb=max_memory_mb)
 
     cross_attn, taxa_repr = extract_cross_taxa_attentions_and_embeddings(
         model, msa_codons, msa_aas, tree_cache, device=device

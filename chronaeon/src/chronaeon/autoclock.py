@@ -768,7 +768,8 @@ class AutoClockDeconvolution:
                         f.write(f">{t}\n{self.seq_dict[t]}\n")
 
                 c, a, d, z, inv, aln_taxa, L, tree_cache = prepare_alignment(
-                    str(tmp_fa), None, model=model, device=dev, prune_duplicates=False, use_tn93=True
+                    str(tmp_fa), None, model=model, device=dev, prune_duplicates=False, use_tn93=True,
+                    max_memory_mb=self.max_memory_mb
                 )
                 cross_attn, taxa_repr = extract_cross_taxa_attentions_and_embeddings(
                     model, c.to(dev), a.to(dev), tree_cache, device=dev

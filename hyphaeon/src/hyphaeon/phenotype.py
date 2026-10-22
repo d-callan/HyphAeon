@@ -360,6 +360,7 @@ def run_phenotype_association(
     tree_path: Optional[str] = None,
     weights: Optional[str] = None,
     variant: Optional[str] = None,
+    max_memory_mb: Optional[float] = None,
     preset: Optional[str] = None,
     foreground: Optional[Union[str, List[str]]] = None,
     background: Optional[Union[str, List[str]]] = None,
@@ -416,7 +417,7 @@ def run_phenotype_association(
 
     # 4. Load Neural Architecture and Pretrained Weights
     model = load_model(weights=weights, variant=variant, device=device)
-    tree_cache = model.precompute_tree_cache(d_mat.to(device), z_coords.to(device))
+    tree_cache = model.precompute_tree_cache(d_mat.to(device), z_coords.to(device), max_memory_mb=max_memory_mb)
 
     # 5. Extract Transformer Phylogenetic Attributions
     if progress:

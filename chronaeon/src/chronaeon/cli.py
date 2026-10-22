@@ -16,7 +16,7 @@ import torch
 
 from aeon_core.inference import get_device
 from aeon_core.weights import print_available_variants
-from aeon_core.cli import handle_cli_errors, add_weights_args, weights_kwargs
+from aeon_core.cli import handle_cli_errors, add_weights_args, weights_kwargs, add_memory_args, memory_kwargs
 from aeon_core.io import write_json, write_csv
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -58,6 +58,7 @@ def cmd_dating(args):
         ridge=getattr(args, "ridge", "auto"),
         n_bootstrap=getattr(args, "bootstrap", 1000),
         **weights_kwargs(args),
+        **memory_kwargs(args),
         device=device,
         batch_size=getattr(args, "batch_size", None),
         max_species=getattr(args, "max_species", None),
@@ -362,6 +363,7 @@ def cmd_phylogeo(args):
         fdr_thresh=getattr(args, "fdr", 0.10),
         use_neural=not getattr(args, "no_neural", False),
         **weights_kwargs(args),
+        **memory_kwargs(args),
         device=device,
         output_prefix=getattr(args, "output", None),
         geojson_path=getattr(args, "geojson", None),
@@ -802,6 +804,7 @@ def main():
     add_weights_args(date_parser,
         weights_envs=("CHRONAEON_WEIGHTS", "HYPHAEON_WEIGHTS"),
         variant_envs=("CHRONAEON_VARIANT", "HYPHAEON_VARIANT"))
+    add_memory_args(date_parser, envs=("CHRONAEON_MAX_MEMORY_MB", "AEON_MAX_MEMORY_MB"))
     date_parser.add_argument("-s", "--max-species", type=int, default=None, help="Maximum number of taxa to include")
     date_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: adaptive hardware budget)")
     date_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
@@ -834,6 +837,7 @@ def main():
     add_weights_args(geo_parser,
         weights_envs=("CHRONAEON_WEIGHTS", "HYPHAEON_WEIGHTS"),
         variant_envs=("CHRONAEON_VARIANT", "HYPHAEON_VARIANT"))
+    add_memory_args(geo_parser, envs=("CHRONAEON_MAX_MEMORY_MB", "AEON_MAX_MEMORY_MB"))
     geo_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
     geo_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
     geo_parser.add_argument("-c", "--csv", help="Optional path to output transmission routes CSV")
@@ -910,7 +914,7 @@ def main():
     autoclock_parser.add_argument("--min-leaf-size", type=int, default=25, help="Minimum leaf community size for hierarchical deconvolution (default: 25)")
     autoclock_parser.add_argument("--min-delta-aicc", type=float, default=15.0, help="Minimum AICc improvement (AICc(K=1) - min AICc(K>=2)) required to justify splitting a subcommunity (default: 15.0)")
     autoclock_parser.add_argument("--n-landmarks", default="auto", help="Number of landmark sequences for Nyström low-rank approximation ('auto' or integer, default: auto)")
-    autoclock_parser.add_argument("--max-memory-mb", type=float, default=1024.0, help="Maximum RAM budget (MB) for adaptive landmark matrix allocation (default: 1024.0)")
+    add_memory_args(autoclock_parser, envs=("CHRONAEON_MAX_MEMORY_MB", "AEON_MAX_MEMORY_MB"))
     autoclock_parser.add_argument("--rooting-mode", choices=["convex_decay", "consensus", "earliest"], default="convex_decay", help="Rooting mode for tree-free root-to-tip divergence anchoring: 'convex_decay' (time-decay weighted consensus across cohort, default), 'consensus' (unweighted modal consensus), or 'earliest' (earliest sampled sequence)")
     autoclock_parser.add_argument("--contemporaneous-dyads", dest="contemporaneous_dyads", action="store_true", default=False, help="Enable screening for contemporaneous direct transmission dyads and point-source clusters (default: disabled)")
     autoclock_parser.add_argument("--no-contemporaneous-dyads", dest="contemporaneous_dyads", action="store_false", help="Disable contemporaneous transmission dyad screening")

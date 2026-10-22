@@ -14,7 +14,8 @@ from aeon_core._progress import ChunkProgress
 
 
 def predict_site_lrts(model, c, a, d, z, inv, tree_cache=None,
-                      batch_size=64, device=None, progress=True, desc="Predict"):
+                      batch_size=64, device=None, progress=True, desc="Predict",
+                      max_memory_mb=None):
     """Run model.forward_cached on variable sites only; return LRT array [L].
 
     Invariable sites get LRT=0. Uses tree_cache if provided, otherwise
@@ -31,7 +32,7 @@ def predict_site_lrts(model, c, a, d, z, inv, tree_cache=None,
         return lrts
 
     if tree_cache is None:
-        tree_cache = model.precompute_tree_cache(d.to(device), z.to(device))
+        tree_cache = model.precompute_tree_cache(d.to(device), z.to(device), max_memory_mb=max_memory_mb)
 
     pb = ChunkProgress(num_variable, desc, 'codon', enabled=progress and num_variable > 0)
     with torch.no_grad():

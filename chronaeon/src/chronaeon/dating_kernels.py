@@ -31,30 +31,48 @@ def compute_neural_covariance_kernel(
     """
     n = cross_attn.shape[0]
 
+    # fp32 + freed intermediates: inputs are fp32 model outputs already, and
+    # this kernel feeds spectral/ridge consumers where ~1e-7/cell error is
+    # noise. The previous version held ~5 fp64 N^2 matrices (centered copy,
+    # cov, denom, both kernels) simultaneously. Standardization is applied by
+    # broadcast row/col division so no N^2 denominator is ever materialized.
+    # Near-degenerate rows (variance at/below the 1e-12 floor) can differ from
+    # the fp64 path by ~1e-5 — amplified rounding on cells whose correlation
+    # is ill-defined in either version; measured, not a code path change.
+
     # 1. Cross-Taxa Attention Profile Correlation Matrix (Centered)
     # Each row a_i is taxon i's attention distribution across all taxa.
     # Centering removes the background entropy baseline across taxa:
-    a_centered = cross_attn - np.mean(cross_attn, axis=0, keepdims=True)
-    a_cov = a_centered @ a_centered.T
-    a_var = np.diag(a_cov)
-    a_std = np.sqrt(np.maximum(a_var, 1e-12))[:, None]
-    a_denom = a_std @ a_std.T
-    K_attn = np.divide(a_cov, a_denom, where=(a_denom > 1e-12), out=np.eye(n))
-    np.fill_diagonal(K_attn, 1.0)
+    a_centered = (cross_attn - np.mean(cross_attn, axis=0, keepdims=True)).astype(np.float32)
+    K_neural = a_centered @ a_centered.T
+    del a_centered
+    a_std = np.sqrt(np.maximum(np.diag(K_neural), 1e-12))
+    np.divide(K_neural, a_std[:, None], out=K_neural)
+    np.divide(K_neural, a_std[None, :], out=K_neural)
+    # Zero the cells the old (denom > 1e-12) mask suppressed: pairs where
+    # BOTH stds sit at the variance floor (a_std == 1e-6 each, so
+    # a_std_i * a_std_j <= 1e-12) — constant-vs-constant covariances.
+    _deg = a_std <= 1e-6
+    if _deg.any():
+        K_neural[np.ix_(_deg, _deg)] = 0.0
+    np.fill_diagonal(K_neural, 1.0)
 
     # 2. Continuous Latent Sequence Embedding Correlation Matrix (Centered)
     if taxa_repr is not None and len(taxa_repr) == n:
         # Centering removes the dominant common activation vector across taxa:
-        z_centered = taxa_repr - np.mean(taxa_repr, axis=0, keepdims=True)
-        z_cov = z_centered @ z_centered.T
-        z_var = np.diag(z_cov)
-        z_std = np.sqrt(np.maximum(z_var, 1e-12))[:, None]
-        z_denom = z_std @ z_std.T
-        K_emb = np.divide(z_cov, z_denom, where=(z_denom > 1e-12), out=np.eye(n))
+        z_centered = (taxa_repr - np.mean(taxa_repr, axis=0, keepdims=True)).astype(np.float32)
+        K_emb = z_centered @ z_centered.T
+        del z_centered
+        z_std = np.sqrt(np.maximum(np.diag(K_emb), 1e-12))
+        np.divide(K_emb, z_std[:, None], out=K_emb)
+        np.divide(K_emb, z_std[None, :], out=K_emb)
+        _deg = z_std <= 1e-6
+        if _deg.any():
+            K_emb[np.ix_(_deg, _deg)] = 0.0
         np.fill_diagonal(K_emb, 1.0)
-        K_neural = 0.50 * K_attn + 0.50 * K_emb
-    else:
-        K_neural = K_attn
+        K_neural += K_emb
+        K_neural *= 0.5
+        del K_emb
 
     np.fill_diagonal(K_neural, 1.0)
     return K_neural

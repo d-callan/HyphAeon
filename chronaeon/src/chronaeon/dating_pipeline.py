@@ -417,6 +417,7 @@ def run_mrca_dating(
     model: Optional[torch.nn.Module] = None,
     weights: Optional[str] = None,
     variant: Optional[str] = None,
+    max_memory_mb: Optional[float] = None,
     device: Optional[torch.device] = None,
     batch_size: Optional[int] = None,
     max_species: Optional[int] = None,
@@ -537,7 +538,8 @@ def run_mrca_dating(
             device=device,
             max_species=max_species,
             prune_duplicates=False,
-            use_tn93=(not has_tree)
+            use_tn93=(not has_tree),
+            max_memory_mb=max_memory_mb
         )
         msa_codons = c.to(device)
         msa_aas = a.to(device)
@@ -617,7 +619,8 @@ def run_mrca_dating(
                     c_lat, a_lat, d_lat, _, _, aln_taxa_lat, _, tree_cache_lat = prepare_alignment(
                         str(align_p), str(tree_path) if has_tree else None,
                         model=model, device=device, max_species=max_species,
-                        prune_duplicates=False, use_tn93=False
+                        prune_duplicates=False, use_tn93=False,
+                        max_memory_mb=max_memory_mb
                     )
                     cross_attn_lat, taxa_repr_lat = extract_cross_taxa_attentions_and_embeddings(
                         model, c_lat.to(device), a_lat.to(device), tree_cache_lat, device=device
@@ -734,7 +737,8 @@ def run_mrca_dating(
                 device=device,
                 max_species=max_species,
                 prune_duplicates=False,
-                use_tn93=(not has_tree)
+                use_tn93=(not has_tree),
+                max_memory_mb=max_memory_mb
             )
 
             t_fwd = time.time()

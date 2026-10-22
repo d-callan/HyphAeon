@@ -328,6 +328,7 @@ def predict_disease_pathogenicity(
     model: Optional[PhyloAxialTransformer] = None,
     weights: Optional[str] = None,
     variant: Optional[str] = None,
+    max_memory_mb: Optional[float] = None,
     device: Optional[Union[str, torch.device]] = None,
     batch_size: Optional[int] = None,
     coevolution_weight: float = 1.0,
@@ -384,7 +385,9 @@ def predict_disease_pathogenicity(
         print(f"[*] Alignment loaded ({gene_name}): {N} species, {L_codon} codons across phylogeny")
     
     # 3. Build codon & amino acid arrays and compute marginal evolutionary counts
-    arr_aa = np.zeros((N, L_codon), dtype=object)
+    # Single-char AA codes only — U1 (~4 B/cell) instead of an object array
+    # of str pointers (~50+ B/cell); ~14x smaller at cohort scale.
+    arr_aa = np.zeros((N, L_codon), dtype='U1')
     c_arr = np.zeros((L_codon, N, 1), dtype=np.int64)
     a_arr = np.zeros((L_codon, N, 1), dtype=np.int64)
     msa_aa_counts = []
@@ -434,7 +437,7 @@ def predict_disease_pathogenicity(
     sub_a = a_tensor[:min(500, L_codon), :, 0].float().T
     d_mat = torch.mean((sub_a.unsqueeze(1) != sub_a.unsqueeze(0)).float(), dim=-1).cpu()
     z_coords = fast_pytorch_mds(d_mat, k=4)
-    tree_cache = model.precompute_tree_cache(d_mat.to(device), z_coords.to(device))
+    tree_cache = model.precompute_tree_cache(d_mat.to(device), z_coords.to(device), max_memory_mb=max_memory_mb)
     
     # 8. Batched Wild-Type Latent Root Embeddings
     if verbose:
