@@ -66,7 +66,9 @@ def tree_cache_layer_bias(tree_cache, layer, index, row_slice=None):
     dist = tree_cache["static_dist"]
     if row_slice is not None:
         dist = dist[..., row_slice, :]
-    return markov_log_bias(layer.phylo_w1, dist)
+    # static_dist may be host-resident when it exceeds device memory — move
+    # only the (possibly sliced) block, never the whole N^2 tensor.
+    return markov_log_bias(layer.phylo_w1, dist.to(layer.phylo_w1.device))
 
 
 # Cache-tile target for the per-chunk attention transient (~4 live tensors ×
@@ -76,20 +78,35 @@ def tree_cache_layer_bias(tree_cache, layer, index, row_slice=None):
 # unconditionally (identical math), not just when the budget demands it; a
 # tighter max_memory_mb can only shrink chunks further.
 ATTN_TILE_TARGET_BYTES = 4e6
+# CUDA tiles are far larger: GPU kernels amortize launch overhead over big
+# matmuls, so the transient cap scales up (still bound by user budget).
+# Heuristic pending device profiling — identical math either way.
+ATTN_TILE_TARGET_CUDA_BYTES = 256e6
+# Below this many rows per chunk, per-chunk launch/loop overhead dominates
+# (matters at N=80k where even one row > tile target). The caller's budget
+# can still force smaller — the memory bound always wins.
+MIN_ATTN_CHUNK_ROWS = 32
 
 
-def _attn_row_chunk(budget_bytes, batch_eff, num_heads, num_nodes):
+def _attn_row_chunk(budget_bytes, batch_eff, num_heads, num_nodes, device=None):
     """
     Query rows per attention chunk such that the O(B*H*rows*num_nodes)
     scores/bias/softmax transients stay under the effective cap: the smaller
-    of budget_bytes and ATTN_TILE_TARGET_BYTES (~4 live tensors per chunk).
-    Returns None when the full matrix fits a single tile.
+    of budget_bytes and the device tile target (~4 live tensors per chunk).
+    Chunk size floors at MIN_ATTN_CHUNK_ROWS for launch efficiency unless the
+    budget forces smaller. Returns None when the full matrix fits one tile.
     """
+    tile_target = (ATTN_TILE_TARGET_CUDA_BYTES
+                   if device is not None and torch.device(device).type == "cuda"
+                   else ATTN_TILE_TARGET_BYTES)
     bytes_per_row = 4 * batch_eff * num_heads * num_nodes * 4
-    rows = int(min(budget_bytes, ATTN_TILE_TARGET_BYTES) // max(1, bytes_per_row))
+    rows_budget = int(budget_bytes // max(1, bytes_per_row))
+    rows_tile = int(tile_target // max(1, bytes_per_row))
+    rows = min(rows_budget, max(rows_tile, MIN_ATTN_CHUNK_ROWS))
+    rows = max(1, rows)
     if rows >= num_nodes:
         return None
-    return max(1, rows)
+    return rows
 
 
 class BlockLinear(nn.Module):
@@ -219,7 +236,9 @@ class PhyloRowAttention(nn.Module):
             if phylo_bias is not None:
                 scores.add_(phylo_bias[..., r0:r1, :])
             elif dist_1d is not None:
-                d = dist_1d[..., r0:r1, :]
+                # Slice first, then move — a host-resident static_dist
+                # (VRAM-tight GPUs) transfers only the row chunk.
+                d = dist_1d[..., r0:r1, :].to(scores.device)
                 d = d.unsqueeze(1) if d.dim() == 3 else d.unsqueeze(0).unsqueeze(1)
                 scores.add_(markov_log_bias(self.phylo_w1, d))
 
@@ -378,10 +397,31 @@ class PhyloAxialTransformer(nn.Module):
         resident footprint bounded by the distance matrix instead of all layers.
         """
         device = next(self.parameters()).device
+
+        num_heads = self.row_layers[0].num_heads if len(self.row_layers) > 0 else 0
+        bias_bytes = len(self.row_layers) * num_heads * ((dist_matrix.shape[-1] + 1) ** 2) * 4
+        budget_bytes = (DEFAULT_MAX_MEMORY_MB if max_memory_mb is None else max_memory_mb) * 1e6
+        use_static_biases = bias_bytes <= budget_bytes
+        if not use_static_biases:
+            print(f"[*] Tree attention bias cache requires {bias_bytes / 1e9:.1f} GB "
+                  f"(max_memory_mb={budget_bytes / 1e6:.0f}): using lazy per-layer evaluation.",
+                  flush=True)
+
+        # Lazy-path distances stay host-resident when the (N+1)^2 fp32 tensor
+        # would crowd device memory — chunked consumers transfer only row
+        # slices, so a 25.6 GB 80k-cohort matrix need not live in VRAM at
+        # all. The static path keeps it on-device: it computes full biases
+        # from it there, and a bias set that fits the budget implies the
+        # much smaller dist does too.
+        dist_device = device
+        if not use_static_biases and device.type == "cuda":
+            dist_bytes = (dist_matrix.shape[-1] + 1) ** 2 * 4
+            if dist_bytes * 1.5 > torch.cuda.mem_get_info(device)[0]:
+                dist_device = torch.device("cpu")
         if not isinstance(dist_matrix, torch.Tensor):
-            dist_matrix = torch.tensor(dist_matrix, dtype=torch.float32, device=device)
+            dist_matrix = torch.tensor(dist_matrix, dtype=torch.float32, device=dist_device)
         else:
-            dist_matrix = dist_matrix.to(device)
+            dist_matrix = dist_matrix.to(dist_device)
 
         if not isinstance(mds_coords, torch.Tensor):
             mds_coords = torch.tensor(mds_coords, dtype=torch.float32, device=device)
@@ -397,22 +437,15 @@ class PhyloAxialTransformer(nn.Module):
         root_mds = torch.zeros(1, 1, 4, dtype=mds_coords.dtype, device=mds_coords.device)
         mds_full = torch.cat([root_mds, mds_coords], dim=1)  # [1, num_species + 1, 4]
 
-        root_dist = torch.norm(mds_coords, dim=-1, keepdim=True)  # [1, num_species, 1]
+        # [1, num_species, 1] — on dist_matrix.device so the augmentation
+        # below stays on dist_device even when it differs from the model's.
+        root_dist = torch.norm(mds_coords, dim=-1, keepdim=True).to(dist_matrix.device)
         dist_top = torch.cat([torch.zeros(1, 1, 1, device=dist_matrix.device), root_dist.transpose(1, 2)], dim=2)  # [1, 1, num_species + 1]
         dist_bot = torch.cat([root_dist, dist_matrix], dim=2)  # [1, num_species, num_species + 1]
         dist_full = torch.cat([dist_top, dist_bot], dim=1)  # [1, num_species + 1, num_species + 1]
 
         dist_1d = dist_full[..., 0] if dist_full.dim() == 4 or (dist_full.dim() == 3 and dist_full.shape[-1] == 3) else dist_full
         dist_tensor = dist_1d.unsqueeze(1) if dist_1d.dim() == 3 else dist_1d.unsqueeze(0).unsqueeze(1)
-
-        num_heads = self.row_layers[0].num_heads if len(self.row_layers) > 0 else 0
-        bias_bytes = len(self.row_layers) * num_heads * (dist_tensor.shape[-1] ** 2) * dist_tensor.element_size()
-        budget_bytes = (DEFAULT_MAX_MEMORY_MB if max_memory_mb is None else max_memory_mb) * 1e6
-        use_static_biases = bias_bytes <= budget_bytes
-        if not use_static_biases:
-            print(f"[*] Tree attention bias cache requires {bias_bytes / 1e9:.1f} GB "
-                  f"(max_memory_mb={budget_bytes / 1e6:.0f}): using lazy per-layer evaluation.",
-                  flush=True)
 
         static_phylo_biases = [] if use_static_biases else None
         static_rope_coss = []
@@ -524,7 +557,8 @@ class PhyloAxialTransformer(nn.Module):
         # that governed bias caching (~307 GB/layer unchunked at N=80k).
         num_heads = self.row_layers[0].num_heads if len(self.row_layers) > 0 else 0
         budget_bytes = tree_cache.get("max_memory_mb", DEFAULT_MAX_MEMORY_MB) * 1e6
-        row_chunk = _attn_row_chunk(budget_bytes, batch_size * window_size, num_heads, num_nodes)
+        row_chunk = _attn_row_chunk(budget_bytes, batch_size * window_size, num_heads, num_nodes,
+                                    device=x_full.device)
         # When chunked under the lazy path, hand the layer the (N+1)x(N+1)
         # distance tensor so it evaluates bias per row-block — the full
         # H*(N+1)^2 per-layer bias would itself exceed the budget at large N.
@@ -674,7 +708,8 @@ class PhyloAxialTransformer(nn.Module):
         # Bound the O(B*W*H*(N+1)^2) attention transient by the caller budget.
         budget_bytes = (DEFAULT_MAX_MEMORY_MB if max_memory_mb is None else max_memory_mb) * 1e6
         num_heads = self.row_layers[0].num_heads if len(self.row_layers) > 0 else 0
-        row_chunk = _attn_row_chunk(budget_bytes, batch_size * window_size, num_heads, num_nodes)
+        row_chunk = _attn_row_chunk(budget_bytes, batch_size * window_size, num_heads, num_nodes,
+                                    device=x_full.device)
 
         x0_dup = x_full.transpose(1, 2).contiguous().view(batch_size * window_size, num_nodes, self.embed_dim)
         for i in range(len(self.row_layers)):

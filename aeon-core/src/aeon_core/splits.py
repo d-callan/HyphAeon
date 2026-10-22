@@ -134,7 +134,7 @@ def extract_cross_taxa_attentions_and_embeddings(
                     # unchunked at N=80k).
                     row_chunk = _attn_row_chunk(
                         tree_cache.get("max_memory_mb", DEFAULT_MAX_MEMORY_MB) * 1e6,
-                        n_c, layer.num_heads, num_nodes) or num_nodes
+                        n_c, layer.num_heads, num_nodes, device=dev_obj) or num_nodes
                     p_chunk = (padding_mask_dup[c_start:c_end].unsqueeze(1).unsqueeze(2)
                                if padding_mask_dup is not None else None)
                     out_heads = torch.empty(n_c, layer.num_heads, num_nodes, layer.head_dim,
