@@ -1,8 +1,8 @@
 use crate::jacobi::symmetric_jacobi_eigh;
 use crate::types::{
     Alignment, CanonicalManifold, GowerPoint, InformativeSnpRecord, MacroSegment, MosaicSegment,
-    ScanResult, TaxonMeta, VisualizationBreakpoint, VisualizationDossier, VisualizationMetadata,
-    VisualizationSignals, VisualizationSubspaces,
+    RecombinationLandscape, RecombinationRegion, ScanResult, TaxonMeta, VisualizationBreakpoint,
+    VisualizationDossier, VisualizationMetadata, VisualizationSignals, VisualizationSubspaces,
 };
 use std::collections::{BTreeMap, HashSet};
 
@@ -34,26 +34,7 @@ pub fn generate_visualization_dossier(
     let default_title = format!("RhizAeon Scan Analysis ({} taxa, {} bp)", n, l);
     let title = title_opt.unwrap_or(&default_title).to_string();
 
-    // 1. Reconstruct decoded nucleotide sequences (capped for megabase alignments to prevent JSON bloat)
-    let mut sequences = BTreeMap::new();
-    let max_store_len = 100_000;
-    let store_l = l.min(max_store_len);
-    for i in 0..n {
-        let mut seq_str = String::with_capacity(store_l);
-        for u in 0..store_l {
-            let ch = match aln.get(i, u) {
-                1 => 'A',
-                2 => 'C',
-                3 => 'G',
-                4 => 'T',
-                _ => '-',
-            };
-            seq_str.push(ch);
-        }
-        sequences.insert(aln.taxa[i].clone(), seq_str);
-    }
-
-    // 2. Identify recombinant, parental, and reference taxa
+    // 1. Identify recombinant, parental, and reference taxa first so we can prioritize them
     let mut rec_indices = Vec::new();
     let mut rec_taxa_set = HashSet::new();
     let mut parent_taxa_set = HashSet::new();
@@ -61,7 +42,6 @@ pub fn generate_visualization_dossier(
     for ev in &scan_res.events {
         for isolate in &ev.isolates {
             if !rec_taxa_set.contains(isolate) {
-                // If we need indices, find them in aln.taxa
                 if let Some(idx) = aln.taxa.iter().position(|t| t == isolate) {
                     rec_indices.push(idx);
                 }
@@ -92,6 +72,33 @@ pub fn generate_visualization_dossier(
         if !rec_taxa_set.contains(t) && !parent_taxa_set.contains(t) {
             sorted_taxa.push(t.clone());
         }
+    }
+
+    // 2. Reconstruct decoded nucleotide sequences (capped for megabase or large-N alignments to prevent JSON bloat)
+    let mut sequences = BTreeMap::new();
+    let max_store_len = 100_000;
+    let store_l = l.min(max_store_len);
+    let max_stored_seqs = 72usize;
+    let mut stored_count = 0usize;
+    for i in 0..n {
+        let t_name = &aln.taxa[i];
+        let is_priority = rec_taxa_set.contains(t_name) || parent_taxa_set.contains(t_name) || i < 8;
+        if n > max_stored_seqs && !is_priority && stored_count >= max_stored_seqs {
+            continue;
+        }
+        let mut seq_str = String::with_capacity(store_l);
+        for u in 0..store_l {
+            let ch = match aln.get(i, u) {
+                1 => 'A',
+                2 => 'C',
+                3 => 'G',
+                4 => 'T',
+                _ => '-',
+            };
+            seq_str.push(ch);
+        }
+        sequences.insert(t_name.clone(), seq_str);
+        stored_count += 1;
     }
 
     // 3. Taxa metadata and color mapping
@@ -945,6 +952,10 @@ pub fn generate_visualization_dossier(
     let canonical_manifold =
         compute_canonical_manifold(aln, focal_cand_idx, focal_home_idx, focal_donor_idx);
 
+    // 9B. Genome-wide Recombination Hotspot / Coldspot Flux & Cumulative Strain Landscape
+    let recombination_landscape =
+        compute_recombination_landscape(aln, scan_res, &breakpoints);
+
     // 10. Summary Metadata
     let mean_plat_w = if !breakpoints.is_empty() {
         (total_plateau_width as f64 / breakpoints.len() as f64 * 10.0).round() / 10.0
@@ -986,7 +997,296 @@ pub fn generate_visualization_dossier(
         signals,
         subspaces,
         canonical_manifold: Some(canonical_manifold),
+        recombination_landscape: Some(recombination_landscape),
         sequences,
+    }
+}
+
+/// Fast top-2 eigenpair solver using exact Jacobi for small N (<= 80) and deflated power iteration for large N (> 80).
+fn top_two_eigenpairs(b: &[f64], n: usize) -> ([f64; 2], Vec<f64>, Vec<f64>) {
+    if n == 0 {
+        return ([0.0, 0.0], Vec::new(), Vec::new());
+    }
+    if n <= 80 {
+        let eigh = symmetric_jacobi_eigh(b, n);
+        let lam0 = eigh.eigenvalues.first().copied().unwrap_or(0.0);
+        let lam1 = if n > 1 {
+            eigh.eigenvalues.get(1).copied().unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        let mut v0 = vec![0.0f64; n];
+        let mut v1 = vec![0.0f64; n];
+        for i in 0..n {
+            v0[i] = eigh.eigenvectors[i * n];
+            if n > 1 {
+                v1[i] = eigh.eigenvectors[i * n + 1];
+            }
+        }
+        return ([lam0, lam1], v0, v1);
+    }
+
+    let power_step = |deflate_v: Option<&[f64]>, deflate_lam: f64, seed_offset: usize| -> (f64, Vec<f64>) {
+        let mut v = vec![0.0f64; n];
+        for i in 0..n {
+            v[i] = (((i + seed_offset + 1) * 2654435761) % 1000) as f64 / 1000.0 - 0.5;
+        }
+        let mut norm: f64 = v.iter().map(|x| x * x).sum::<f64>().sqrt();
+        if norm > 1e-12 {
+            for x in &mut v {
+                *x /= norm;
+            }
+        }
+
+        let mut next_v = vec![0.0f64; n];
+        for _iter in 0..45 {
+            let dot_def = if let Some(dv) = deflate_v {
+                dv.iter().zip(v.iter()).map(|(a, b)| a * b).sum::<f64>()
+            } else {
+                0.0
+            };
+            for i in 0..n {
+                let row = &b[i * n..(i + 1) * n];
+                let mut s = 0.0f64;
+                for j in 0..n {
+                    s += row[j] * v[j];
+                }
+                if let Some(dv) = deflate_v {
+                    s -= deflate_lam * dv[i] * dot_def;
+                }
+                next_v[i] = s;
+            }
+            norm = next_v.iter().map(|x| x * x).sum::<f64>().sqrt();
+            if norm < 1e-12 {
+                break;
+            }
+            for i in 0..n {
+                v[i] = next_v[i] / norm;
+            }
+        }
+
+        let dot_def = if let Some(dv) = deflate_v {
+            dv.iter().zip(v.iter()).map(|(a, b)| a * b).sum::<f64>()
+        } else {
+            0.0
+        };
+        let mut rayleigh = 0.0f64;
+        for i in 0..n {
+            let row = &b[i * n..(i + 1) * n];
+            let mut s = 0.0f64;
+            for j in 0..n {
+                s += row[j] * v[j];
+            }
+            if let Some(dv) = deflate_v {
+                s -= deflate_lam * dv[i] * dot_def;
+            }
+            rayleigh += v[i] * s;
+        }
+        (rayleigh.max(0.0), v)
+    };
+
+    let (lam0, v0) = power_step(None, 0.0, 0);
+    let (lam1, v1) = if n > 1 {
+        power_step(Some(&v0), lam0, 17)
+    } else {
+        (0.0, vec![0.0; n])
+    };
+    ([lam0, lam1], v0, v1)
+}
+
+/// Computes genome-wide Recombination Hotspot / Coldspot Flux Phi_bp(u) and Cumulative Reticulation Strain rho(u).
+fn compute_recombination_landscape(
+    aln: &Alignment,
+    scan_res: &ScanResult,
+    breakpoints: &[VisualizationBreakpoint],
+) -> RecombinationLandscape {
+    let l = aln.length.max(1);
+    let n_grid = l.clamp(60, 400);
+    let mut grid_x = Vec::with_capacity(n_grid);
+    for g in 0..n_grid {
+        let u = 1 + ((g * (l.saturating_sub(1))) / (n_grid.saturating_sub(1).max(1)));
+        grid_x.push(u);
+    }
+    grid_x.dedup();
+    let m = grid_x.len();
+
+    let sigma = ((l as f64) / 45.0).clamp(15.0, 1500.0);
+    let two_sigma_sq = 2.0 * sigma * sigma;
+
+    let mut flux_phi = vec![0.0f64; m];
+    let mut strain_density = vec![0.0f64; m];
+
+    // 1. Gaussian-smoothed breakpoint flux Phi_bp(u) weighted by physical support Z_phys
+    for bp in breakpoints {
+        let bp_u = bp.breakpoint_nt as f64;
+        let weight = bp.kinetic_z.max(1.0);
+        let plat_sigma = (bp.plateau_width as f64 * 0.5).max(sigma);
+        let denom = 2.0 * plat_sigma * plat_sigma;
+        for (idx, &gx) in grid_x.iter().enumerate() {
+            let d = (gx as f64) - bp_u;
+            flux_phi[idx] += weight * (-d * d / denom).exp();
+        }
+    }
+
+    // Also add tract-interior & edge strain density from verified events
+    for ev in &scan_res.events {
+        let u1 = ev.u1.min(l);
+        let u2 = ev.u2.min(l).max(u1);
+        let z_w = ev.z_phys.max(1.0) * (1.0 + (ev.isolates.len() as f64).ln());
+        let span = (u2 - u1 + 1).max(1) as f64;
+        for (idx, &gx) in grid_x.iter().enumerate() {
+            if gx >= u1 && gx <= u2 {
+                strain_density[idx] += z_w / span;
+            }
+            let d1 = (gx as f64) - (u1 as f64);
+            let d2 = (gx as f64) - (u2 as f64);
+            strain_density[idx] += 0.35 * (z_w / sigma) * ((-d1 * d1 / two_sigma_sq).exp() + (-d2 * d2 / two_sigma_sq).exp());
+        }
+    }
+
+    // Normalize flux_phi to Z-density units and round for compact JSON
+    for val in &mut flux_phi {
+        *val = (*val * 1000.0).round() / 1000.0;
+    }
+
+    // 2. Cumulative reticulation strain rho(u) in [0, 1]
+    let mut cumulative_strain = vec![0.0f64; m];
+    let mut run_sum = 0.0f64;
+    for (idx, &sd) in strain_density.iter().enumerate() {
+        run_sum += sd.max(0.0);
+        cumulative_strain[idx] = run_sum;
+    }
+    if run_sum > 1e-12 {
+        for val in &mut cumulative_strain {
+            *val = ((*val / run_sum) * 10000.0).round() / 10000.0;
+        }
+    }
+
+    // 3. Identify statistically enriched Hotspot peaks and conserved Coldspot valleys
+    let mean_flux = flux_phi.iter().sum::<f64>() / (m as f64);
+    let var_flux = flux_phi
+        .iter()
+        .map(|&v| (v - mean_flux) * (v - mean_flux))
+        .sum::<f64>()
+        / (m as f64);
+    let sd_flux = var_flux.sqrt();
+
+    let max_flux = flux_phi.iter().cloned().fold(0.0f64, f64::max);
+    let hotspot_threshold = if max_flux > 0.0 {
+        (mean_flux + 0.85 * sd_flux)
+            .max(0.25 * max_flux)
+            .min(0.85 * max_flux)
+    } else {
+        1.0
+    };
+    let coldspot_threshold = if max_flux > 0.0 {
+        (mean_flux * 0.20).min(0.05 * max_flux).max(0.02)
+    } else {
+        0.0
+    };
+
+    let mut hotspots = Vec::new();
+    let mut coldspots = Vec::new();
+
+    if !breakpoints.is_empty() && max_flux > 0.0 {
+        // Segment contiguous hotspot intervals where flux_phi >= hotspot_threshold
+        let mut i = 0usize;
+        while i < m {
+            if flux_phi[i] >= hotspot_threshold {
+                let start_i = i;
+                let mut peak_i = i;
+                let mut sum_f = 0.0f64;
+                while i < m && flux_phi[i] >= hotspot_threshold {
+                    if flux_phi[i] > flux_phi[peak_i] {
+                        peak_i = i;
+                    }
+                    sum_f += flux_phi[i];
+                    i += 1;
+                }
+                let end_i = i - 1;
+                let s_nt = grid_x[start_i];
+                let e_nt = grid_x[end_i];
+                let pk_nt = grid_x[peak_i];
+                let pk_val = (flux_phi[peak_i] * 100.0).round() / 100.0;
+                let mn_val = (sum_f / ((end_i - start_i + 1) as f64) * 100.0).round() / 100.0;
+                let margin = (sigma as usize).max(25);
+                let ev_cnt = breakpoints
+                    .iter()
+                    .filter(|b| {
+                        b.breakpoint_nt + margin >= s_nt && b.breakpoint_nt <= e_nt + margin
+                    })
+                    .count()
+                    .max(1);
+                hotspots.push(RecombinationRegion {
+                    start: s_nt,
+                    end: e_nt,
+                    peak_nt: pk_nt,
+                    peak_flux: pk_val,
+                    mean_flux: mn_val,
+                    event_count: ev_cnt,
+                    label: format!("Hotspot @ nt {}", pk_nt),
+                });
+            } else {
+                i += 1;
+            }
+        }
+
+        // Segment contiguous conserved coldspot basins where flux_phi <= coldspot_threshold
+        // and no verified event breakpoint falls inside the core basin
+        let min_cold_span = (l / 12).max(50);
+        let mut j = 0usize;
+        while j < m {
+            if flux_phi[j] <= coldspot_threshold {
+                let start_j = j;
+                let mut min_j = j;
+                let mut sum_f = 0.0f64;
+                while j < m && flux_phi[j] <= coldspot_threshold {
+                    if flux_phi[j] < flux_phi[min_j] {
+                        min_j = j;
+                    }
+                    sum_f += flux_phi[j];
+                    j += 1;
+                }
+                let end_j = j - 1;
+                let s_nt = grid_x[start_j];
+                let e_nt = grid_x[end_j];
+                if e_nt.saturating_sub(s_nt) >= min_cold_span {
+                    let mid_nt = (s_nt + e_nt) / 2;
+                    let mn_val = (sum_f / ((end_j - start_j + 1) as f64) * 1000.0).round() / 1000.0;
+                    coldspots.push(RecombinationRegion {
+                        start: s_nt,
+                        end: e_nt,
+                        peak_nt: mid_nt,
+                        peak_flux: (flux_phi[min_j] * 1000.0).round() / 1000.0,
+                        mean_flux: mn_val,
+                        event_count: 0,
+                        label: format!("Coldspot [nt {}–{}]", s_nt, e_nt),
+                    });
+                }
+            } else {
+                j += 1;
+            }
+        }
+    } else {
+        coldspots.push(RecombinationRegion {
+            start: 1,
+            end: l,
+            peak_nt: l / 2,
+            peak_flux: 0.0,
+            mean_flux: 0.0,
+            event_count: 0,
+            label: format!("Conserved Clonal Alignment [nt 1–{}]", l),
+        });
+    }
+
+    RecombinationLandscape {
+        grid_x,
+        flux_phi,
+        cumulative_strain,
+        hotspot_threshold: (hotspot_threshold * 1000.0).round() / 1000.0,
+        coldspot_threshold: (coldspot_threshold * 1000.0).round() / 1000.0,
+        hotspots,
+        coldspots,
     }
 }
 
@@ -1008,21 +1308,32 @@ fn compute_mds_2d(
         return res;
     }
 
+    // Subsample sites when N^2 * s_len is large to keep visualization distance calculation < 5 ms
+    let site_stride = if n * n * s_len > 8_000_000 {
+        (s_len / 500).max(1)
+    } else {
+        1
+    };
+
     // Pairwise Hamming distance matrix
     let mut d_sq = vec![0.0f64; n * n];
     for i in 0..n {
+        let row_i = aln.row(i);
         for j in (i + 1)..n {
+            let row_j = aln.row(j);
             let mut diff = 0usize;
             let mut valid = 0usize;
-            for u in start_site..s_end {
-                let ci = aln.get(i, u);
-                let cj = aln.get(j, u);
+            let mut u = start_site;
+            while u < s_end {
+                let ci = row_i[u];
+                let cj = row_j[u];
                 if ci > 0 && cj > 0 {
                     valid += 1;
                     if ci != cj {
                         diff += 1;
                     }
                 }
+                u += site_stride;
             }
             let dist = if valid > 0 {
                 diff as f64 / valid as f64
@@ -1055,21 +1366,17 @@ fn compute_mds_2d(
         }
     }
 
-    let eigh = symmetric_jacobi_eigh(&b, n);
-    let lam0 = eigh.eigenvalues[0].max(0.0).sqrt();
+    let (evals, v0, v1) = top_two_eigenpairs(&b, n);
+    let lam0 = evals[0].max(0.0).sqrt();
     let lam1 = if n > 1 {
-        eigh.eigenvalues[1].max(0.0).sqrt()
+        evals[1].max(0.0).sqrt()
     } else {
         0.0
     };
 
     for i in 0..n {
-        let x = eigh.eigenvectors[i * n] * lam0;
-        let y = if n > 1 {
-            eigh.eigenvectors[i * n + 1] * lam1
-        } else {
-            0.0
-        };
+        let x = v0[i] * lam0;
+        let y = if n > 1 { v1[i] * lam1 } else { 0.0 };
         res.insert(
             aln.taxa[i].clone(),
             vec![
@@ -1138,21 +1445,31 @@ fn compute_canonical_manifold(
     let n = aln.num_taxa;
     let l = aln.length;
 
+    let site_stride = if n * n * l > 8_000_000 {
+        (l / 500).max(1)
+    } else {
+        1
+    };
+
     // 1. Whole-alignment pairwise distance matrix D_glob
     let mut d_glob_sq = vec![0.0f64; n * n];
     for i in 0..n {
+        let row_i = aln.row(i);
         for j in (i + 1)..n {
+            let row_j = aln.row(j);
             let mut diff = 0usize;
             let mut valid = 0usize;
-            for u in 0..l {
-                let ci = aln.get(i, u);
-                let cj = aln.get(j, u);
+            let mut u = 0usize;
+            while u < l {
+                let ci = row_i[u];
+                let cj = row_j[u];
                 if ci > 0 && cj > 0 {
                     valid += 1;
                     if ci != cj {
                         diff += 1;
                     }
                 }
+                u += site_stride;
             }
             let dist = if valid > 0 {
                 diff as f64 / valid as f64
@@ -1185,11 +1502,11 @@ fn compute_canonical_manifold(
         }
     }
 
-    let eigh = symmetric_jacobi_eigh(&b, n);
+    let (evals, v0, v1) = top_two_eigenpairs(&b, n);
     let k_eff = n.min(2);
-    let lam0 = eigh.eigenvalues[0].max(1e-9);
+    let lam0 = evals[0].max(1e-9);
     let lam1 = if k_eff > 1 {
-        eigh.eigenvalues[1].max(1e-9)
+        evals[1].max(1e-9)
     } else {
         1e-9
     };
@@ -1199,9 +1516,9 @@ fn compute_canonical_manifold(
 
     let mut ref_coords = BTreeMap::new();
     for i in 0..n {
-        let x = eigh.eigenvectors[i * n] * sqrt_lam0;
+        let x = v0[i] * sqrt_lam0;
         let y = if k_eff > 1 {
-            eigh.eigenvectors[i * n + 1] * sqrt_lam1
+            v1[i] * sqrt_lam1
         } else {
             0.0
         };
@@ -1230,11 +1547,12 @@ fn compute_canonical_manifold(
     // 2. Continuous Out-of-sample Gower Trajectory
     // Slide a local window of length w = min(300, max(50, L / 20)) across alignment
     let win = (l / 20).clamp(50, 300);
-    let step = (win / 4).max(5);
+    let step = (win / 4).max(5).max(l / 120);
     let inv_sqrt_lam0 = 1.0 / sqrt_lam0;
     let inv_sqrt_lam1 = 1.0 / sqrt_lam1;
 
     let mut gower_trajectory = Vec::new();
+    let cand_row = aln.row(cand_idx);
 
     let mut p = 0usize;
     while p + win <= l {
@@ -1243,11 +1561,12 @@ fn compute_canonical_manifold(
         // Compute local distance vector d_loc^2 from cand_idx to all taxa
         let mut d_loc_sq = vec![0.0f64; n];
         for j in 0..n {
+            let row_j = aln.row(j);
             let mut diff = 0usize;
             let mut valid = 0usize;
             for u in p..(p + win) {
-                let cr = aln.get(cand_idx, u);
-                let cj = aln.get(j, u);
+                let cr = cand_row[u];
+                let cj = row_j[u];
                 if cr > 0 && cj > 0 {
                     valid += 1;
                     if cr != cj {
@@ -1268,9 +1587,9 @@ fn compute_canonical_manifold(
         let mut sum1 = 0.0f64;
         for j in 0..n {
             let delta = row_means[j] - d_loc_sq[j];
-            sum0 += eigh.eigenvectors[j * n] * delta;
+            sum0 += v0[j] * delta;
             if k_eff > 1 {
-                sum1 += eigh.eigenvectors[j * n + 1] * delta;
+                sum1 += v1[j] * delta;
             }
         }
         let z_x = 0.5 * inv_sqrt_lam0 * sum0;

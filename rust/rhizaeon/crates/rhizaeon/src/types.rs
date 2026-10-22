@@ -255,6 +255,30 @@ pub struct CanonicalManifold {
     pub is_colinear: bool,
 }
 
+/// Enriched hotspot or conserved coldspot interval in the genome-wide recombination profile
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecombinationRegion {
+    pub start: usize,
+    pub end: usize,
+    pub peak_nt: usize,
+    pub peak_flux: f64,
+    pub mean_flux: f64,
+    pub event_count: usize,
+    pub label: String,
+}
+
+/// Genome-wide recombination hotspot / coldspot flux and cumulative strain profile
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecombinationLandscape {
+    pub grid_x: Vec<usize>,
+    pub flux_phi: Vec<f64>,
+    pub cumulative_strain: Vec<f64>,
+    pub hotspot_threshold: f64,
+    pub coldspot_threshold: f64,
+    pub hotspots: Vec<RecombinationRegion>,
+    pub coldspots: Vec<RecombinationRegion>,
+}
+
 /// Complete rich visualization dossier emitted by RhizAeon
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisualizationDossier {
@@ -268,5 +292,7 @@ pub struct VisualizationDossier {
     pub subspaces: VisualizationSubspaces,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub canonical_manifold: Option<CanonicalManifold>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recombination_landscape: Option<RecombinationLandscape>,
     pub sequences: BTreeMap<String, String>,
 }

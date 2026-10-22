@@ -976,6 +976,9 @@ impl SequenceDueDiligence {
                         if t_idx != home_global && rt == rh {
                             is_home_priv = false;
                         }
+                        if !is_cand_priv && !is_home_priv {
+                            break;
+                        }
                     }
                     if is_cand_priv {
                         n_priv_cand += 1;

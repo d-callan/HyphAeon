@@ -3,10 +3,13 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import wasmPkg, {
     initSync,
+    engine_version,
+    engine_build_timestamp,
     scan_fasta_json,
     count_informative_sites,
     scan_fasta_dossier_json,
     scan_fasta_html,
+    scan_fasta_bundle,
 } from './pkg/rhizaeon_wasm.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -164,15 +167,18 @@ async function run() {
         fail("Standalone HTML generation failed");
     }
 
+    const bundle = scan_fasta_bundle(hivFasta, "HIV-1 KAL153 Bundle", 16);
+    console.log(`  Engine version: ${engine_version()} (${engine_build_timestamp()})`);
+    if (bundle && bundle.result && bundle.html && bundle.landscape && bundle.landscape.grid_x.length > 0) {
+        console.log("  >>> PASS: scan_fasta_bundle returned result + html + landscape!");
+    } else {
+        fail("scan_fasta_bundle validation failed");
+    }
+
     console.log("================================================================================");
-    console.log("  ALL WASM VERIFICATION CHECKS (SCAN + DOSSIER + HTML) PASSED!");
+    console.log("  ALL WASM VERIFICATION CHECKS (SCAN + DOSSIER + HTML + BUNDLE) PASSED!");
     console.log("================================================================================");
 }
-
-run().catch(err => {
-    console.error("Error running WASM test:", err);
-    process.exit(1);
-});
 
 run().catch(err => {
     console.error("Error running WASM test:", err);

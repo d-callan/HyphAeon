@@ -15,5 +15,8 @@ pub mod visualization;
 
 pub use engine::RhizAeonEngine;
 pub use fasta::parse_fasta;
-pub use types::{Alignment, RecombinationEvent, ScanResult, VisualizationDossier};
+pub use types::{
+    Alignment, RecombinationEvent, RecombinationLandscape, RecombinationRegion, ScanResult,
+    VisualizationDossier,
+};
 pub use visualization::{generate_standalone_html, generate_visualization_dossier};

@@ -575,10 +575,10 @@
     </div>
   </div>
 
-  <!-- LEVEL 1: Macro Minimap & Draggable Brush -->
+  <!-- LEVEL 1: Macro Minimap & Draggable Brush + Recombination Hotspot / Coldspot Landscape -->
   <div class="panel">
     <div class="panel-header">
-      <span>1 &middot; Genome Partition Architecture &amp; Minimap Navigator</span>
+      <span>1 &middot; Genome Partition Architecture, Hotspot/Coldspot Landscape &amp; Minimap Navigator</span>
       <div style="display:flex; gap:6px; align-items:center;">
         <span style="font-size:11px; font-weight:normal; color:var(--text-muted); margin-right:8px;">
           View: <b id="coord-view-label" style="color:var(--cyan)">1 &ndash; 3,000 nt</b>
@@ -601,6 +601,26 @@
         <span>1 nt (5' Terminus)</span>
         <span>Click anywhere on minimap to jump &middot; Double-click to reset view</span>
         <span>3,000 nt (3' Terminus)</span>
+      </div>
+
+      <!-- Genome-Wide Recombination Hotspot / Coldspot & Cumulative Strain Profile -->
+      <div style="margin-top:12px; border-top:1px solid var(--border); padding-top:10px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:6px;">
+          <div style="font-size:11.5px; font-weight:700; color:var(--text-main); display:flex; align-items:center; gap:8px;">
+            <span>Genome-Wide Recombination Hotspot / Coldspot Flux &Phi;<sub>bp</sub>(u) &amp; Cumulative Strain &rho;(u)</span>
+            <span id="landscape-summary-badge" class="pill-badge" style="background:rgba(213,94,0,0.14); color:#d55e00; border:1px solid rgba(213,94,0,0.3);">0 Hotspots &middot; 0 Coldspots</span>
+          </div>
+          <div style="display:flex; gap:12px; font-size:10.5px; color:var(--text-dim); align-items:center; flex-wrap:wrap;">
+            <span><span style="display:inline-block; width:10px; height:3px; background:#d55e00; vertical-align:middle;"></span> Breakpoint Flux &Phi;<sub>bp</sub>(u)</span>
+            <span><span style="display:inline-block; width:10px; height:2px; border-top:2px dashed #0284c7; vertical-align:middle;"></span> Cumulative Strain &rho;(u)</span>
+            <span><span style="display:inline-block; width:10px; height:8px; background:rgba(239,68,68,0.22); border:1px solid #ef4444; vertical-align:middle;"></span> Enriched Hotspot</span>
+            <span><span style="display:inline-block; width:10px; height:8px; background:rgba(6,182,212,0.16); border:1px dashed #06b6d4; vertical-align:middle;"></span> Conserved Coldspot</span>
+          </div>
+        </div>
+        <div style="position:relative; height:112px; width:100%; background:var(--bg-surface-elevated); border:1px solid var(--border-bright); border-radius:4px; overflow:hidden;">
+          <canvas id="landscape-canvas" style="width:100%; height:100%; display:block; cursor:pointer;" title="Click any hotspot peak or coldspot basin to zoom into that genomic region"></canvas>
+        </div>
+        <div id="landscape-badges-row" style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;"></div>
       </div>
     </div>
   </div>
@@ -900,20 +920,51 @@ __RHIZAEON_DATA_JSON__
         return { ctx, width: rect.width, height: rect.height };
       }
 
+      function getActiveCohortSubset(maxTaxa = 42) {
+          const allAvailable = DATA.taxa.filter(t => DATA.sequences && DATA.sequences[t]);
+          if (allAvailable.length <= maxTaxa) return allAvailable;
+          const subset = [];
+          const pushUnique = (t) => {
+              if (t && DATA.sequences && DATA.sequences[t] && !subset.includes(t)) subset.push(t);
+          };
+          pushUnique(state.focalTaxon);
+          pushUnique(state.p1Taxon);
+          pushUnique(state.p2Taxon);
+          getActiveEventRecombinants().forEach(t => { if (subset.length < Math.floor(maxTaxa * 0.55)) pushUnique(t); });
+          DATA.breakpoints.forEach(b => {
+              if (subset.length < Math.floor(maxTaxa * 0.75)) {
+                  pushUnique(b.recombinant);
+                  pushUnique(b.parent_1);
+                  pushUnique(b.parent_2);
+              }
+          });
+          const remaining = allAvailable.filter(t => !subset.includes(t));
+          const stride = Math.max(1, Math.floor(remaining.length / Math.max(1, maxTaxa - subset.length)));
+          for (let i = 0; i < remaining.length && subset.length < maxTaxa; i += stride) {
+              pushUnique(remaining[i]);
+          }
+          return subset;
+      }
+
       function computeDistanceMatrix(spans, taxaList, sequences, L_TOTAL) {
           const N = taxaList.length;
           const D = [];
           for (let i = 0; i < N; i++) D[i] = new Float64Array(N);
+          let totalSpan = 0;
+          for (const [s0, s1] of spans) totalSpan += Math.max(0, s1 - s0 + 1);
+          const siteStride = (N * N * totalSpan > 4000000) ? Math.max(1, Math.floor(totalSpan / 500)) : 1;
 
           for (let i = 0; i < N; i++) {
               const seq_i = sequences[taxaList[i]];
+              if (!seq_i) continue;
               for (let j = i + 1; j < N; j++) {
                   const seq_j = sequences[taxaList[j]];
+                  if (!seq_j) continue;
                   let diffs = 0, valid = 0;
                   for (const [s0, s1] of spans) {
                       const start = Math.max(0, s0 - 1);
-                      const end = Math.min(L_TOTAL, s1);
-                      for (let k = start; k < end; k++) {
+                      const end = Math.min(L_TOTAL, Math.min(seq_i.length, s1));
+                      for (let k = start; k < end; k += siteStride) {
                           const c1 = seq_i[k];
                           const c2 = seq_j[k];
                           if (c1 !== '-' && c2 !== '-') {
@@ -1453,22 +1504,26 @@ __RHIZAEON_DATA_JSON__
 
       // Dynamic Classical MDS for Any Alignment Partition (< 5ms)
       function computeDynamicMDS(startNt, endNt) {
-        const taxa = DATA.taxa;
+        const taxa = getActiveCohortSubset(44);
         const N = taxa.length;
         const s0 = Math.max(0, startNt - 1);
         const s1 = Math.min(L_TOTAL, endNt);
         const L = s1 - s0;
-        if (L <= 0) return { coords: {}, distMatrix: [] };
+        if (L <= 0 || N === 0) return { coords: {}, distMatrix: [], taxa: [] };
+        const siteStride = (N * N * L > 4000000) ? Math.max(1, Math.floor(L / 500)) : 1;
 
         const D = [];
         for (let i = 0; i < N; i++) D[i] = new Float64Array(N);
 
         for (let i = 0; i < N; i++) {
           const seq_i = DATA.sequences[taxa[i]];
+          if (!seq_i) continue;
           for (let j = i + 1; j < N; j++) {
             const seq_j = DATA.sequences[taxa[j]];
+            if (!seq_j) continue;
             let diffs = 0, valid = 0;
-            for (let k = s0; k < s1; k++) {
+            const lim = Math.min(s1, seq_i.length, seq_j.length);
+            for (let k = s0; k < lim; k += siteStride) {
               const c1 = seq_i[k];
               const c2 = seq_j[k];
               if (c1 !== '-' && c2 !== '-') {
@@ -1554,7 +1609,7 @@ __RHIZAEON_DATA_JSON__
         for (let i = 0; i < N; i++) {
           coords[taxa[i]] = [e1.vec[i] * s1Val, e2.vec[i] * s2Val];
         }
-        return { coords, distMatrix: D };
+        return { coords, distMatrix: D, taxa };
       }
 
       // Populate Dropdowns
@@ -2309,7 +2364,7 @@ __RHIZAEON_DATA_JSON__
         drawMDSPlot(canvasSubspaceP2, res2.coords, 'part2');
 
         // Quantitative Distance Readouts
-        const taxa = DATA.taxa;
+        const taxa = res1.taxa || DATA.taxa;
         const rIdx = taxa.indexOf(state.focalTaxon);
         const p1Idx = taxa.indexOf(state.p1Taxon);
         const p2Idx = taxa.indexOf(state.p2Taxon);
@@ -2659,16 +2714,17 @@ __RHIZAEON_DATA_JSON__
       window.setFocalTaxon = setFocalTaxon;
 
       function renderTrees() {
+        const treeTaxa = getActiveCohortSubset(38);
         let myBps = DATA.breakpoints.filter(b => b.recombinant === state.focalTaxon || (b.isolates && b.isolates.includes(state.focalTaxon)));
         if (myBps.length === 0 && state.activeEventId) {
             myBps = DATA.breakpoints.filter(b => b.event_id === state.activeEventId);
         }
         if (myBps.length === 0) {
             // Just draw one whole tree
-            const D = computeDistanceMatrix([[1, L_TOTAL]], DATA.taxa, DATA.sequences, L_TOTAL);
-            const root = neighborJoining(D, DATA.taxa);
-            drawRectangularTree(document.getElementById('canvas-tree-p1'), root, DATA.taxa, state, DATA.taxa_meta);
-            drawRectangularTree(document.getElementById('canvas-tree-p2'), root, DATA.taxa, state, DATA.taxa_meta);
+            const D = computeDistanceMatrix([[1, L_TOTAL]], treeTaxa, DATA.sequences, L_TOTAL);
+            const root = neighborJoining(D, treeTaxa);
+            drawRectangularTree(document.getElementById('canvas-tree-p1'), root, treeTaxa, state, DATA.taxa_meta);
+            drawRectangularTree(document.getElementById('canvas-tree-p2'), root, treeTaxa, state, DATA.taxa_meta);
             const t1 = document.getElementById('tree-p1-title');
             const t2 = document.getElementById('tree-p2-title');
             if (t1) t1.textContent = 'Whole-Genome Alignment Tree (nt 1..' + L_TOTAL + ')';
@@ -2726,14 +2782,14 @@ __RHIZAEON_DATA_JSON__
         if (u2 < L_TOTAL) bgSpans.push([u2 + 1, L_TOTAL]);
         if (bgSpans.length === 0) bgSpans.push([1, L_TOTAL]);
 
-        const D_tract = computeDistanceMatrix(tractSpans, DATA.taxa, DATA.sequences, L_TOTAL);
-        const root_tract = neighborJoining(D_tract, DATA.taxa);
+        const D_tract = computeDistanceMatrix(tractSpans, treeTaxa, DATA.sequences, L_TOTAL);
+        const root_tract = neighborJoining(D_tract, treeTaxa);
         
-        const D_bg = computeDistanceMatrix(bgSpans, DATA.taxa, DATA.sequences, L_TOTAL);
-        const root_bg = neighborJoining(D_bg, DATA.taxa);
+        const D_bg = computeDistanceMatrix(bgSpans, treeTaxa, DATA.sequences, L_TOTAL);
+        const root_bg = neighborJoining(D_bg, treeTaxa);
 
-        drawRectangularTree(document.getElementById('canvas-tree-p1'), root_bg, DATA.taxa, state, DATA.taxa_meta);
-        drawRectangularTree(document.getElementById('canvas-tree-p2'), root_tract, DATA.taxa, state, DATA.taxa_meta);
+        drawRectangularTree(document.getElementById('canvas-tree-p1'), root_bg, treeTaxa, state, DATA.taxa_meta);
+        drawRectangularTree(document.getElementById('canvas-tree-p2'), root_tract, treeTaxa, state, DATA.taxa_meta);
 
         const t1 = document.getElementById('tree-p1-title');
         const t2 = document.getElementById('tree-p2-title');
@@ -2742,8 +2798,196 @@ __RHIZAEON_DATA_JSON__
         if (t2) t2.textContent = `Recombinant Tract Tree (nt ${u1}–${u2})`;
       }
 
+      function renderLandscape() {
+        const canvas = document.getElementById('landscape-canvas');
+        if (!canvas) return;
+        const { ctx, width, height } = setupCanvas(canvas);
+        ctx.clearRect(0, 0, width, height);
+
+        const land = DATA.recombination_landscape;
+        if (!land || !land.grid_x || land.grid_x.length === 0) return;
+
+        const gx = land.grid_x;
+        const phi = land.flux_phi || [];
+        const rho = land.cumulative_strain || [];
+        const hotspots = land.hotspots || [];
+        const coldspots = land.coldspots || [];
+
+        const badgeEl = document.getElementById('landscape-summary-badge');
+        if (badgeEl) {
+          badgeEl.innerHTML = `${hotspots.length} Enriched Hotspot${hotspots.length === 1 ? '' : 's'} &middot; ${coldspots.length} Conserved Coldspot${coldspots.length === 1 ? '' : 's'}`;
+        }
+
+        const padTop = 18;
+        const padBot = 16;
+        const plotH = Math.max(20, height - padTop - padBot);
+
+        // 1. Shade Coldspot Basins (cyan/teal)
+        coldspots.forEach(cs => {
+          const xL = ((cs.start - 1) / L_TOTAL) * width;
+          const xR = (cs.end / L_TOTAL) * width;
+          const w = Math.max(2, xR - xL);
+          ctx.fillStyle = 'rgba(6, 182, 212, 0.12)';
+          ctx.fillRect(xL, padTop, w, plotH);
+          ctx.strokeStyle = 'rgba(6, 182, 212, 0.45)';
+          ctx.setLineDash([3, 3]);
+          ctx.strokeRect(xL, padTop, w, plotH);
+          ctx.setLineDash([]);
+          if (w > 56) {
+            ctx.fillStyle = '#0891b2';
+            ctx.font = 'bold 8.5px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('COLDSPOT', xL + w / 2, height - 4);
+          }
+        });
+
+        // 2. Shade Enriched Hotspot Regions (vermilion/red)
+        hotspots.forEach(hs => {
+          const xL = ((hs.start - 1) / L_TOTAL) * width;
+          const xR = (hs.end / L_TOTAL) * width;
+          const w = Math.max(4, xR - xL);
+          ctx.fillStyle = 'rgba(239, 68, 68, 0.20)';
+          ctx.fillRect(xL, padTop, w, plotH);
+          ctx.strokeStyle = 'rgba(220, 38, 38, 0.65)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(xL, padTop, w, plotH);
+        });
+
+        // 3. Draw Current Zoom Window Highlight
+        const zL = ((state.zoomStart - 1) / L_TOTAL) * width;
+        const zR = (state.zoomEnd / L_TOTAL) * width;
+        ctx.fillStyle = 'rgba(59, 130, 246, 0.06)';
+        ctx.fillRect(zL, 0, Math.max(2, zR - zL), height);
+
+        // 4. Draw Hotspot Threshold Line
+        const maxPhi = Math.max(1.0, ...phi, (land.hotspot_threshold || 0) * 1.15);
+        if (land.hotspot_threshold > 0 && hotspots.length > 0) {
+          const yThresh = padTop + plotH - (land.hotspot_threshold / maxPhi) * plotH;
+          ctx.strokeStyle = 'rgba(220, 38, 38, 0.5)';
+          ctx.setLineDash([4, 4]);
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(0, yThresh);
+          ctx.lineTo(width, yThresh);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        // 5. Draw Filled Breakpoint Flux Curve Phi_bp(u)
+        if (gx.length > 1) {
+          ctx.beginPath();
+          ctx.moveTo(0, padTop + plotH);
+          for (let i = 0; i < gx.length; i++) {
+            const x = ((gx[i] - 1) / L_TOTAL) * width;
+            const y = padTop + plotH - (phi[i] / maxPhi) * plotH;
+            ctx.lineTo(x, y);
+          }
+          ctx.lineTo(width, padTop + plotH);
+          ctx.closePath();
+          ctx.fillStyle = 'rgba(213, 94, 0, 0.24)';
+          ctx.fill();
+
+          ctx.beginPath();
+          for (let i = 0; i < gx.length; i++) {
+            const x = ((gx[i] - 1) / L_TOTAL) * width;
+            const y = padTop + plotH - (phi[i] / maxPhi) * plotH;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.strokeStyle = '#d55e00';
+          ctx.lineWidth = 1.8;
+          ctx.stroke();
+        }
+
+        // 6. Draw Cumulative Recombination Strain rho(u)
+        const maxRho = Math.max(1e-6, ...(rho.length ? rho : [1.0]));
+        if (gx.length > 1 && rho.length === gx.length && hotspots.length > 0) {
+          ctx.beginPath();
+          for (let i = 0; i < gx.length; i++) {
+            const x = ((gx[i] - 1) / L_TOTAL) * width;
+            const y = padTop + plotH - (rho[i] / maxRho) * (plotH * 0.90);
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.strokeStyle = '#0284c7';
+          ctx.setLineDash([4, 3]);
+          ctx.lineWidth = 1.6;
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        // 7. Draw Hotspot Peak Markers & Labels
+        hotspots.forEach((hs, idx) => {
+          const xPk = ((hs.peak_nt - 1) / L_TOTAL) * width;
+          const yPk = padTop + plotH - (hs.peak_flux / maxPhi) * plotH;
+          ctx.beginPath();
+          ctx.arc(xPk, Math.max(padTop + 3, yPk), 3.5, 0, 2 * Math.PI);
+          ctx.fillStyle = '#dc2626';
+          ctx.fill();
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+
+          if (idx < 6) {
+            ctx.fillStyle = '#b91c1c';
+            ctx.font = 'bold 9px monospace';
+            ctx.textAlign = (xPk > width - 70) ? 'right' : (xPk < 50 ? 'left' : 'center');
+            ctx.fillText(`🔥 nt ${hs.peak_nt.toLocaleString()}`, xPk, Math.max(11, yPk - 5));
+          }
+        });
+
+        // 8. Populate clickable hotspot / coldspot pills below canvas
+        const badgesRow = document.getElementById('landscape-badges-row');
+        if (badgesRow) {
+          badgesRow.innerHTML = '';
+          hotspots.slice(0, 6).forEach(hs => {
+            const btn = document.createElement('button');
+            btn.className = 'btn btn-outline';
+            btn.style.cssText = 'padding:2px 7px; font-size:10px; border-color:rgba(220,38,38,0.45); color:#dc2626; background:rgba(239,68,68,0.08);';
+            btn.innerHTML = `<b>Hotspot @ nt ${hs.peak_nt.toLocaleString()}</b> [${hs.start.toLocaleString()}–${hs.end.toLocaleString()}] (${hs.event_count} bp)`;
+            btn.onclick = () => {
+              const pad = Math.max(150, Math.round((hs.end - hs.start) * 1.2));
+              window.jumpTo(hs.start - pad, hs.end + pad);
+            };
+            badgesRow.appendChild(btn);
+          });
+          coldspots.slice(0, 5).forEach(cs => {
+            const btn = document.createElement('button');
+            btn.className = 'btn btn-outline';
+            btn.style.cssText = 'padding:2px 7px; font-size:10px; border-color:rgba(6,182,212,0.45); color:#0891b2; background:rgba(6,182,212,0.08);';
+            btn.innerHTML = `<b>Coldspot</b> [nt ${cs.start.toLocaleString()}–${cs.end.toLocaleString()}] (${(cs.end - cs.start + 1).toLocaleString()} nt conserved)`;
+            btn.onclick = () => {
+              window.jumpTo(cs.start, cs.end);
+            };
+            badgesRow.appendChild(btn);
+          });
+        }
+
+        if (!canvas._hasClickHandler) {
+          canvas._hasClickHandler = true;
+          canvas.addEventListener('click', (e) => {
+            const r = canvas.getBoundingClientRect();
+            const clickNt = Math.round(((e.clientX - r.left) / Math.max(1, r.width)) * L_TOTAL);
+            const hitHs = (DATA.recombination_landscape.hotspots || []).find(h => clickNt >= h.start - 100 && clickNt <= h.end + 100);
+            if (hitHs) {
+              const pad = Math.max(200, Math.round((hitHs.end - hitHs.start) * 1.5));
+              window.jumpTo(hitHs.start - pad, hitHs.end + pad);
+              return;
+            }
+            const hitCs = (DATA.recombination_landscape.coldspots || []).find(c => clickNt >= c.start && clickNt <= c.end);
+            if (hitCs) {
+              window.jumpTo(hitCs.start, hitCs.end);
+              return;
+            }
+            const span = Math.min(L_TOTAL, Math.max(500, Math.round(L_TOTAL * 0.15)));
+            window.jumpTo(clickNt - Math.round(span / 2), clickNt + Math.round(span / 2));
+          });
+        }
+      }
+
       function refreshAll() {
         renderMinimap();
+        renderLandscape();
         renderSignals();
         renderBaseBrowser();
         renderSubspaces();

@@ -52,17 +52,30 @@ pub fn is_true_sister_pair(aln: &Alignment, i: usize, j: usize, d_sister: f64) -
         return true;
     }
     let mut max_asym = 0.0f64;
-    for k in 0..aln.num_taxa {
+    let mut min_signed = f64::INFINITY;
+    let mut max_signed = f64::NEG_INFINITY;
+    let stride = (aln.num_taxa / 48).max(1);
+    let mut k = 0usize;
+    while k < aln.num_taxa {
         if k != i && k != j {
             let dik = compute_pairwise_distance(aln, i, k);
             let djk = compute_pairwise_distance(aln, j, k);
-            let asym = (dik - djk).abs();
+            let signed = dik - djk;
+            let asym = signed.abs();
             if asym > max_asym {
                 max_asym = asym;
             }
+            if signed < min_signed {
+                min_signed = signed;
+            }
+            if signed > max_signed {
+                max_signed = signed;
+            }
         }
+        k += stride;
     }
-    max_asym <= 0.45 * dij + 1e-6
+    let spread = 0.5 * (max_signed - min_signed).max(0.0);
+    max_asym <= 0.45 * dij + 1e-6 || (aln.num_taxa > 32 && spread <= 0.30 * dij + 1e-6)
 }
 
 /// Computes empirical scale-invariant sister and clade distance thresholds from the alignment.
@@ -134,14 +147,15 @@ pub fn compute_scale_invariant_distance_thresholds(aln: &Alignment) -> (f64, f64
     } else {
         false
     };
-    let d_sister = if is_true_sister_min_pair {
+    let mut d_sister = if is_true_sister_min_pair {
         (d_p01 + 1e-9).max(eff_sister_floor)
     } else {
         d_p01.max(eff_sister_floor)
     };
 
     let idx_10 = (0.10 * (dists.len() as f64)).floor() as usize;
-    let d_p10 = dists[idx_10.min(dists.len() - 1)]
+    let raw_p10 = dists[idx_10.min(dists.len() - 1)];
+    let d_p10 = raw_p10
         .max(eff_clade_floor)
         .max(1.5 * d_sister);
 
@@ -154,8 +168,13 @@ pub fn compute_scale_invariant_distance_thresholds(aln: &Alignment) -> (f64, f64
             let mut max_gap = 0.0f64;
             let mut best_k = s_idx;
             let span_ref = (dists[e_idx] - dists[s_idx]).max(1e-9);
+            let upper_mode_bound = if n > 64 {
+                (2.2 * raw_p10.max(d_sister)).min(3.0 * d_p10)
+            } else {
+                3.0 * d_p10
+            };
             for k in s_idx..e_idx {
-                if dists[k] >= d_sister && dists[k] <= 3.0 * d_p10 {
+                if dists[k] >= d_sister && dists[k] <= upper_mode_bound {
                     let gap = dists[k + 1] - dists[k];
                     if gap > max_gap {
                         max_gap = gap;
@@ -168,6 +187,9 @@ pub fn compute_scale_invariant_distance_thresholds(aln: &Alignment) -> (f64, f64
             if max_gap >= 0.15 * span_ref && rel_ratio >= 1.25 {
                 let gap_mid = 0.5 * (dists[best_k] + dists[best_k + 1]);
                 d_clade = gap_mid.max(d_p10);
+                if n > 64 && rel_ratio >= 1.35 {
+                    d_sister = d_sister.max(dists[best_k] + 1e-6);
+                }
             }
         }
     }
@@ -315,7 +337,7 @@ pub fn select_landmarks_from_pool(
 
     let pool_len = pool.len();
     let max_k = target_k.min(pool_len).max(1);
-    let (_d_sister, d_clade) = compute_scale_invariant_distance_thresholds(alignment);
+    let (d_sister, d_clade) = compute_scale_invariant_distance_thresholds(alignment);
 
     // 1. Seed with the clonal medoid of each lineage cluster present in the pool
     // Pure non-recombinant strains minimize mean intra-cluster distance, ensuring
@@ -334,18 +356,22 @@ pub fn select_landmarks_from_pool(
         let mut best_medoid = comp_in_pool[0];
         let mut best_mean_d = f64::INFINITY;
         let mut best_valid = 0usize;
-        for &i in &comp_in_pool {
-            let sum_d: f64 = comp_in_pool
-                .iter()
-                .map(|&j| {
-                    if i == j {
-                        0.0
-                    } else {
-                        compute_pairwise_distance(alignment, i, j)
+        let stride_m = (comp_in_pool.len() / 24).max(1);
+        for (idx_i, &i) in comp_in_pool.iter().enumerate() {
+            if comp_in_pool.len() > 48 && idx_i % stride_m != 0 {
+                continue;
+            }
+            let mut sum_d = 0.0f64;
+            let mut cnt_j = 0usize;
+            for (idx_j, &j) in comp_in_pool.iter().enumerate() {
+                if idx_j % stride_m == 0 {
+                    if i != j {
+                        sum_d += compute_pairwise_distance(alignment, i, j);
                     }
-                })
-                .sum();
-            let mean_d = sum_d / (comp_in_pool.len() as f64);
+                    cnt_j += 1;
+                }
+            }
+            let mean_d = sum_d / (cnt_j.max(1) as f64);
             let valid = aln_row_valid_count(alignment, i);
             if mean_d < best_mean_d - 1e-12
                 || ((mean_d - best_mean_d).abs() <= 1e-12 && valid > best_valid)
@@ -393,8 +419,9 @@ pub fn select_landmarks_from_pool(
                     best_cand = i;
                 }
             }
-            // Stop adding duplicate haplotypes once all distinct sequences are covered
-            if max_min_d <= 1e-12 {
+            // Stop adding duplicate haplotypes or noisy terminal-branch clones once all
+            // distinct lineages outside d_sister are covered (with at least 3 landmarks).
+            if max_min_d <= 1e-12 || (selected_indices.len() >= 3 && max_min_d <= d_sister) {
                 break;
             }
             selected_indices.push(best_cand);

@@ -127,12 +127,14 @@ impl RhizAeonEngine {
 
         // Auto-Trigger Threshold Policy:
         // Automatically compress to informative SNPs when L > 30,000 bp (bacterial/chromosomal scale)
-        // or when L > 10,000 bp AND N >= 48, or when N * L > 600,000 matrix cells
+        // or when L > 10,000 bp AND N >= 48 (or N * L > 2,000,000 when L >= 10,000).
+        // For L < 10,000 bp (gene/viral alignments), retain full alignment sites so Poisson
+        // terminal drift in large cohorts does not inflate compressed SNP density.
         let should_compress = self.compress_snps.unwrap_or_else(|| {
             (aln_trimmed.length > 30_000 && n > 12)
                 || (aln_trimmed.length > 50_000)
                 || (aln_trimmed.length > 10_000 && n >= 48)
-                || (n * aln_trimmed.length > 600_000)
+                || (aln_trimmed.length >= 10_000 && n * aln_trimmed.length > 2_000_000)
         });
 
         let (aln, snp_map_opt) = if should_compress && m_inf >= m_min {
@@ -214,6 +216,41 @@ impl RhizAeonEngine {
         // than slicing resident tensors, so residency is one row per candidate for any candidate
         // count. Regenerating rather than caching matters because the screener's recombination
         // sieve admits nearly all of N on large cohorts.
+        let mut candidate_pool: Vec<usize> = screening.candidate_recombinant_indices.clone();
+        if candidate_pool.len() > 24 {
+            let sister_thresh = (1.5 * d_sister).max(0.012);
+            let mut sister_clusters: Vec<Vec<usize>> = Vec::new();
+            let mut sorted_cands = candidate_pool.clone();
+            sorted_cands.sort_by(|&a, &b| {
+                screening.v_cont[b]
+                    .partial_cmp(&screening.v_cont[a])
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            for &c_idx in &sorted_cands {
+                let mut placed = false;
+                for comp in &mut sister_clusters {
+                    let rep = comp[0];
+                    if crate::landmarks::is_true_sister_pair(&aln, c_idx, rep, sister_thresh) {
+                        comp.push(c_idx);
+                        placed = true;
+                        break;
+                    }
+                }
+                if !placed {
+                    sister_clusters.push(vec![c_idx]);
+                }
+            }
+            let mut filtered_cands = Vec::new();
+            for mut comp in sister_clusters {
+                comp.truncate(2);
+                filtered_cands.extend(comp);
+            }
+            filtered_cands.sort_unstable();
+            if !filtered_cands.is_empty() {
+                candidate_pool = filtered_cands;
+            }
+        }
+
         let run_candidate_scan = |target_aln: &Alignment,
                                   target_masks: &AttentionMasks,
                                   target_mean_a: &[f64],
@@ -229,7 +266,7 @@ impl RhizAeonEngine {
             // The force row is a by-product here: Pass 2 consumes only A and C.
             let mut f_scratch = vec![0.0f64; l * num_channels];
 
-            for &cand_idx in &target_screening.candidate_recombinant_indices {
+            for &cand_idx in &candidate_pool {
                 attention.compute_attention_row(
                     target_aln,
                     target_landmarks,
@@ -253,7 +290,6 @@ impl RhizAeonEngine {
                     &mut f_scratch,
                     &mut c_row,
                 );
-
                 let parental_pairs = resolver.resolve_all_reticulation_channels(
                     cand_idx,
                     &c_row,
