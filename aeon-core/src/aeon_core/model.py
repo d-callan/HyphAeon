@@ -34,6 +34,11 @@ def _coral_cutoffs(b0, theta_steps):
 DEFAULT_MAX_MEMORY_MB = 1024.0
 
 
+def _resolve_budget_bytes(max_memory_mb):
+    """Resolve an optional MB budget to bytes (None -> DEFAULT_MAX_MEMORY_MB)."""
+    return (DEFAULT_MAX_MEMORY_MB if max_memory_mb is None else max_memory_mb) * 1e6
+
+
 def markov_log_bias(phylo_w1, dist):
     """
     Continuous-time Markov transition-probability log-bias, one per attention head:
@@ -383,6 +388,11 @@ class PhyloAxialTransformer(nn.Module):
 
         self.lrt_ordinal_head = RankConsistentCoralHead(embed_dim, num_thresholds=num_thresholds)
 
+    @property
+    def _num_row_heads(self):
+        """Attention-head count of the row-attention stack (0 when absent)."""
+        return self.row_layers[0].num_heads if len(self.row_layers) > 0 else 0
+
     def precompute_tree_cache(self, dist_matrix, mds_coords, max_memory_mb=None):
         """
         Pre-computes static tree-invariant tensors (continuous-time Markov log-bias,
@@ -398,9 +408,9 @@ class PhyloAxialTransformer(nn.Module):
         """
         device = next(self.parameters()).device
 
-        num_heads = self.row_layers[0].num_heads if len(self.row_layers) > 0 else 0
+        num_heads = self._num_row_heads
         bias_bytes = len(self.row_layers) * num_heads * ((dist_matrix.shape[-1] + 1) ** 2) * 4
-        budget_bytes = (DEFAULT_MAX_MEMORY_MB if max_memory_mb is None else max_memory_mb) * 1e6
+        budget_bytes = _resolve_budget_bytes(max_memory_mb)
         use_static_biases = bias_bytes <= budget_bytes
         if not use_static_biases:
             print(f"[*] Tree attention bias cache requires {bias_bytes / 1e9:.1f} GB "
@@ -557,7 +567,7 @@ class PhyloAxialTransformer(nn.Module):
 
         # Bound the O(B*W*H*(N+1)^2) attention transient by the same budget
         # that governed bias caching (~307 GB/layer unchunked at N=80k).
-        num_heads = self.row_layers[0].num_heads if len(self.row_layers) > 0 else 0
+        num_heads = self._num_row_heads
         budget_bytes = tree_cache.get("max_memory_mb", DEFAULT_MAX_MEMORY_MB) * 1e6
         row_chunk = _attn_row_chunk(budget_bytes, batch_size * window_size, num_heads, num_nodes,
                                     device=x_full.device)
@@ -708,8 +718,8 @@ class PhyloAxialTransformer(nn.Module):
             mds_dup = mds_full.unsqueeze(1).expand(-1, window_size, -1, -1).contiguous().view(batch_size * window_size, num_nodes, 4)
 
         # Bound the O(B*W*H*(N+1)^2) attention transient by the caller budget.
-        budget_bytes = (DEFAULT_MAX_MEMORY_MB if max_memory_mb is None else max_memory_mb) * 1e6
-        num_heads = self.row_layers[0].num_heads if len(self.row_layers) > 0 else 0
+        budget_bytes = _resolve_budget_bytes(max_memory_mb)
+        num_heads = self._num_row_heads
         row_chunk = _attn_row_chunk(budget_bytes, batch_size * window_size, num_heads, num_nodes,
                                     device=x_full.device)
 
