@@ -15,7 +15,7 @@ import torch
 
 
 from .inference import compute_live_adaptive_chunk_sizes
-from .model import tree_cache_layer_bias
+from .model import DEFAULT_MAX_MEMORY_MB, _attn_row_chunk, tree_cache_layer_bias
 
 
 def extract_cross_taxa_attentions_and_embeddings(
@@ -128,28 +128,42 @@ def extract_cross_taxa_attentions_and_embeddings(
                     q = torch.cat([q1 * cos - q2 * sin, q1 * sin + q2 * cos], dim=-1)
                     k = torch.cat([k1 * cos - k2 * sin, k1 * sin + k2 * cos], dim=-1)
 
-                    scores = torch.matmul(q, k.transpose(-2, -1)) / (layer.head_dim ** 0.5)
-                    del q, k
-                    scores.add_(tree_cache_layer_bias(tree_cache, layer, i))
+                    # Bound the O(n_c*H*(N+1)^2) scores/bias transient by the
+                    # same cache budget — row chunks keep it exact (softmax
+                    # is row-wise) and bounded at cohort scale (~307 GB/site
+                    # unchunked at N=80k).
+                    row_chunk = _attn_row_chunk(
+                        tree_cache.get("max_memory_mb", DEFAULT_MAX_MEMORY_MB) * 1e6,
+                        n_c, layer.num_heads, num_nodes) or num_nodes
+                    p_chunk = (padding_mask_dup[c_start:c_end].unsqueeze(1).unsqueeze(2)
+                               if padding_mask_dup is not None else None)
+                    out_heads = torch.empty(n_c, layer.num_heads, num_nodes, layer.head_dim,
+                                            device=r_chunk.device, dtype=v.dtype)
+                    for r0 in range(0, num_nodes, row_chunk):
+                        r1 = min(r0 + row_chunk, num_nodes)
+                        scores = torch.matmul(q[:, :, r0:r1], k.transpose(-2, -1)) / (layer.head_dim ** 0.5)
+                        scores.add_(tree_cache_layer_bias(tree_cache, layer, i, row_slice=slice(r0, r1)))
 
-                    if padding_mask_dup is not None:
-                        p_chunk = padding_mask_dup[c_start:c_end].unsqueeze(1).unsqueeze(2)
-                        scores.masked_fill_(p_chunk, -1e4)
-                        attn_weights = torch.softmax(scores, dim=-1)
-                        attn_weights = torch.where(p_chunk, torch.zeros_like(attn_weights), attn_weights)
-                        del p_chunk
-                    else:
-                        attn_weights = torch.softmax(scores, dim=-1)
-                    del scores
+                        if p_chunk is not None:
+                            scores.masked_fill_(p_chunk, -1e4)
+                            attn_weights = torch.softmax(scores, dim=-1)
+                            attn_weights = torch.where(p_chunk, torch.zeros_like(attn_weights), attn_weights)
+                        else:
+                            attn_weights = torch.softmax(scores, dim=-1)
+                        del scores
 
-                    # Extract cross-taxa attention weights (taxa 1:N to taxa 1:N, omitting root at index 0)
-                    cross_taxa = attn_weights[:, :, 1:, 1:]
-                    accum_attn.add_(cross_taxa.mean(dim=1).sum(dim=0))
-                    del cross_taxa
+                        # Cross-taxa weights for query rows 1:N+1 (root row 0
+                        # omitted) — accumulated per row-chunk, identical sum.
+                        lo = max(r0, 1)
+                        accum_attn[lo - 1:r1 - 1].add_(
+                            attn_weights[:, :, lo - r0:r1 - r0, 1:].mean(dim=1).sum(dim=0))
 
-                    out = torch.matmul(attn_weights, v)
-                    del attn_weights, v
-                    out = out.transpose(1, 2).contiguous().view(n_c, num_nodes, layer.embed_dim)
+                        out_heads[:, :, r0:r1] = torch.matmul(attn_weights, v)
+                        del attn_weights
+                    del q, k, v, p_chunk
+
+                    out = out_heads.transpose(1, 2).contiguous().view(n_c, num_nodes, layer.embed_dim)
+                    del out_heads
                     out = layer.out_proj(out) + layer.alpha_skip * x0_dup[c_start:c_end]
                     r_out = model.row_norms[i](r_chunk + out)
                     del out

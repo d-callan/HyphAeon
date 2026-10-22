@@ -134,3 +134,78 @@ class TestLazyParity:
             model, c, a, lazy_cache, device="cpu")
         np.testing.assert_allclose(attn_s, attn_l, rtol=1e-5, atol=1e-6)
         np.testing.assert_allclose(repr_s, repr_l, rtol=1e-5, atol=1e-6)
+
+
+class TestRowChunkedAttention:
+    """Row-chunked attention (80k-N path) must be exactly equivalent — softmax
+    is per-query-row, so chunking changes memory, not math."""
+
+    @staticmethod
+    def _tiny_budget(cache):
+        # Shrink the build-time budget the chunker reads so _attn_row_chunk
+        # engages at toy scale (num_nodes=7).
+        cache["max_memory_mb"] = 1e-4
+        return cache
+
+    def test_chunked_forward_parity_static(self):
+        model = _model()
+        dist, mds = _tree_inputs(seed=3)
+        base = model.precompute_tree_cache(dist, mds)
+        chunked = self._tiny_budget(model.precompute_tree_cache(dist, mds))
+        c, a = _site_batch(num_codons=8)
+        with torch.no_grad():
+            o1 = model.forward_cached(c, a, base)
+            o2 = model.forward_cached(c, a, chunked)
+        for x, y in zip(o1, o2):
+            torch.testing.assert_close(x, y)
+
+    def test_chunked_forward_parity_lazy(self):
+        model = _model()
+        dist, mds = _tree_inputs(seed=4)
+        base = model.precompute_tree_cache(dist, mds, max_memory_mb=0.0)
+        chunked = self._tiny_budget(model.precompute_tree_cache(dist, mds, max_memory_mb=0.0))
+        c, a = _site_batch(num_codons=8)
+        with torch.no_grad():
+            o1 = model.forward_cached(c, a, base)
+            o2 = model.forward_cached(c, a, chunked)
+        for x, y in zip(o1, o2):
+            torch.testing.assert_close(x, y)
+
+    def test_chunked_return_attentions_parity(self):
+        model = _model()
+        dist, mds = _tree_inputs(seed=5)
+        base = model.precompute_tree_cache(dist, mds)
+        chunked = self._tiny_budget(model.precompute_tree_cache(dist, mds))
+        c, a = _site_batch(num_codons=8)
+        with torch.no_grad():
+            o1 = model.forward_cached(c, a, base, return_attentions=True)
+            o2 = model.forward_cached(c, a, chunked, return_attentions=True)
+        for x, y in zip(o1, o2):
+            torch.testing.assert_close(x, y)
+
+    def test_chunked_extraction_parity(self):
+        from aeon_core.splits import extract_cross_taxa_attentions_and_embeddings
+        model = _model()
+        dist, mds = _tree_inputs(seed=6)
+        c, a = _site_batch(num_codons=10, seed=9)
+        base = model.precompute_tree_cache(dist, mds)
+        chunked = self._tiny_budget(model.precompute_tree_cache(dist, mds))
+        attn_b, repr_b = extract_cross_taxa_attentions_and_embeddings(
+            model, c, a, base, device="cpu")
+        attn_c, repr_c = extract_cross_taxa_attentions_and_embeddings(
+            model, c, a, chunked, device="cpu")
+        np.testing.assert_allclose(attn_b, attn_c, rtol=1e-5, atol=1e-6)
+        np.testing.assert_allclose(repr_b, repr_c, rtol=1e-5, atol=1e-6)
+
+    def test_uncached_forward_chunked_parity(self):
+        model = _model()
+        dist, mds = _tree_inputs(seed=7)
+        c, a = _site_batch(num_codons=1)  # B=1 so tree tensors stay (1,N,*)
+        t_dist = torch.tensor(dist, dtype=torch.float32).unsqueeze(0)
+        t_mds = torch.tensor(mds, dtype=torch.float32).unsqueeze(0)
+        with torch.no_grad():
+            o1 = model.forward(c, a, dist_matrix=t_dist, mds_coords=t_mds)
+            o2 = model.forward(c, a, dist_matrix=t_dist, mds_coords=t_mds,
+                               max_memory_mb=1e-4)
+        for x, y in zip(o1, o2):
+            torch.testing.assert_close(x, y)
