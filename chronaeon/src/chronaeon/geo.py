@@ -704,6 +704,7 @@ def run_phylogeography_analysis(
     use_neural: bool = False,
     weights: Optional[str] = None,
     variant: Optional[str] = None,
+    max_memory_mb: Optional[float] = None,
     device: Optional[Any] = None,
     output_prefix: Optional[str] = None,
     geojson_path: Optional[str] = None,
@@ -785,6 +786,7 @@ def run_phylogeography_analysis(
             device=device,
             prune_duplicates=False,
             use_tn93=(tree_path is None),
+            max_memory_mb=max_memory_mb,
         )
         import torch
         try:

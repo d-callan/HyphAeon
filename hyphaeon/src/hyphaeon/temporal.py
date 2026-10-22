@@ -216,6 +216,7 @@ def run_temporal_surveillance(
     root_taxon: Optional[str] = None,
     weights: Optional[str] = None,
     variant: Optional[str] = None,
+    max_memory_mb: Optional[float] = None,
     batch_size: Optional[int] = None,
     max_species: Optional[int] = None,
     cpu: bool = False,
@@ -256,7 +257,8 @@ def run_temporal_surveillance(
     # 2. Alignment and Tree Preparation
     c, a, d, z, inv, taxa, L, tree_cache = prepare_alignment(
         alignment_path, tree_path, model=model, device=device,
-        max_species=max_species, prune_duplicates=prune_dups, use_tn93=use_tn93
+        max_species=max_species, prune_duplicates=prune_dups, use_tn93=use_tn93,
+        max_memory_mb=max_memory_mb
     )
     N_taxa = len(taxa)
     n_inv = int(np.sum(inv))

@@ -633,6 +633,7 @@ def run_epistatic_analysis(
     tree_path: Optional[str] = None,
     weights: Optional[str] = None,
     variant: Optional[str] = None,
+    max_memory_mb: Optional[float] = None,
     focal_taxon: Optional[str] = None,
     min_sim: float = 0.35,
     min_shared: int = 2,
@@ -668,7 +669,7 @@ def run_epistatic_analysis(
     # 3. Load Model
     model = load_model(weights=weights, variant=variant, device=device)
 
-    tree_cache = model.precompute_tree_cache(d_mat.to(device), z_coords.to(device))
+    tree_cache = model.precompute_tree_cache(d_mat.to(device), z_coords.to(device), max_memory_mb=max_memory_mb)
 
     # 4. Compute Transformer Attributions and Co-Selection Network
     if progress:
@@ -728,6 +729,7 @@ def run_digital_dms_analysis(
     tree_path: Optional[str] = None,
     weights: Optional[str] = None,
     variant: Optional[str] = None,
+    max_memory_mb: Optional[float] = None,
     focal_taxon: Optional[str] = None,
     cpu: bool = False,
     batch_size: int = 64,
@@ -750,7 +752,7 @@ def run_digital_dms_analysis(
     # 3. Load Model
     model = load_model(weights=weights, variant=variant, device=device)
 
-    tree_cache = model.precompute_tree_cache(d_mat.to(device), z_coords.to(device))
+    tree_cache = model.precompute_tree_cache(d_mat.to(device), z_coords.to(device), max_memory_mb=max_memory_mb)
 
     # 4. Run Selection DMS
     plasticity = run_insilico_selection_dms(

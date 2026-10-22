@@ -42,7 +42,7 @@ from aeon_core.inference import get_device, load_model, prepare_alignment, compu
 from .inference import predict_site_lrts
 from aeon_core.io import ensure_parent_directory, write_json, write_csv, format_pq
 from aeon_core._progress import ChunkProgress
-from aeon_core.cli import handle_cli_errors, add_weights_args, weights_kwargs
+from aeon_core.cli import handle_cli_errors, add_weights_args, weights_kwargs, add_memory_args, memory_kwargs
 
 def determine_adaptive_batch_size(num_species: int, total_sites: int, device: torch.device, user_batch_size: int = None) -> int:
     # DEPRECATED: retained for test/back-compat; delegates to compute_adaptive_safe_batch_size
@@ -72,7 +72,7 @@ def cmd_meme(args):
         c, a, d, z, inv, taxa, L, tree_cache = prepare_alignment(
             args.alignment, args.tree, model=model, device=device,
             max_species=args.max_species, prune_duplicates=prune_dups,
-            use_tn93=use_tn93
+            use_tn93=use_tn93, **memory_kwargs(args)
         )
     except Exception as e:
         print(f"\n[!] Error loading alignment and tree: {e}")
@@ -424,7 +424,7 @@ def cmd_busted(args):
         
         batch_size = compute_adaptive_safe_batch_size(num_species, user_batch_size=args.batch_size, device=device)
         batch_size = min(batch_size, max(1, num_variable))
-        tree_cache = model.precompute_tree_cache(d.to(device), z.to(device))
+        tree_cache = model.precompute_tree_cache(d.to(device), z.to(device), **memory_kwargs(args))
         
         lrts = np.zeros(L, dtype=np.float32)
         hidden_all = torch.zeros((1, L, arch_config["embed_dim"]), dtype=torch.float32)
@@ -586,6 +586,7 @@ def cmd_phenotype(args):
         alignment_path=alignment_path,
         tree_path=tree_path,
         **weights_kwargs(args),
+        **memory_kwargs(args),
         preset=getattr(args, "preset", None),
         foreground=getattr(args, "foreground", None),
         background=getattr(args, "background", None),
@@ -684,6 +685,7 @@ def cmd_epistasis(args):
         alignment_path=args.alignment,
         tree_path=args.tree,
         **weights_kwargs(args),
+        **memory_kwargs(args),
         focal_taxon=getattr(args, "focal_taxon", None),
         min_sim=getattr(args, "min_sim", 0.30),
         min_shared=getattr(args, "min_shared", 2),
@@ -812,6 +814,7 @@ def cmd_dms(args):
         alignment_path=args.alignment,
         tree_path=args.tree,
         **weights_kwargs(args),
+        **memory_kwargs(args),
         focal_taxon=getattr(args, "focal_taxon", None),
         cpu=getattr(args, "cpu", False),
         progress=True,
@@ -879,6 +882,7 @@ def cmd_disease(args):
         canonical_human_seq=canon_seq,
         human_taxon=getattr(args, "human_taxon", None),
         **weights_kwargs(args),
+        **memory_kwargs(args),
         device=device,
         batch_size=getattr(args, "batch_size", None)
     )
@@ -915,6 +919,7 @@ def cmd_filter(args):
         alignment_path=args.alignment,
         tree_path=args.tree,
         **weights_kwargs(args),
+        **memory_kwargs(args),
         output_alignment_path=args.output,
         audit_csv_path=args.csv,
         alpha_site=args.alpha_site,
@@ -988,6 +993,7 @@ def cmd_temporal(args):
         strain_col=getattr(args, "strain_col", None),
         root_taxon=getattr(args, "root_taxon", None),
         **weights_kwargs(args),
+        **memory_kwargs(args),
         batch_size=getattr(args, "batch_size", None),
         max_species=getattr(args, "max_species", None),
         cpu=getattr(args, "cpu", False),
@@ -1007,6 +1013,7 @@ def cmd_splits(args):
         tree_path=getattr(args, "tree", None),
         use_tn93=use_tn93,
         **weights_kwargs(args),
+        **memory_kwargs(args),
         min_clade_size=getattr(args, "min_clade_size", 2),
         max_depth=getattr(args, "max_depth", 10),
         device=None if not getattr(args, "cpu", False) else torch.device("cpu")
@@ -1058,6 +1065,7 @@ def main():
     pred_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93 (alias: --use-tn93)")
     pred_parser.add_argument("--use-tn93", action="store_true", help="Alias for --no-tree: estimate pairwise distances directly from alignment using TN93")
     add_weights_args(pred_parser)
+    add_memory_args(pred_parser)
     pred_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: adaptive; very large values may be capped to a hardware-safe threshold to prevent GPU OOM)")
     pred_parser.add_argument("-s", "--max-species", type=int, default=None, help="Maximum number of species to include (PD downsampling)")
     pred_parser.add_argument("--no-prune-duplicates", action="store_true", help="Disable automatic collapsing of 100%% identical sequence duplicates")
@@ -1078,6 +1086,7 @@ def main():
     pheno_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93 (alias: --use-tn93)")
     pheno_parser.add_argument("--use-tn93", action="store_true", help="Alias for --no-tree: estimate pairwise distances directly from alignment using TN93")
     add_weights_args(pheno_parser)
+    add_memory_args(pheno_parser)
     pheno_parser.add_argument("-p", "--preset", choices=list(PRESETS.keys()), help=f"Curated phenotype preset: {', '.join(PRESETS.keys())}")
     pheno_parser.add_argument("-fg", "--foreground", help="Inline comma-separated list or regex pattern of foreground species")
     pheno_parser.add_argument("-bg", "--background", help="Optional explicit list of background control species")
@@ -1101,6 +1110,7 @@ def main():
     epi_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93 (alias: --use-tn93)")
     epi_parser.add_argument("--use-tn93", action="store_true", help="Alias for --no-tree: estimate pairwise distances directly from alignment using TN93")
     add_weights_args(epi_parser)
+    add_memory_args(epi_parser)
     epi_parser.add_argument("--focal-taxon", help="Focal taxon for in silico Selection DMS sweep (default: auto/consensus)")
     epi_parser.add_argument("--min-sim", type=float, default=0.30, help="Pairwise cosine similarity threshold for co-selection edges")
     epi_parser.add_argument("--min-shared", type=int, default=2, help="Minimum shared mutated phylogenetic branches")
@@ -1124,6 +1134,7 @@ def main():
     dms_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93 (alias: --use-tn93)")
     dms_parser.add_argument("--use-tn93", action="store_true", help="Alias for --no-tree: estimate pairwise distances directly from alignment using TN93")
     add_weights_args(dms_parser)
+    add_memory_args(dms_parser)
     dms_parser.add_argument("--focal-taxon", help="Focal taxon for in silico Selection DMS sweep (default: auto/consensus)")
     dms_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
     dms_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
@@ -1141,6 +1152,7 @@ def main():
         busted_parser.add_argument("--tree-suffix", default=".raxml.bestTree", help="Suffix to append to alignment filename to locate matching tree (default: .raxml.bestTree)")
         busted_parser.add_argument("--tree-dir", default=None, help="Optional directory containing corresponding phylogenetic trees")
         add_weights_args(busted_parser)
+        add_memory_args(busted_parser)
         busted_parser.add_argument("-s", "--max-species", type=int, default=512, help="Maximum number of taxa (Farthest-Point Traversal subsampling if exceeded)")
         busted_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: adaptive; very large values may be capped to a hardware-safe threshold to prevent GPU OOM)")
         busted_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
@@ -1154,6 +1166,7 @@ def main():
     disease_parser.add_argument("--canonical-seq", default=None, help="Optional canonical human reference sequence or FASTA path")
     disease_parser.add_argument("--human-taxon", default=None, help="Name of human reference taxon in alignment (default: auto-detected)")
     add_weights_args(disease_parser)
+    add_memory_args(disease_parser)
     disease_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: adaptive; very large values may be capped to a hardware-safe threshold to prevent GPU OOM)")
     disease_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
     disease_parser.add_argument("-o", "--output", help="Optional path to output JSON results")
@@ -1166,6 +1179,7 @@ def main():
     filter_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93 (alias: --use-tn93)")
     filter_parser.add_argument("--use-tn93", action="store_true", help="Alias for --no-tree: estimate pairwise distances directly from alignment using TN93")
     add_weights_args(filter_parser)
+    add_memory_args(filter_parser)
     filter_parser.add_argument("-o", "--output", help="Path to write the cleaned, surgically masked alignment (FASTA format)")
     filter_parser.add_argument("-c", "--csv", help="Optional path to write artifact audit log (CSV format)")
     filter_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: adaptive; very large values may be capped to a hardware-safe threshold to prevent GPU OOM)")
@@ -1207,6 +1221,7 @@ def main():
     temp_parser.add_argument("--keep-duplicates", action="store_true", help="Do not collapse identical longitudinal clones before regression (auto-enabled when --time-units!=years)")
     temp_parser.add_argument("--plot", action="store_true", help="Generate publication-grade 4-panel PDF and PNG figures")
     add_weights_args(temp_parser)
+    add_memory_args(temp_parser)
     temp_parser.add_argument("-b", "--batch-size", type=int, default=None, help="Site batch size (default: adaptive; very large values may be capped to a hardware-safe threshold to prevent GPU OOM)")
     temp_parser.add_argument("-s", "--max-species", type=int, default=None, help="Maximum number of taxa to include")
     temp_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")
@@ -1232,6 +1247,7 @@ def main():
     splits_parser.add_argument("--no-tree", action="store_true", help="Skip phylogenetic tree and estimate pairwise evolutionary distances directly from alignment using TN93 (alias: --use-tn93)")
     splits_parser.add_argument("--use-tn93", action="store_true", help="Alias for --no-tree: estimate pairwise distances directly from alignment using TN93")
     add_weights_args(splits_parser)
+    add_memory_args(splits_parser)
     splits_parser.add_argument("--min-clade-size", type=int, default=2, help="Minimum clade size to continue recursive bisection (default: 2)")
     splits_parser.add_argument("--max-depth", type=int, default=10, help="Maximum tree hierarchy depth (default: 10)")
     splits_parser.add_argument("--cpu", action="store_true", help="Force CPU execution")

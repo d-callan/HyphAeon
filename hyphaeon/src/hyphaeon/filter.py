@@ -103,6 +103,7 @@ def run_alignment_filter(
     tree_path: Optional[str] = None,
     weights: Optional[str] = None,
     variant: Optional[str] = None,
+    max_memory_mb: Optional[float] = None,
     output_alignment_path: Optional[str] = None,
     audit_csv_path: Optional[str] = None,
     alpha_site: float = 0.05,
@@ -150,7 +151,7 @@ def run_alignment_filter(
         sys.stdout.flush()
         
     # Baseline Inference
-    tree_cache = model.precompute_tree_cache(d_mat.to(device), z_coords.to(device))
+    tree_cache = model.precompute_tree_cache(d_mat.to(device), z_coords.to(device), max_memory_mb=max_memory_mb)
     lrts_raw = np.zeros(L, dtype=np.float32)
     t_base_start = time.time()
     
@@ -297,7 +298,7 @@ def run_alignment_filter(
         c_cl, a_cl, d_cl, z_cl, inv_cl, taxa_cl, L_cl = load_alignment_and_tree(
             tmp_clean_fasta, effective_tree, max_species=max_species, prune_duplicates=True, use_tn93=use_tn93
         )
-        tree_cache_cl = model.precompute_tree_cache(d_cl.to(device), z_cl.to(device))
+        tree_cache_cl = model.precompute_tree_cache(d_cl.to(device), z_cl.to(device), max_memory_mb=max_memory_mb)
         
         var_indices_cl = np.where(~inv_cl)[0]
         n_var_cl = len(var_indices_cl)

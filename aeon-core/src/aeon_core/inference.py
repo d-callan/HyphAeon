@@ -202,7 +202,8 @@ def load_model(weights=None, variant=None, device=None, strict=False):
 
 
 def prepare_alignment(alignment_path, tree_path=None, model=None, device=None,
-                      max_species=None, prune_duplicates=True, use_tn93=False):
+                      max_species=None, prune_duplicates=True, use_tn93=False,
+                      max_memory_mb=None):
     """Load an alignment + tree and precompute the tree attention cache.
 
     If use_tn93=True, skips the phylogenetic tree and computes pairwise
@@ -217,5 +218,5 @@ def prepare_alignment(alignment_path, tree_path=None, model=None, device=None,
     )
     tree_cache = None
     if model is not None:
-        tree_cache = model.precompute_tree_cache(d.to(device), z.to(device))
+        tree_cache = model.precompute_tree_cache(d.to(device), z.to(device), max_memory_mb=max_memory_mb)
     return c, a, d, z, inv, taxa, L, tree_cache

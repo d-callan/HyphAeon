@@ -29,6 +29,38 @@ def _coral_cutoffs(b0, theta_steps):
     return torch.cat([b0.unsqueeze(0), b0 - cum_steps])
 
 
+# Default per-structure RAM budget (MB) for the precomputed tree attention bias
+# cache. Overridable per call via max_memory_mb / the shared --max-memory-mb flag.
+DEFAULT_MAX_MEMORY_MB = 1024.0
+
+
+def markov_log_bias(phylo_w1, dist):
+    """
+    Continuous-time Markov transition-probability log-bias, one per attention head:
+        log( EPS0 + (1 - EPS0) * exp(-softplus(w_h) * d_ij) )
+    phylo_w1: [num_heads, 1, 1] learnable per-head decay rate.
+    dist: pairwise-distance tensor broadcastable against [num_heads, N, N].
+    Single definition shared by the static cache, the inline (uncached) path,
+    and the lazy bounded-memory path — all three must produce identical values.
+    """
+    decay_rate = F.softplus(phylo_w1)
+    markov_kernel = EPS0 + (1.0 - EPS0) * torch.exp(-decay_rate * dist)
+    return torch.log(markov_kernel.clamp(min=1e-5))
+
+
+def tree_cache_layer_bias(tree_cache, layer, index):
+    """
+    Markov log-bias for row layer `index`. Reads the static all-layers cache
+    when present (fast path); otherwise evaluates lazily from the cached
+    (N+1)x(N+1) distance tensor so the transient is one layer's bias instead
+    of all num_layers resident at once (see precompute_tree_cache).
+    """
+    biases = tree_cache.get("static_phylo_biases")
+    if biases is not None:
+        return biases[index]
+    return markov_log_bias(layer.phylo_w1, tree_cache["static_dist"])
+
+
 class BlockLinear(nn.Module):
     """
     Block-Diagonal Linear Projection.
@@ -140,13 +172,10 @@ class PhyloRowAttention(nn.Module):
             if dist_matrix is not None:
                 dist_1d = dist_matrix[..., 0] if dist_matrix.dim() == 4 or (dist_matrix.dim() == 3 and dist_matrix.shape[-1] == 3) else dist_matrix
                 bias_1d = dist_1d.unsqueeze(1) if dist_1d.dim() == 3 else dist_1d.unsqueeze(0).unsqueeze(1)
-                decay_rate = F.softplus(self.phylo_w1)  # [num_heads, 1, 1] learnable rate per attention head
-                markov_kernel = EPS0 + (1.0 - EPS0) * torch.exp(-decay_rate * bias_1d)
-                # Pure log-space Markov transition probability kernel
-                phylo_bias = torch.log(markov_kernel.clamp(min=1e-5))
+                phylo_bias = markov_log_bias(self.phylo_w1, bias_1d)
 
         if phylo_bias is not None:
-            scores = scores + phylo_bias
+            scores.add_(phylo_bias)
 
         if padding_mask is not None:
             mask = padding_mask.unsqueeze(1).unsqueeze(2)
@@ -284,11 +313,18 @@ class PhyloAxialTransformer(nn.Module):
 
         self.lrt_ordinal_head = RankConsistentCoralHead(embed_dim, num_thresholds=num_thresholds)
 
-    def precompute_tree_cache(self, dist_matrix, mds_coords):
+    def precompute_tree_cache(self, dist_matrix, mds_coords, max_memory_mb=None):
         """
         Pre-computes static tree-invariant tensors (continuous-time Markov log-bias,
         4D Tree-RoPE phase rotations, and projected MDS embeddings).
         Can be computed once per phylogeny and reused across all site batches for 3-5x forward speedup.
+
+        The all-layers bias cache costs num_layers * num_heads * (N+1)^2 * 4 bytes
+        (~28.8 GB at N=10,000 for the production 6-layer/12-head model). When that
+        exceeds max_memory_mb (default DEFAULT_MAX_MEMORY_MB), only the (N+1)^2
+        distance tensor is kept under "static_dist" and consumers evaluate each
+        layer's bias lazily via tree_cache_layer_bias — identical math, with the
+        resident footprint bounded by the distance matrix instead of all layers.
         """
         device = next(self.parameters()).device
         if not isinstance(dist_matrix, torch.Tensor):
@@ -318,16 +354,23 @@ class PhyloAxialTransformer(nn.Module):
         dist_1d = dist_full[..., 0] if dist_full.dim() == 4 or (dist_full.dim() == 3 and dist_full.shape[-1] == 3) else dist_full
         dist_tensor = dist_1d.unsqueeze(1) if dist_1d.dim() == 3 else dist_1d.unsqueeze(0).unsqueeze(1)
 
-        static_phylo_biases = []
+        num_heads = self.row_layers[0].num_heads if len(self.row_layers) > 0 else 0
+        bias_bytes = len(self.row_layers) * num_heads * (dist_tensor.shape[-1] ** 2) * dist_tensor.element_size()
+        budget_bytes = (DEFAULT_MAX_MEMORY_MB if max_memory_mb is None else max_memory_mb) * 1e6
+        use_static_biases = bias_bytes <= budget_bytes
+        if not use_static_biases:
+            print(f"[*] Tree attention bias cache requires {bias_bytes / 1e9:.1f} GB "
+                  f"(max_memory_mb={budget_bytes / 1e6:.0f}): using lazy per-layer evaluation.",
+                  flush=True)
+
+        static_phylo_biases = [] if use_static_biases else None
         static_rope_coss = []
         static_rope_sins = []
 
-        eps0 = EPS0
         with torch.no_grad():
             for layer in self.row_layers:
-                decay_rate = F.softplus(layer.phylo_w1)  # [num_heads, 1, 1]
-                markov_kernel = eps0 + (1.0 - eps0) * torch.exp(-decay_rate * dist_tensor)
-                static_phylo_biases.append(torch.log(markov_kernel.clamp(min=1e-5)))
+                if use_static_biases:
+                    static_phylo_biases.append(markov_log_bias(layer.phylo_w1, dist_tensor))
 
                 half_dim = layer.head_dim // 2
                 m_exp = mds_full.unsqueeze(1).unsqueeze(3)  # [1, 1, num_species + 1, 1, 4]
@@ -340,6 +383,7 @@ class PhyloAxialTransformer(nn.Module):
 
         return {
             "static_phylo_biases": static_phylo_biases,
+            "static_dist": dist_tensor,
             "static_rope_coss": static_rope_coss,
             "static_rope_sins": static_rope_sins,
             "mds_pos_static": mds_pos_static,
@@ -417,7 +461,6 @@ class PhyloAxialTransformer(nn.Module):
 
         # 4. Row Layers using Pre-Cached Kernels
         x0_dup = x_full.transpose(1, 2).contiguous().view(batch_size * window_size, num_nodes, self.embed_dim)
-        static_biases = tree_cache["static_phylo_biases"]
         static_coss = tree_cache["static_rope_coss"]
         static_sins = tree_cache["static_rope_sins"]
 
@@ -440,7 +483,7 @@ class PhyloAxialTransformer(nn.Module):
 
                 scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(layer.head_dim)
                 del q, k
-                scores.add_(static_biases[i])
+                scores.add_(tree_cache_layer_bias(tree_cache, layer, i))
 
                 if padding_mask_dup is not None:
                     mask = padding_mask_dup.unsqueeze(1).unsqueeze(2)
@@ -467,7 +510,7 @@ class PhyloAxialTransformer(nn.Module):
                     x0=x0_dup,
                     cos=static_coss[i],
                     sin=static_sins[i],
-                    phylo_bias=static_biases[i],
+                    phylo_bias=tree_cache_layer_bias(tree_cache, layer, i),
                 )
                 row_out = self.row_norms[i](row_in + row_out)
                 x_full = row_out.reshape(batch_size, window_size, num_nodes, layer.embed_dim).transpose(1, 2)

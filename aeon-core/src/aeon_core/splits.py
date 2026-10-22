@@ -15,6 +15,7 @@ import torch
 
 
 from .inference import compute_live_adaptive_chunk_sizes
+from .model import tree_cache_layer_bias
 
 
 def extract_cross_taxa_attentions_and_embeddings(
@@ -51,7 +52,6 @@ def extract_cross_taxa_attentions_and_embeddings(
     num_nodes = num_species + 1
     num_layers = max(1, len(model.row_layers))
 
-    static_biases = tree_cache["static_phylo_biases"]
     static_coss = tree_cache["static_rope_coss"]
     static_sins = tree_cache["static_rope_sins"]
 
@@ -130,7 +130,7 @@ def extract_cross_taxa_attentions_and_embeddings(
 
                     scores = torch.matmul(q, k.transpose(-2, -1)) / (layer.head_dim ** 0.5)
                     del q, k
-                    scores.add_(static_biases[i])
+                    scores.add_(tree_cache_layer_bias(tree_cache, layer, i))
 
                     if padding_mask_dup is not None:
                         p_chunk = padding_mask_dup[c_start:c_end].unsqueeze(1).unsqueeze(2)
