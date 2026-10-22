@@ -412,11 +412,13 @@ class PhyloAxialTransformer(nn.Module):
         # slices, so a 25.6 GB 80k-cohort matrix need not live in VRAM at
         # all. The static path keeps it on-device: it computes full biases
         # from it there, and a bias set that fits the budget implies the
-        # much smaller dist does too.
+        # much smaller dist does too. Fit test uses ~2.5x the tensor: the
+        # augmentation below needs dist_matrix + dist_full live at once
+        # (~2x N^2) plus headroom for attention tiles.
         dist_device = device
         if not use_static_biases and device.type == "cuda":
             dist_bytes = (dist_matrix.shape[-1] + 1) ** 2 * 4
-            if dist_bytes * 1.5 > torch.cuda.mem_get_info(device)[0]:
+            if dist_bytes * 2.5 > torch.cuda.mem_get_info(device)[0]:
                 dist_device = torch.device("cpu")
         if not isinstance(dist_matrix, torch.Tensor):
             dist_matrix = torch.tensor(dist_matrix, dtype=torch.float32, device=dist_device)
