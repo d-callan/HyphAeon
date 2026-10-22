@@ -8,11 +8,23 @@ on:
 
 jobs:
   test-aeon-core:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runs-on }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        # EOL Pythons are absent from the ubuntu-latest toolcache but kept
+        # for Jetson-class environments; ubuntu-22.04 still provides them.
+        include:
+          - python-version: "3.8"
+            runs-on: ubuntu-22.04
+          - python-version: "3.9"
+            runs-on: ubuntu-22.04
+          - python-version: "3.10"
+            runs-on: ubuntu-latest
+          - python-version: "3.11"
+            runs-on: ubuntu-latest
+          - python-version: "3.12"
+            runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v5
@@ -26,17 +38,29 @@ jobs:
         run: pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Install aeon-core and dev dependencies
-        run: pip install -e aeon-core/[dev,tn93]
+        run: pip install -e aeon-core/[dev]
 
       - name: Run aeon-core tests
         run: python -m pytest aeon-core/tests/ -v
 
   test-hyphaeon:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runs-on }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        # EOL Pythons are absent from the ubuntu-latest toolcache but kept
+        # for Jetson-class environments; ubuntu-22.04 still provides them.
+        include:
+          - python-version: "3.8"
+            runs-on: ubuntu-22.04
+          - python-version: "3.9"
+            runs-on: ubuntu-22.04
+          - python-version: "3.10"
+            runs-on: ubuntu-latest
+          - python-version: "3.11"
+            runs-on: ubuntu-latest
+          - python-version: "3.12"
+            runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v5
@@ -50,17 +74,29 @@ jobs:
         run: pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Install aeon-core, hyphaeon and dev dependencies
-        run: pip install -e aeon-core/ -e hyphaeon/[dev,tn93]
+        run: pip install -e aeon-core/ -e hyphaeon/[dev]
 
       - name: Run hyphaeon tests
         run: python -m pytest hyphaeon/tests/ -v
 
   test-chronaeon:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runs-on }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        # EOL Pythons are absent from the ubuntu-latest toolcache but kept
+        # for Jetson-class environments; ubuntu-22.04 still provides them.
+        include:
+          - python-version: "3.8"
+            runs-on: ubuntu-22.04
+          - python-version: "3.9"
+            runs-on: ubuntu-22.04
+          - python-version: "3.10"
+            runs-on: ubuntu-latest
+          - python-version: "3.11"
+            runs-on: ubuntu-latest
+          - python-version: "3.12"
+            runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v5
@@ -74,7 +110,7 @@ jobs:
         run: pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Install aeon-core, chronaeon and dev dependencies
-        run: pip install -e aeon-core/ -e chronaeon/[dev,tn93]
+        run: pip install -e aeon-core/ -e chronaeon/[dev]
 
       - name: Run chronaeon tests
         run: python -m pytest chronaeon/tests/ -v
