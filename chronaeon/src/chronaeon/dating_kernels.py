@@ -31,11 +31,14 @@ def compute_neural_covariance_kernel(
     """
     n = cross_attn.shape[0]
 
-    # fp32 + freed intermediates: this kernel feeds spectral/ridge consumers
-    # where 1e-7 error is noise, and the previous version held ~5 fp64 N^2
-    # matrices (centered copy, cov, denom, both kernels) simultaneously.
-    # Standardization is applied by broadcast row/col division so no N^2
-    # denominator matrix is ever materialized.
+    # fp32 + freed intermediates: inputs are fp32 model outputs already, and
+    # this kernel feeds spectral/ridge consumers where ~1e-7/cell error is
+    # noise. The previous version held ~5 fp64 N^2 matrices (centered copy,
+    # cov, denom, both kernels) simultaneously. Standardization is applied by
+    # broadcast row/col division so no N^2 denominator is ever materialized.
+    # Near-degenerate rows (variance at/below the 1e-12 floor) can differ from
+    # the fp64 path by ~1e-5 — amplified rounding on cells whose correlation
+    # is ill-defined in either version; measured, not a code path change.
 
     # 1. Cross-Taxa Attention Profile Correlation Matrix (Centered)
     # Each row a_i is taxon i's attention distribution across all taxa.
