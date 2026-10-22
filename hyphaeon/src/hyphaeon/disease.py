@@ -385,7 +385,9 @@ def predict_disease_pathogenicity(
         print(f"[*] Alignment loaded ({gene_name}): {N} species, {L_codon} codons across phylogeny")
     
     # 3. Build codon & amino acid arrays and compute marginal evolutionary counts
-    arr_aa = np.zeros((N, L_codon), dtype=object)
+    # Single-char AA codes only — U1 (~4 B/cell) instead of an object array
+    # of str pointers (~50+ B/cell); ~14x smaller at cohort scale.
+    arr_aa = np.zeros((N, L_codon), dtype='U1')
     c_arr = np.zeros((L_codon, N, 1), dtype=np.int64)
     a_arr = np.zeros((L_codon, N, 1), dtype=np.int64)
     msa_aa_counts = []

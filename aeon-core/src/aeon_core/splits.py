@@ -201,28 +201,37 @@ def compute_fused_affinity_matrix(
 
     A_fused = S_attn ⊙ K_mds ⊙ K_emb
     """
-    # Symmetrize raw cross-taxa attention
-    S_attn = (cross_attn_mat + cross_attn_mat.T) / 2.0
-    np.fill_diagonal(S_attn, 0.0)
+    # fp32 with one live N^2 buffer at a time: inputs are fp32 attention
+    # and the fused matrix only feeds a spectral partition, so 1e-7 relative
+    # error is far below attention noise. This halves output residency and
+    # avoids holding ~5-6 fp64 N^2 intermediates at once (~300 GB at N=80k
+    # -> ~10 GB peak here).
+    A_fused = (cross_attn_mat + cross_attn_mat.T).astype(np.float32)
+    A_fused *= 0.5
+    np.fill_diagonal(A_fused, 0.0)
 
-    # MDS geometric Gaussian kernel
-    d_mds = squareform(pdist(mds_coords))
-    sigma_mds = np.median(d_mds[d_mds > 0]) if np.any(d_mds > 0) else 1.0
-    K_mds = np.exp(- (d_mds ** 2) / (2 * (sigma_mds ** 2)))
-    np.fill_diagonal(K_mds, 0.0)
+    # MDS geometric Gaussian kernel, evaluated in-place into one buffer
+    K = squareform(pdist(mds_coords)).astype(np.float32)
+    sigma_mds = np.median(K[K > 0]) if np.any(K > 0) else 1.0
+    K *= K
+    K *= -1.0 / (2.0 * (sigma_mds ** 2))
+    np.exp(K, out=K)
+    np.fill_diagonal(K, 0.0)
+    A_fused *= K
+    del K
 
-    # Embedding cosine similarity kernel with safe in-place normalization
+    # Embedding cosine similarity kernel, same single-buffer pattern
     if taxa_repr is not None:
-        norms = np.linalg.norm(taxa_repr, axis=1, keepdims=True)
-        repr_norm = taxa_repr / np.maximum(norms, 1e-12)
-        cos_sim = repr_norm @ repr_norm.T
-        K_emb = np.clip((cos_sim + 1.0) / 2.0, 0.0, 1.0)
-        np.fill_diagonal(K_emb, 0.0)
-    else:
-        K_emb = 1.0
+        repr_norm = taxa_repr.astype(np.float32, copy=False)
+        repr_norm = repr_norm / np.maximum(np.linalg.norm(repr_norm, axis=1, keepdims=True), 1e-12)
+        K = repr_norm @ repr_norm.T
+        np.add(K, 1.0, out=K)
+        K *= 0.5
+        np.clip(K, 0.0, 1.0, out=K)
+        np.fill_diagonal(K, 0.0)
+        A_fused *= K
+        del K
 
-    # Multiplicative tensor fusion
-    A_fused = S_attn * K_mds * K_emb
     np.fill_diagonal(A_fused, 0.0)
     return A_fused
 
