@@ -345,6 +345,45 @@ def decode_soft_ordinal_lrt(logits_lrt_ordinal):
     return physical_lrt, probs
 
 
+class FocalCoralOrdinalLoss(nn.Module):
+    """
+    Rank-Consistent Ordinal Binary Cross-Entropy Loss (CORAL, Cao et al. 2020)
+    over log-spaced LRT exceedance thresholds matching ``LOG_CORAL_DELTAS_*``.
+    """
+    def __init__(self, gamma=0.0, num_thresholds=16):
+        super().__init__()
+        self.gamma = gamma
+        self.num_thresholds = num_thresholds
+        if num_thresholds == 8:
+            deltas = LOG_CORAL_DELTAS_8
+        elif num_thresholds == 16:
+            deltas = LOG_CORAL_DELTAS_16
+        elif num_thresholds == 24:
+            deltas = LOG_CORAL_DELTAS_24
+        elif num_thresholds == 12:
+            deltas = LOG_CORAL_DELTAS_12
+        else:
+            deltas = LOG_CORAL_DELTAS_16[:num_thresholds]
+        log_thresholds = torch.cumsum(deltas, dim=0)
+        thresholds = torch.expm1(log_thresholds)
+        self.register_buffer("thresholds", thresholds)
+        self.register_buffer("weights", torch.ones_like(thresholds))
+
+    def forward(self, logits_ordinal, y_lrt):
+        y_lrt = y_lrt.reshape(-1)
+        targets = (y_lrt.unsqueeze(1) > self.thresholds.unsqueeze(0)).to(logits_ordinal.dtype)
+        bce = F.binary_cross_entropy_with_logits(logits_ordinal, targets, reduction="none")
+        if self.gamma > 0:
+            probs = torch.sigmoid(logits_ordinal)
+            pt = torch.where(targets == 1.0, probs, 1.0 - probs)
+            focal_weight = (1.0 - pt) ** self.gamma
+            loss = focal_weight * bce * self.weights.unsqueeze(0)
+        else:
+            loss = bce * self.weights.unsqueeze(0)
+        return loss.mean()
+
+
+
 class PhyloAxialTransformer(nn.Module):
     """
     Phylogenetic Axial Transformer with Learned [ROOT] Token:
@@ -650,15 +689,26 @@ class PhyloAxialTransformer(nn.Module):
             for b_start in range(0, batch_size, micro_b):
                 b_end = min(b_start + micro_b, batch_size)
                 p_sub = padding_mask[b_start:b_end] if padding_mask is not None else None
+                d_sub = (
+                    dist_matrix[b_start:b_end]
+                    if dist_matrix is not None and dist_matrix.shape[0] == batch_size
+                    else dist_matrix
+                )
+                z_sub = (
+                    mds_coords[b_start:b_end]
+                    if mds_coords is not None and mds_coords.shape[0] == batch_size
+                    else mds_coords
+                )
                 out = self.forward(
                     msa_codons[b_start:b_end],
                     msa_aas[b_start:b_end],
-                    dist_matrix=dist_matrix,
-                    mds_coords=mds_coords,
+                    dist_matrix=d_sub,
+                    mds_coords=z_sub,
                     padding_mask=p_sub,
                     tree_cache=None,
                     return_attentions=return_attentions,
-                    return_hidden=return_hidden
+                    return_hidden=return_hidden,
+                    max_memory_mb=max_memory_mb,
                 )
                 all_lrt_soft.append(out[0])
                 all_logits.append(out[1])

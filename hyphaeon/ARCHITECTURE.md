@@ -130,8 +130,8 @@ where cutoffs $b_1 < b_2 < \dots < b_K$ are strictly ordered parameters enforced
 
 $$b_k = b_0 + \sum_{j=1}^{k-1} \text{softplus}(\theta_j)$$
 
-### Training Objective: Smooth Huber Loss
-The model is optimized using Smooth L1 (Huber) loss with gradient clipping:
+### Training Objective: 16-Threshold CORAL Ordinal Cross-Entropy
+The foundation model (`training/train_transformer_selection.py` and `training/train.py --loss coral`) is optimized using Rank-Consistent Ordinal Regression (CORAL; Cao et al., 2020) binary cross-entropy across $K = 16$ ordered thresholds on $y_s = \log(1 + \mathrm{LRT}_s)$, decoded to expected log-LRT via survival integration $\mathbb{E}[\log(1+\mathrm{LRT}_s)] = \sum_{k=0}^{15} \sigma(\mathrm{logit}_k)\Delta Z_k$ and $\widehat{\mathrm{LRT}}_s = \exp(\mathbb{E}[\log(1+\mathrm{LRT}_s)]) - 1$ (with optional Smooth L1 loss available via `--loss smooth_l1`):
 
 $$\mathcal{L}(\widehat{\mathrm{LRT}}, \mathrm{LRT}) = \begin{cases} 0.5 (\widehat{\mathrm{LRT}} - \mathrm{LRT})^2 & \text{if } |\widehat{\mathrm{LRT}} - \mathrm{LRT}| < 1.0 \\ |\widehat{\mathrm{LRT}} - \mathrm{LRT}| - 0.5 & \text{otherwise} \end{cases}$$
 

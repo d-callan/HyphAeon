@@ -189,20 +189,29 @@ python training/build_training_npz.py \
   --output_dir /path/to/training_npz/
 ```
 
-### 2. Fine-tune the foundation model
+### 2. Fine-tune the foundation model or reproduce full CORAL foundation training
+
+To fine-tune from the released foundation checkpoint on per-gene `.npz` tensors using the 16-threshold CORAL ordinal cross-entropy objective:
 
 ```bash
 python training/train.py \
   --data_dir /path/to/training_npz/ \
-  --epochs 30 \
-  --batch_size 1 \
+  --init_checkpoint weights/axomeme_v1.pt \
+  --loss coral \
+  --num_thresholds 16 \
+  --stratified \
+  --epochs 20 \
+  --batch_size 128 \
+  --accum_steps 16 \
   --lr 3e-4 \
   --embed_dim 384 \
   --layers 6 \
   --heads 12 \
-  --fp16 \
+  --bf16 \
   --output_dir /path/to/run_weights/
 ```
+
+The standalone Google Colab / TPU / CUDA foundation training script that produced the released checkpoint (`weights/axomeme_v1.pt` / `model.safetensors`, Epoch 16, `loss_type='coral'`, `num_thresholds=16`, `val_spearman=0.6134`, `val_mse=3.6411`) directly from the SQLite/MSA corpus is archived at `training/train_transformer_selection.py`.
 
 ---
 

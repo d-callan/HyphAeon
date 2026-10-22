@@ -1,5 +1,4 @@
 from types import SimpleNamespace
-from pathlib import Path
 import subprocess
 import sys
 
@@ -195,13 +194,10 @@ def test_training_cli_runs_two_epochs_from_checkpoint(tmp_path):
     checkpoint = tmp_path / "initial.pt"
     torch.save({"model_state_dict": model.state_dict()}, checkpoint)
 
-    # Resolve via this file so the subprocess works from any cwd
-    # (parents[2] = monorepo root).
-    train_script = Path(__file__).resolve().parents[2] / "training" / "train.py"
     result = subprocess.run(
         [
             sys.executable,
-            str(train_script),
+            "training/train.py",
             "--data_dir",
             str(data_dir),
             "--init_checkpoint",
@@ -227,3 +223,24 @@ def test_training_cli_runs_two_epochs_from_checkpoint(tmp_path):
     assert "Epoch [ 1/ 2]" in result.stdout
     assert "Epoch [ 2/ 2]" in result.stdout
     assert (output_dir / "hyphaeon_best.pt").exists()
+
+
+def test_train_epoch_coral_and_large_alignment_microbatching():
+    model = PhyloAxialTransformer(
+        embed_dim=8, num_layers=1, num_heads=1, window_size=1, num_thresholds=16
+    )
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    scaler = torch.amp.GradScaler("cuda", enabled=False)
+    gene = make_gene(128, 200, gene_name="large_alignment")
+
+    loss = train_epoch(
+        model,
+        [gene],
+        optimizer,
+        scaler,
+        torch.device("cpu"),
+        SimpleNamespace(fp16=False, batch_size=128, loss="coral", stratified=True),
+    )
+
+    assert isinstance(loss, float)
+    assert torch.isfinite(torch.tensor(loss))
