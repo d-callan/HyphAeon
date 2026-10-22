@@ -452,9 +452,19 @@ class PhyloAxialTransformer(nn.Module):
         # [1, num_species, 1] — on dist_matrix.device so the augmentation
         # below stays on dist_device even when it differs from the model's.
         root_dist = torch.norm(mds_coords, dim=-1, keepdim=True).to(dist_matrix.device)
-        dist_top = torch.cat([torch.zeros(1, 1, 1, device=dist_matrix.device), root_dist.transpose(1, 2)], dim=2)  # [1, 1, num_species + 1]
-        dist_bot = torch.cat([root_dist, dist_matrix], dim=2)  # [1, num_species, num_species + 1]
-        dist_full = torch.cat([dist_top, dist_bot], dim=1)  # [1, num_species + 1, num_species + 1]
+        # In-place augmentation instead of cat chains: cat materializes the
+        # 4N^2 dist_bot copy, then copies it again into dist_full — peaking at
+        # ~12N^2 live (caller matrix + dist_bot + dist_full). Direct writes
+        # peak at ~8N^2 and produce a byte-identical tensor (cat is a pure
+        # copy; every cell below maps 1:1 to the old cat layout).
+        n = dist_matrix.shape[-1]
+        dist_full = torch.empty(1, n + 1, n + 1, dtype=dist_matrix.dtype,
+                                device=dist_matrix.device)
+        rd = root_dist[0, :, 0]  # [N] root-to-taxon distances
+        dist_full[0, 0, 0] = 0.0
+        dist_full[0, 0, 1:] = rd   # root row
+        dist_full[0, 1:, 0] = rd   # symmetric root column
+        dist_full[0, 1:, 1:] = dist_matrix[0]
 
         dist_1d = dist_full[..., 0] if dist_full.dim() == 4 or (dist_full.dim() == 3 and dist_full.shape[-1] == 3) else dist_full
         dist_tensor = dist_1d.unsqueeze(1) if dist_1d.dim() == 3 else dist_1d.unsqueeze(0).unsqueeze(1)
