@@ -81,6 +81,18 @@ class TestBudgetGate:
     def test_default_budget_constant(self):
         assert DEFAULT_MAX_MEMORY_MB > 0
 
+    def test_tile_cap_unconditional(self):
+        """Row tiling is applied even under a generous budget — it is a
+        cache-locality optimization (measured faster), not only an OOM guard.
+        The user budget can only shrink chunks further."""
+        from aeon_core.model import _attn_row_chunk, ATTN_TILE_TARGET_BYTES
+        # Whole matrix exceeds one tile -> chunked regardless of budget
+        assert _attn_row_chunk(1e12, 1, 4, 1000) is not None
+        # Whole matrix fits a tile -> unchunked single pass
+        assert _attn_row_chunk(1e12, 1, 4, 10) is None
+        # A budget below one row's transient still floors at 1 row
+        assert _attn_row_chunk(1.0, 1, 4, 10) == 1
+
 
 class TestLazyParity:
     """Static vs lazy bias evaluation must produce identical outputs."""
